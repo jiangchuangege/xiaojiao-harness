@@ -1748,7 +1748,12 @@ async function makeVideo(){const q=prompt('输入视频场景（真·AI 文生�
    },5000);
   }catch(e){b.innerHTML='⚠️ 出错了：'+esc(e.message);}}
 
-function resumeVideoJob(){let job='';try{job=localStorage.getItem('xj_video_job')||'';}catch(e){}
+async function resumeVideoJob(){let job='';
+  // 优先服务器端当前任务(跨浏览器/刷新/重启)
+  try{const c=await (await fetch('/api/video/current')).json();
+    if(c.job&&c.job.id){job=c.job.id;try{localStorage.setItem('xj_video_job',job);}catch(e){}}
+  }catch(e){}
+  if(!job){try{job=localStorage.getItem('xj_video_job')||'';}catch(e){}}
   if(!job)return;
   const m=document.createElement('div');m.className='m bot';m.innerHTML='<div class="b">🎬 恢复上次生成进度…</div>';feed.appendChild(m);
   const b=m.querySelector('.b');let n=0;
