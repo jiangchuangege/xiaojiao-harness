@@ -1766,12 +1766,14 @@ async function makeVideo(){const q=prompt('输入视频场景（真·AI 文生�
      try{const st=await (await fetch('/api/video/status?job='+d.job)).json();
       if(st.state==='done'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频 · '+esc(q)+'</div>';feed.scrollTop=feed.scrollHeight;}
       else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
-      else{b.textContent='🎬 '+esc(st.message||'处理中…')+'（已等 '+(n*5)+'s）';}
+      else if(st.state==='unknown'){clearInterval(iv);b.innerHTML='⚠️ 任务状态丢失（可能已结束或服务器重启）。<br>请点 🎬 重新生成，或到 ComfyUI(<b>127.0.0.1:8188</b>)看真实结果。';}
+      else if(n*5>2700){clearInterval(iv);b.innerHTML='⏱️ 已等 '+Math.round(n*5/60)+' 分钟（超时）。到 ComfyUI(8188) 看是否仍在跑/已出片，或重新生成。';}
+      else{b.textContent='🎬 '+(st.message||'生成中…')+'（已等 '+Math.round(n*5)+'s，到 8188 看真实进度）';}
      }catch(e){}
    },5000);
   }catch(e){b.innerHTML='⚠️ 出错了：'+esc(e.message);}}
 
-async 
+
 async function resumeChat(){try{const p=await (await fetch('/api/chat/pending')).json();
   if(!p.pending){return;}
   const m=document.createElement('div');m.className='m bot';m.innerHTML='<div class="b"><span class="spin"></span> 正在回答（可先干别的，恢复中）…</div>';feed.appendChild(m);feed.scrollTop=feed.scrollHeight;
@@ -1779,7 +1781,7 @@ async function resumeChat(){try{const p=await (await fetch('/api/chat/pending'))
     if(!u.pending){clearInterval(iv);const b=m.querySelector('.b');b.innerHTML=u.content?renderMd(u.content):'（回答完成）';feed.scrollTop=feed.scrollHeight;}}catch(e){}},2500);
   }catch(e){}}
 
-async 
+
 function syncLoop(){try{loadSessions();}catch(e){}
   // 服务器端当前视频任务 -> 顶部小提示(跨标签/刷新都在)
   try{fetch('/api/video/current').then(r=>r.json()).then(c=>{
@@ -1806,7 +1808,9 @@ async function resumeVideoJob(){let job='';
       if(st.state==='done'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){}
         b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频（刷新前生成）</div>';feed.scrollTop=feed.scrollHeight;}
       else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
-      else{b.textContent='🎬 '+esc(st.message||'生成中…')+'（已等 '+(n*5)+'s）';}
+      else if(st.state==='unknown'){clearInterval(iv);b.innerHTML='⚠️ 任务状态丢失（可能已结束或服务器重启）。请重新生成，或到 8188 查看。';}
+      else if(n*5>2700){clearInterval(iv);b.textContent='⏱️ 超时，到 8188 看是否完成。';}
+      else{b.textContent='🎬 '+(st.message||'生成中…')+'（已等 '+Math.round(n*5)+'s，到 8188 看真实进度）';}
     }catch(e){}
   },5000);
 }
