@@ -25,7 +25,7 @@
     0
    ],
    "model_to_offload": [
-    "1c",
+    "1",
     0
    ],
    "force_offload": true
@@ -43,7 +43,7 @@
   "class_type": "WanVideoSampler",
   "inputs": {
    "model": [
-    "1c",
+    "1",
     0
    ],
    "image_embeds": [
@@ -107,27 +107,6 @@
    ],
    "filename_prefix": "xiaojiao_wan",
    "format": "mp4"
-  }
- },
- "1b": {
-  "class_type": "WanVideoBlockSwap",
-  "inputs": {
-   "blocks_to_swap": 16,
-   "offload_img_emb": true,
-   "offload_txt_emb": true
-  }
- },
- "1c": {
-  "class_type": "WanVideoSetBlockSwap",
-  "inputs": {
-   "model": [
-    "1",
-    0
-   ],
-   "block_swap_args": [
-    "1b",
-    0
-   ]
   }
  }
 }
