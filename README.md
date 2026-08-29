@@ -458,6 +458,38 @@ flowchart TD
 ---
 
 
+## 🗺️ 文件 / 模型 互相调用一览
+
+```mermaid
+flowchart TD
+    U["用户"] --> W["小焦 Web(5000)<br/>xiaojiao_app.py"]
+    DSH["DeepSeek Harness"] -->|/v1| W
+    W -->|api_chat| A["agent_run"]
+    A --> M["记忆 recall<br/>xiaojiao_knowledge_memory.json"]
+    A --> S["联网 search"]
+    A --> C{"选大脑"}
+    C -->|auto/llama| BIG["本地大模型 8080<br/>llama-server / xiaojiao1.0-4B.gguf"]
+    C -->|xiaojiao| SMALL["自研小模型<br/>xiaojiao_harness.py → mini_gpt_model.pth"]
+    BIG --> TOOLS["工具: run_command/write_file/open_app<br/>+ 插件(py/js/api/skill)"]
+    A --> TOOLS
+    SMALL --> RET["检索池 training_data_pool_clean.txt"]
+    W -->|自动记录| LOG["logs/chat_history.jsonl"]
+    LOG -->|👍/👎| FB["logs/feedback.jsonl"]
+    FB -->|被赞/更正| KNOW["self_learn/little_brain_knowledge.txt(小脑知识库)"]
+    KNOW --> RET
+    KNOW --> T2["self_learn/learn.py"]
+    T2 --> TRAIN["train_model.py → mini_gpt_model.pth"]
+    TRAIN --> SMALL
+    ST["start_xiaojiao.py"] --> BIG
+    ST --> W
+    ST --> BR["dsh_bridge(5001)"]
+```
+
+**调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 小模型/检索池越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + DSH 桥接。
+
+---
+
+
 ## 📄 License
 
 基于 [MIT License](LICENSE) 开源，随便用、随便改、随便分享。

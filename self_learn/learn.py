@@ -12,6 +12,7 @@
   python learn.py feedback <log_id> good|bad|4星|5星 [用户更正后的回答]
   python learn.py build        # 把「高质量」交互 -> little_brain_knowledge.txt(小脑知识库,越长越强)
                               #   并同步进小脑检索池 training_data_pool_clean.txt
+  python learn.py stats        # 一键成长指标(记录了/学了/知识库多少条)
   python learn.py train        # (可选) 用积累的知识重训小模型
 """
 
@@ -123,6 +124,29 @@ def cmd_train(args):
     print("⑤ 训练层(可选): 用积累的知识重训小模型 -> 运行 train_model.py 即可(会读训练池)")
 
 
+def cmd_stats(args):
+    """一键成长指标：看小脑积累了多少、学了多少。"""
+    mb = 0; fb = {"good": 0, "star": 0, "bad": 0, "corrected": 0}
+    if os.path.exists(LOG_FILE):
+        mb = sum(1 for _ in open(LOG_FILE, encoding="utf-8"))
+    if os.path.exists(FEED_FILE):
+        for ln in open(FEED_FILE, encoding="utf-8"):
+            try:
+                r = json.loads(ln)
+            except Exception:
+                continue
+            f = r.get("feedback", "")
+            if f in ("good", "👍"): fb["good"] += 1
+            elif str(f).strip("星") in ("4", "5"): fb["star"] += 1
+            elif f in ("bad", "👎"): fb["bad"] += 1
+            if r.get("corrected_reply"): fb["corrected"] += 1
+    print("📊 小焦 · 持续学习成长指标")
+    print("  交互记录(日志):", mb, "条")
+    print("  反馈: 点赞", fb["good"], "| 4星5星", fb["star"], "| 踩", fb["bad"], "| 更正", fb["corrected"])
+    print("  ★ 小脑知识库:", _count(KNOW_FILE), "条(越长越强)  ->", KNOW_FILE)
+    print("  检索池:", _count(RETRIEVE_POOL), "条  ->", RETRIEVE_POOL)
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -130,7 +154,7 @@ def main():
     cmd = sys.argv[1]
     args = sys.argv[2:]
     {"log": cmd_log, "feedback": cmd_feedback, "build": cmd_build,
-     "train": cmd_train}.get(cmd, lambda a: print("未知命令(参考顶部用法)"))(args)
+     "train": cmd_train, "stats": cmd_stats}.get(cmd, lambda a: print("未知命令(参考顶部用法)"))(args)
 
 
 if __name__ == "__main__":
