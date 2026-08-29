@@ -284,7 +284,7 @@ def synthesize(evidence, query, max_out=4):
 def llm_available():
     """本地大模型（教师，:8080）是否在线 —— 在线时可进行真正的“深度思考”。"""
     try:
-        return requests.get("http://127.0.0.1:8080/health", timeout=3).status_code == 200
+        return requests.get("http://127.0.0.1:%s/health" % os.environ.get("LLAMA_PORT", "8080"), timeout=3).status_code == 200
     except Exception:
         return False
 
@@ -292,7 +292,7 @@ def llm_available():
 def llm_ask(prompt):
     """调用本地大模型进行综合/推理（OpenAI 兼容 /completion）。"""
     try:
-        r = requests.post("http://127.0.0.1:8080/completion",
+        r = requests.post("http://127.0.0.1:%s/completion" % os.environ.get("LLAMA_PORT", "8080"),
                           json={"prompt": prompt, "n_predict": 512, "temperature": 0.6},
                           timeout=90)
         if r.status_code == 200:

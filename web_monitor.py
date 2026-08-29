@@ -63,7 +63,7 @@ def update_status():
 
     try:
         import requests
-        resp = requests.get("http://127.0.0.1:8080/health", timeout=2)
+        resp = requests.get("http://127.0.0.1:%s/health" % os.environ.get("LLAMA_PORT", "8080"), timeout=2)
         status["llm_online"] = resp.status_code == 200
     except:
         status["llm_online"] = False

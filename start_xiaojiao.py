@@ -10,7 +10,8 @@
   4. 自动打开浏览器
   5. 启动 DSH 桥接服务（用于调用 DeepSeek Harness 社区插件）
 """
-import os, sys, time, threading, webbrowser, subprocess
+import os
+import shutil, sys, time, threading, webbrowser, subprocess
 import requests
 import xiaojiao_app as app
 
@@ -22,10 +23,33 @@ ENGINE = BRAIN.get("engine", "auto")
 # DSH 配置
 DSH_ENABLED = CONTROL.get("dsh", {}).get("enabled", False)
 
+
+def resolve_llama_paths():
+    """解析大模型路径：控制文件(存在才用) -> 环境变量(XIAOJIAO_LLAMA_SERVER/XIAOJIAO_GGUF) -> 自动查找。换电脑不用改代码。"""
+    server, gguf = resolve_llama_paths()
+    if not (os.path.exists(server) and os.path.exists(gguf)):
+        server = os.environ.get("XIAOJIAO_LLAMA_SERVER", server) or ""
+        gguf = os.environ.get("XIAOJIAO_GGUF", gguf) or ""
+    if not os.path.exists(server):
+        server = shutil.which("llama-server") or ""
+        if not server:
+            for d in ("C:/llama", ".", "..", os.path.expanduser("~")):
+                c = os.path.join(d, "llama-server.exe")
+                if os.path.exists(c):
+                    server = c; break
+    if not (gguf and os.path.exists(gguf)):
+        gguf = ""
+        for d in ("C:/llama", ".", "..", os.path.expanduser("~/Downloads"), os.path.expanduser("~")):
+            if not os.path.isdir(d): continue
+            for fn in sorted(os.listdir(d)):
+                if fn.lower().endswith(".gguf"):
+                    gguf = os.path.join(d, fn); break
+            if gguf: break
+    return server, gguf
+
 def start_llama_brain():
     """启动本地大模型（与原函数保持一致）"""
-    server = BRAIN.get("llama", {}).get("server", "")
-    gguf = BRAIN.get("llama", {}).get("gguf", "")
+    server, gguf = resolve_llama_paths()
     port = int(BRAIN.get("llama", {}).get("port", 8080))
     if not (server and gguf and os.path.exists(server) and os.path.exists(gguf)):
         print(f"⚠️ 没找到大模型文件/服务，跳过自动启动（小焦将用自建模型兜底）。")

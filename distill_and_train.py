@@ -13,7 +13,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
 # ========== 配置 ==========
-LLAMA_API = "http://127.0.0.1:8080/completion"
+LLAMA_API = os.environ.get("LLAMA_API", "http://127.0.0.1:8080/completion")
 KNOWLEDGE_FILE = "xiaojiao_knowledge.txt"
 MEMORY_FILE = "xiaojiao_memory.txt"
 TRAIN_POOL_FILE = "training_data_pool.txt"
