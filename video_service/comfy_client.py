@@ -5,10 +5,15 @@ import config
 
 
 def submit_workflow(workflow):
-    """提交工作流到 ComfyUI，返回 prompt_id。"""
+    """提交工作流到 ComfyUI，返回 prompt_id。失败时带出 ComfyUI 的具体报错。"""
     r = requests.post(config.COMFY_URL + "/prompt",
                       json={"prompt": workflow, "client_id": "xiaojiao-harness"}, timeout=30)
-    r.raise_for_status()
+    if r.status_code != 200:
+        try:
+            detail = r.json().get("error", {}).get("message", r.text)
+        except Exception:
+            detail = r.text[:400]
+        raise RuntimeError("ComfyUI 拒绝工作流(%d): %s" % (r.status_code, detail))
     return r.json()["prompt_id"]
 
 
@@ -20,14 +25,14 @@ def wait_output(prompt_id, timeout=1800, progress_cb=None):
             h = requests.get(config.COMFY_URL + "/history/%s" % prompt_id, timeout=15).json()
         except Exception:
             h = {}
-        if prompt_id in h and h[prompt_id].get("outputs"):
-            for node, o in h[prompt_id]["outputs"].items():
+        if prompt_id in h:
+            if h[prompt_id].get("status", {}).get("status_str") == "error":
+                raise RuntimeError("ComfyUI 执行出错: %s" % json.dumps(h[prompt_id].get("status"))[:300])
+            for node, o in (h[prompt_id].get("outputs") or {}).items():
                 for key in ("gifs", "videos", "images"):
                     for f in o.get(key, []):
                         if key != "images" or f.get("type") == "output":
                             return f.get("filename"), f.get("subfolder", ""), f.get("type", "output")
-            if h[prompt_id].get("status", {}).get("status_str") == "error":
-                raise RuntimeError("ComfyUI 执行出错: %s" % json.dumps(h[prompt_id].get("status"))[:200])
         if progress_cb:
             progress_cb()
         time.sleep(3)

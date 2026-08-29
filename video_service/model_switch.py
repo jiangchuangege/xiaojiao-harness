@@ -81,7 +81,7 @@ def start_brain():
 
 
 def start_comfy():
-    """启动 ComfyUI（视频模型），等 8188 就绪。"""
+    """启动 ComfyUI（视频模型），等 8188 就绪。便携版用自带 python_embeded。"""
     global _comfy_proc
     _set("start_comfy", "正在加载视频模型(ComfyUI + Wan2.1 FP8)…")
     if _pid_on_port(config.COMFY_PORT):
@@ -89,16 +89,25 @@ def start_comfy():
     main_py = os.path.join(config.COMFY_DIR, "main.py")
     if not os.path.exists(main_py):
         raise RuntimeError("找不到 ComfyUI: %s（请设 XIAOJIAO_COMFY_DIR）" % main_py)
+    # 便携版优先用自己的 python_embeded（否则系统 python 缺包）
+    py = sys.executable
+    for cand in (os.path.join(config.COMFY_DIR, "..", "..", "python_embeded", "python.exe"),
+                 os.path.join(config.COMFY_DIR, "..", "python_embeded", "python.exe"),
+                 os.path.join(config.COMFY_DIR, "python_embeded", "python.exe")):
+        cp = os.path.normpath(cand)
+        if os.path.exists(cp):
+            py = cp
+            break
     _comfy_proc = subprocess.Popen(
-        [sys.executable, main_py],
+        [py, main_py],
         cwd=config.COMFY_DIR,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(180):  # 最多等 3 分钟加载
+    for _ in range(240):  # 最多等 4 分钟加载
         if _pid_on_port(config.COMFY_PORT):
             _set("start_comfy", "视频模型已就绪")
             return
         time.sleep(1)
-    raise RuntimeError("ComfyUI 启动超时")
+    raise RuntimeError("ComfyUI 启动超时(4分钟)")
 
 
 def stop_comfy():

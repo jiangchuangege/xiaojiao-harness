@@ -15,10 +15,11 @@ _jobs_lock = threading.Lock()
 
 def _load_workflow(prompt, ckpt):
     wf = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "workflow_wan.json"), encoding="utf-8"))
+    model_opt = os.environ.get("XIAOJIAO_WAN_MODEL", "wan2.6-t2v")
     for node in wf.values():
         for k, v in node.get("inputs", {}).items():
             if isinstance(v, str):
-                v = v.replace("__CKPT__", ckpt).replace("__POS__", prompt)
+                v = v.replace("__CKPT__", ckpt).replace("__POS__", prompt).replace("__MODEL__", model_opt)
                 node["inputs"][k] = v
     return wf
 
