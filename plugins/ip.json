@@ -1,0 +1,22 @@
+{
+  "name": "ip",
+  "description": "查询本机公网IP(API插件示例)",
+  "tools": [
+    {
+      "name": "get_ip",
+      "description": "查询当前公网IP地址",
+      "parameters": {"type": "object", "properties": {}},
+      "method": "GET",
+      "url": "https://api.ipify.org",
+      "response": "text"
+    },
+    {
+      "name": "get_ip_info",
+      "description": "查询IP归属地等信息(用 get_ip 的结果)",
+      "parameters": {"type": "object", "properties": {"ip": {"type": "string", "description": "IP地址"}}},
+      "method": "GET",
+      "url": "https://ipapi.co/{ip}/json",
+      "response": "json"
+    }
+  ]
+}

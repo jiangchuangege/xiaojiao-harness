@@ -1,0 +1,71 @@
+# ============================================================
+#  小焦 · XiaoJiao Harness  —  .gitignore
+#  5GB 项目中的原始语料、模型权重、日志与临时产物一律不入库，
+#  GitHub 只托管源代码、文档与可再生的构建脚本。
+# ============================================================
+
+# ---------- 原始多轮中文语料 LCCC ----------
+LCCC-*.json
+LCCD.json
+LCCC-large.zip
+LCCC-base-split.zip
+LCCC-base-split/
+LCCC-large/
+
+# ---------- 训练数据池（由语料转换 / 蒸馏生成，>=800MB） ----------
+training_data_pool.txt
+training_data_pool.txt.backup
+training_data_pool_clean.txt
+ai_generated.txt
+
+# ---------- 模型权重（.pth，异地备份于 G 盘） ----------
+mini_gpt_model.pth
+*.pth
+progress.txt
+model_config.json
+
+# ---------- 词表（由训练脚本自动生成） ----------
+vocab.pkl
+
+# ---------- 日志 / 运行状态 ----------
+*.log
+feedback_log.json
+auto_learner.log
+
+# ---------- 个人运行时状态（积累的记忆 / 知识 / 反馈） ----------
+xiaojiao_knowledge.txt
+xiaojiao_memory.txt
+xiaojiao_history.json
+xiaojiao_knowledge_memory.json
+xiaojiao_sessions.json
+xiaojiao_config.json
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ---------- 虚拟环境 ----------
+.venv/
+venv/
+env/
+.env
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---------- 其它大文件兜底 ----------
+*.zip
+*.7z
+*.rar
+*.tar.gz
+
+logs/
+
+self_learn/little_brain_knowledge.txt

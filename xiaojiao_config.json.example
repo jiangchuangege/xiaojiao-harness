@@ -1,0 +1,6 @@
+{
+  "_说明": "小焦的\"大脑\"用 OpenAI 兼容协议。填好下面三项，小焦就会用真 LLM 说话（像人一样）。把本文件重命名为 xiaojiao_config.json 生效。",
+  "llm_base_url": "http://127.0.0.1:8080/v1",
+  "llm_api_key": "",
+  "llm_model": "llama"
+}

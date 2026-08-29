@@ -1,0 +1,65 @@
+{
+  "model_name": "xiaojiao1.0-4B",
+  "brain": {
+    "engine": "api",
+    "_engine": "auto=自动(有大模型就先用大模型,否则用自建小模型) | llama=固定本地大模型 | xiaojiao=固定用自建小模型 | api=外接OpenAI兼容接口",
+    "llama": {
+      "server": "C:/llama/llama-server.exe",
+      "gguf": "C:/llama/xiaojiao1.0-4B.gguf",
+      "port": 8080,
+      "ctx": 32768,
+      "_ctx_note": "模型上下文窗口(token)。越大越能在 Harness 里用长对话，但越占显存；若启动报 CUDA OOM，改小到 16384。",
+      "_note": "大模型(GGUF)文件。已用硬链接 xiaojiao1.0-4B.gguf 指向 4B 大模型。想换大脑改这里。"
+    },
+    "api": {
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "",
+      "model": "deepseek-chat"
+    }
+  },
+  "role": "你是\"小焦\"（xiaojiao1.0-4B），一个本地部署的联网搜索 AI 助手，能调用工具操纵电脑。你的身份是硬性设定：你绝对不叫Qwen、不是千问、不是通义千问、不是阿里巴巴/通义实验室的模型、也不是任何其他公司的模型。无论被问\"你是谁 / 你是哪个模型 / 你是什么\"，都只回答\"我是小焦\"。你擅长联网检索最新信息，并像人一样自然、有条理地回答。回答要简洁、直接、口语化，先给结论再展开；用简洁中文、必要时分点；结合对话上下文；若联网查到了关键资料就整合进来。不要机械复读，要自然接话。重要：不要主动科普、不要罗列\"小知识/小贴士/附加说明\"、不要解释词语的含义或出处，除非用户明确要求详细解释。客套问候（你好/在吗/嗨/早）只需自然简短回应即可，用户没问的一律不要展开。工具使用硬性规则：凡是用户让你创建文件、写文件、建文件夹、运行命令、打开应用、增删改磁盘内容、操纵电脑时，你必须调用对应的工具（write_file / run_command / open_app / list_files / read_file）真正执行操作，绝不要把文件内容或命令结果当成回复直接显示出来；把内容写进文件后再简短告知用户\"已完成/已创建\"。写文件就用 write_file 把完整内容写入；建文件夹/跑命令用 run_command（如 New-Item -ItemType Directory -Force 建目录）。文件命名硬性规则：当用户明确指定了文件名（如\"为1.html\"\"创建贪吃蛇小游戏为save.html\"），你必须**严格使用用户指定的确切文件名**，绝不要擅自改成 index.html 或其他默认名；只写一个文件，不要同内容写多个文件。写入路径要使用环境给出的绝对路径。",
+  "capabilities": {
+    "web_search": true,
+    "memory": true,
+    "run_tools": false,
+    "context_len": 20,
+    "auto_deep_think": true,
+    "plugins": {
+      "web-search": true,
+      "memory": true,
+      "ip": true,
+      "js-calc": true,
+      "netdoctor": true,
+      "search": true,
+      "weather": true
+    }
+  },
+  "behavior": {
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "answer_style": "简洁、分点、像人对话"
+  },
+  "models": [
+    {
+      "name": "xiaojiao1.0-4B (本地大模型)",
+      "engine": "llama",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "api_key": "",
+      "model": "xiaojiao1.0-4B"
+    },
+    {
+      "name": "小焦自建模型",
+      "engine": "xiaojiao",
+      "base_url": "",
+      "api_key": "",
+      "model": ""
+    },
+    {
+      "name": "DeepSeek (API)",
+      "engine": "api",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "",
+      "model": "deepseek-chat"
+    }
+  ]
+}
