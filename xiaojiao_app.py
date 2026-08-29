@@ -778,15 +778,9 @@ def agent_run(user_input):
         append_msg("小焦", answer)
         return answer, True, info, needs_confirm, tool_trace
 
-    # 6. 无任何可用大脑（本地大模型未连接）时的降级（如实告知，不用小模型凑合）
-    fallback = "⚠️ 本地大模型未连接（8080 未启动），小焦暂时无法智能回答。以下是我联网查到的信息：\n"
-    if web_text:
-        fallback += "\n".join(f"· {t}：{c}" for t, c in info[:3])
-    else:
-        fallback += "· 也没能联网检索到资料。"
-    if mem_text:
-        fallback += "\n💾 我记忆里相关的内容：" + mem_text[:160]
-    return fallback, False, info, False, []
+    # 6. 无任何可用大脑（本地大模型未连接）时的降级（只给一句简洁提示，不瞎输出联网内容）
+    fallback = "🤖 本地大模型未连接（8080 未启动），小焦暂时没法回答。\n请先运行 `python start_xiaojiao.py` 启动大模型，或确认 8080 端口已就绪。"
+    return fallback, False, [], False, []
 
 
 app = Flask(__name__)

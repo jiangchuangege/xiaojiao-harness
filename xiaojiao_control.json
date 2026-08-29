@@ -1,7 +1,7 @@
 {
   "model_name": "xiaojiao1.0-4B",
   "brain": {
-    "engine": "llama",
+    "engine": "auto",
     "_engine": "auto=自动(有大模型就先用大模型,否则用自建小模型) | llama=固定本地大模型 | xiaojiao=固定用自建小模型 | api=外接OpenAI兼容接口",
     "llama": {
       "server": "C:/llama/llama-server.exe",
@@ -46,20 +46,6 @@
       "base_url": "http://127.0.0.1:8080/v1",
       "api_key": "",
       "model": "xiaojiao1.0-4B"
-    },
-    {
-      "name": "小焦自建模型",
-      "engine": "xiaojiao",
-      "base_url": "",
-      "api_key": "",
-      "model": ""
-    },
-    {
-      "name": "DeepSeek (API)",
-      "engine": "api",
-      "base_url": "https://api.deepseek.com/v1",
-      "api_key": "",
-      "model": "deepseek-chat"
     }
   ],
   "dsh": {}
