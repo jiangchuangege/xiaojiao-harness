@@ -789,6 +789,19 @@ def agent_run(user_input):
 app = Flask(__name__)
 
 
+# ===== 扩展：真·文生视频（video_service / ComfyUI + Wan，按需切换模型）=====
+_vdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "video_service")
+if _vdir not in sys.path:
+    sys.path.insert(0, _vdir)
+try:
+    from video_api import bp as _video_bp
+    app.register_blueprint(_video_bp)
+    print("🎬 视频服务已挂载（ComfyUI + Wan2.1，按需切换模型）")
+except Exception as _e:
+    print("⚠️ 视频服务未挂载:", _e)
+
+
+
 def _hist_json():
     return current_messages()[-MAX_HISTORY:]
 
@@ -837,7 +850,9 @@ def api_ws_open():
 
 
 
+
 @app.route("/api/sessions")
+
 
 
 def api_sessions():
@@ -1585,6 +1600,7 @@ HTML = r"""<!DOCTYPE html>
 <div id="feed"><div class="think">👋 你好，我是小焦。有问题直接问我，我会联网搜索并结合记忆回答。</div></div>
 <footer><div class="bar">
   <span class="ws-ind" id="wsInd" onclick="toggleAccess()" title="点击：Full access(所有命令直接执行,危险也不询问)/Read-only(每次执行都询问)">🔐 Full access</span>
+  <button class="icon-btn" onclick="makeVideo()" title="本地零算力生成视频">🎬</button>
   <input id="inp" placeholder="向小焦提问…" autocomplete="off"/>
   <select id="modelSel" class="iconselect" onchange="selectModel()"></select>
   <button onclick="send()" title="发送">➤</button>
@@ -1715,6 +1731,21 @@ async function openWsFile(name){try{const d=await (await fetch("/api/ws/open",{m
   cur.innerHTML="<div class=\"modal modal-wide\"><h3>📄 "+esc(d.name)+"</h3><pre class=\"wspre\">"+esc(d.content)+"</pre><div class=\"m-actions\"><button onclick=\"closeSearch()\">关闭</button></div></div>";
 }catch(e){alert("读取失败");}}
 
+async function makeVideo(){const q=prompt('输入视频场景（真·AI 文生视频，ComfyUI + Wan2.1）：');if(!q)return;
+  const m=document.createElement('div');m.className='m bot';m.innerHTML='<div class="b">🎬 正在准备…</div>';feed.appendChild(m);feed.scrollTop=feed.scrollHeight;
+  const b=m.querySelector('.b');
+  try{const d=await (await fetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:q})})).json();
+   if(d.busy){b.innerHTML='⏳ 正在生成/切换模型中，请稍候…';return;}
+   if(!d.ok){b.innerHTML='⚠️ '+esc(d.error||'启动失败');return;}
+   let n=0;
+   const iv=setInterval(async()=>{n++;
+     try{const st=await (await fetch('/api/video/status?job='+d.job)).json();
+      if(st.state==='done'){clearInterval(iv);b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频 · '+esc(q)+'</div>';feed.scrollTop=feed.scrollHeight;}
+      else if(st.state==='error'){clearInterval(iv);b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
+      else{b.textContent='🎬 '+esc(st.message||'处理中…')+'（已等 '+(n*5)+'s）';}
+     }catch(e){}
+   },5000);
+  }catch(e){b.innerHTML='⚠️ 出错了：'+esc(e.message);}}
 function openBrain(){document.getElementById('brainBg').style.display='flex';loadBrain();}
 function closeBrain(){document.getElementById('brainBg').style.display='none';}
 async function loadBrain(){try{const d=await (await fetch('/api/brain')).json();
