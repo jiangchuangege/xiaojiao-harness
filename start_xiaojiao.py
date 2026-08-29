@@ -26,7 +26,8 @@ DSH_ENABLED = CONTROL.get("dsh", {}).get("enabled", False)
 
 def resolve_llama_paths():
     """解析大模型路径：控制文件(存在才用) -> 环境变量(XIAOJIAO_LLAMA_SERVER/XIAOJIAO_GGUF) -> 自动查找。换电脑不用改代码。"""
-    server, gguf = resolve_llama_paths()
+    server = BRAIN.get("llama", {}).get("server", "")
+    gguf = BRAIN.get("llama", {}).get("gguf", "")
     if not (os.path.exists(server) and os.path.exists(gguf)):
         server = os.environ.get("XIAOJIAO_LLAMA_SERVER", server) or ""
         gguf = os.environ.get("XIAOJIAO_GGUF", gguf) or ""
