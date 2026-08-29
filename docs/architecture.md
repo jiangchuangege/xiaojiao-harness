@@ -145,7 +145,30 @@ class XXPlugin:
 
 ---
 
-## 7. 观测层：Web 监控
+## 7. 真·文生视频（video_service，按需切换）
+
+小焦还具备**本地 AI 文生视频**能力：网页点 🎬 → `video_service` **按需切换模型**（8G 显存互斥）：
+
+```mermaid
+flowchart LR
+    subgraph XJ["小焦 Web (5000)"]
+        A["agent_run (对话)"]
+        V["🎬 生成视频 video_service"]
+    end
+    V -->|1 卸载大脑| STOP["停止 llama-server(8080)"]
+    V -->|2 启动| COMFY["ComfyUI(8188)<br/>+ Wan2.1-1.3B-FP8"]
+    COMFY -->|3 生成 480p| OUT["videos/*.mp4"]
+    V -->|4 停止ComfyUI/恢复大脑| RESTORE["重启 llama-server(8080)"]
+    A -->|5 恢复后继续对话| A
+```
+
+**关键**：大脑(LLM) 与 视频(扩散) 不同时占显存——`video_service/model_switch.py` 负责：卸大脑→起 ComfyUI→生成→停 ComfyUI→恢复大脑。前端显示进度条（后端轮询 ComfyUI `/progress`），状态无锁读取、刷新/多标签不丢进度。
+
+> 详见 [video.md](video.md)。
+
+---
+
+## 8. 观测层：Web 监控
 
 [`web_monitor.py`](../web_monitor.py) 用 Flask 起一个轻量面板，提供：
 

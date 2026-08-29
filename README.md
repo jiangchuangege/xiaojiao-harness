@@ -50,6 +50,7 @@
 | 💬 | **多会话** | 每个新对话一个会话，左边切换 |
 | 🎛️ | **模型管理** | 顶部下拉切模型，设置里增删模型 |
 | 🔗 | **OpenAI 兼容** | `/v1` 接口，dsh / 任意客户端能接 |
+| 🎬 | **真·文生视频** | 本地 ComfyUI+Wan2.1 真生成（8G按需切换、进度条、刷新不丢） |
 
 ---
 
@@ -114,6 +115,7 @@ flowchart TD
         T4["API 插件 .json(接口声明成工具)"]
         T5["技能插件 .md(拼进人设)"]
         T6["联网检索"]
+        T7["文生视频 video_service<br/>(人工切换模型→ComfyUI+Wan2.1)"]
     end
     W & C --> AGENT
     T --> TOOLS
@@ -501,9 +503,12 @@ flowchart TD
     ST["start_xiaojiao.py"] --> BIG
     ST --> W
     ST --> BR["dsh_bridge(5001)"]
+    W -->|🎬生成视频| VID["video_service<br/>(卸载大脑→ComfyUI+Wan2.1→生成→恢复大脑)"]
+    VID --> COMFY["ComfyUI(8188) + Wan2.1-FP8<br/>(按需切换, 8G互斥)"]
+    COMFY --> OUTV["videos/*.mp4 真视频"]
 ```
 
-**调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 小模型/检索池越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + DSH 桥接。
+**调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；点 🎬 → video_service **按需切换**（卸大脑→ComfyUI+Wan2.1 生成→恢复大脑）出真视频；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + DSH 桥接。
 
 ---
 
