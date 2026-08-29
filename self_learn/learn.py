@@ -17,6 +17,7 @@
 """
 
 import json, os, sys, datetime
+import vstore
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PROJ = os.path.dirname(BASE)                                  # 项目根
@@ -105,6 +106,8 @@ def cmd_build(args):
                 if trace:
                     lesson += " 用工具:%s" % trace
                 out.write(lesson + "\n")
+                try: vstore.add(lesson, tag='learned')
+                except Exception: pass
                 added += 1
     if added:
         # 同步进小脑检索池(让它检索时用得上这些学到的功能用法)
@@ -118,6 +121,36 @@ def _count(fp):
         return sum(1 for _ in open(fp, encoding="utf-8"))
     except Exception:
         return 0
+
+
+
+def cmd_reflect(args):
+    """反思机制：用户不满意/更正时，让大脑反思"为什么没答好/下次怎么改"，反思结果进知识库+向量库。"""
+    user = args[0] if len(args) > 0 else ""
+    ans = args[1] if len(args) > 1 else ""
+    fb = args[2] if len(args) > 2 else ""
+    corr = args[3] if len(args) > 3 else ""
+    if not user: print("缺少问题"); return
+    reflection = ("反思: 用户问「%s」，小焦答「%s」，反馈「%s」。%s"
+                  "下次遇到此类问题应: %s" %
+                  (user, ans, fb, ("用户更正为「%s」。" % corr) if corr else "",
+                   ("直接按更正的方式回答" if corr else "先弄清用户真正想要的再答/先用工具再答")))
+    with open(KNOW_FILE, "a", encoding="utf-8") as out:
+        out.write("用户 %s 小焦 %s 反思:%s\n" % (user, ans, fb))
+    vstore.add(reflection, tag="reflection")
+    print("已生成反思并存入知识库+向量库:")
+    print(" ", reflection)
+
+
+def cmd_search(args):
+    """测试向量检索命中。"""
+    q = args[0] if len(args) > 0 else ""
+    if not q: print("请输入查询"); return
+    r = vstore.search(q, threshold=0.5)
+    print("查询:", q)
+    print("命中(>0.5):", r["hit"], "| 最佳:", round(r["best"][0], 3), r["best"][1][:60] if r["best"][1] else "")
+    for sc, txt, tag in r["top"][:3]:
+        print("  ", round(sc, 3), tag, "->", txt[:60])
 
 
 def cmd_train(args):
@@ -145,6 +178,7 @@ def cmd_stats(args):
     print("  反馈: 点赞", fb["good"], "| 4星5星", fb["star"], "| 踩", fb["bad"], "| 更正", fb["corrected"])
     print("  ★ 小脑知识库:", _count(KNOW_FILE), "条(越长越强)  ->", KNOW_FILE)
     print("  检索池:", _count(RETRIEVE_POOL), "条  ->", RETRIEVE_POOL)
+    print("  向量库知识:", vstore.count(), "条(Reflection/功能用法,更强)  ->", os.path.join(os.path.dirname(os.path.abspath(__file__)),"knowledge_vec.json"))
 
 
 def main():
@@ -154,7 +188,7 @@ def main():
     cmd = sys.argv[1]
     args = sys.argv[2:]
     {"log": cmd_log, "feedback": cmd_feedback, "build": cmd_build,
-     "train": cmd_train, "stats": cmd_stats}.get(cmd, lambda a: print("未知命令(参考顶部用法)"))(args)
+     "train": cmd_train, "stats": cmd_stats, "reflect": cmd_reflect, "search": cmd_search}.get(cmd, lambda a: print("未知命令(参考顶部用法)"))(args)
 
 
 if __name__ == "__main__":
