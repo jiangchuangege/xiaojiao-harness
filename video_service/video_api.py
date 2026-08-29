@@ -104,25 +104,22 @@ def api_video():
 @bp.route("/api/video/status")
 def api_video_status():
     job = request.args.get("job", "")
-    with _jobs_lock:
-        j = _jobs.get(job)
-        if j is None:
-            return jsonify({"state": "unknown"})
-        return jsonify(j)
+    j = _jobs.get(job)
+    if j is None:
+        return jsonify({"state": "unknown"})
+    return jsonify(j)
 
 
 
 @bp.route("/api/video/current")
 def api_video_current():
     """返回当前活跃任务(服务器全局，跨浏览器/刷新/重启都能拿到)。"""
-    with _jobs_lock:
-        active = None
-        for j in list(_jobs.values()):
-            if j.get("state") in ("queued", "switching", "generating"):
-                active = j; break
-        if active is None:
-            # 返回最近一个(可能是done/error,便于展示上个结果)
-            active = list(_jobs.values())[-1] if _jobs else None
+    active = None
+    for j in list(_jobs.values()):
+        if j.get("state") in ("queued", "switching", "generating"):
+            active = j; break
+    if active is None:
+        active = list(_jobs.values())[-1] if _jobs else None
     if active is None:
         return jsonify({"none": True})
     st = ms.get_state()
