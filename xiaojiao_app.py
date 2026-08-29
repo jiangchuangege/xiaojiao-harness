@@ -1624,7 +1624,7 @@ HTML = r"""<!DOCTYPE html>
 <footer><div class="bar">
   <span class="ws-ind" id="wsInd" onclick="toggleAccess()" title="点击：Full access(所有命令直接执行,危险也不询问)/Read-only(每次执行都询问)">🔐 Full access</span>
   <button class="icon-btn" onclick="makeVideo()" title="本地零算力生成视频">🎬</button>
-  <input id="inp" placeholder="向小焦提问…" autocomplete="off"/>
+  <input id="inp" placeholder="向小焦提问…（Enter 发送）" autocomplete="off" onkeydown="if(event.key==='Enter')send()"/>
   <select id="modelSel" class="iconselect" onchange="selectModel()"></select>
   <button onclick="send()" title="发送">➤</button>
 </div></footer>
@@ -1930,7 +1930,7 @@ async function newChat(){await fetch('/api/session/new',{method:'POST'});clearFe
 async function openSession(id){const r=await fetch('/api/session/'+id);const d=await r.json();clearFeed();(d.messages||[]).forEach(h=>add(h.role==='用户'?'user':'bot',h.content));loadSessions();}
 function clearFeed(){document.getElementById('feed').innerHTML='<div class="think">👋 新对话，问小焦一个问题…</div>';}
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('hidden');}
-(async()=>{try{loadModels();loadHistory();loadSessions();}catch(e){}
+(async()=>{try{loadModels();}catch(e){}try{loadHistory();}catch(e){}try{loadSessions();}catch(e){}
  try{const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);}catch(e){}
  resumeVideoJob();resumeChat();})();
 async function confirmAction(){const r=await fetch('/api/confirm',{method:'POST'});const d=await r.json();
