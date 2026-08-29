@@ -793,7 +793,53 @@ def _hist_json():
     return current_messages()[-MAX_HISTORY:]
 
 
+
+@app.route("/api/workspace")
+def api_workspace():
+    """列出项目文件夹内容(工作区)。"""
+    root = os.path.dirname(os.path.abspath(__file__))
+    out = []
+    try:
+        for name in sorted(os.listdir(root)):
+            fp = os.path.join(root, name)
+            if name.startswith(".") or name in ("__pycache__", "logs", "bak"):
+                continue
+            typ = "dir" if os.path.isdir(fp) else "file"
+            if typ == "file":
+                try: sz = "%.1fK" % (os.path.getsize(fp) / 1024)
+                except Exception: sz = ""
+            else:
+                sz = ""
+            out.append({"name": name, "type": typ, "size": sz})
+    except Exception:
+        pass
+    return jsonify(out)
+
+
+@app.route("/api/ws/open", methods=["POST"])
+def api_ws_open():
+    """读取项目内一个文本文件(工作区预览)。防目录穿越。"""
+    d = request.get_json(force=True, silent=True) or {}
+    name = (d.get("name") or "").replace("\\", "/").strip()
+    root = os.path.dirname(os.path.abspath(__file__))
+    if not name or ".." in name or name.startswith("/"):
+        return jsonify({"ok": False, "error": "非法文件名"}), 400
+    fp = os.path.normpath(os.path.join(root, name))
+    if not fp.startswith(root) or not os.path.exists(fp) or os.path.isdir(fp):
+        return jsonify({"ok": False, "error": "不存在"}), 404
+    try:
+        size = os.path.getsize(fp)
+        if size > 200000:
+            return jsonify({"ok": False, "error": "文件过大(>200KB)"}), 413
+        return jsonify({"ok": True, "name": name, "content": open(fp, encoding="utf-8", errors="replace").read()[:200000]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+
 @app.route("/api/sessions")
+
+
 def api_sessions():
     d = _sessions()
     return jsonify({"current": d.get("current"),
@@ -912,7 +958,54 @@ def api_feedback():
 
 
 
+
+@app.route("/api/brain")
+def api_brain():
+    """『小脑』完整数据：成长统计 + 学到的功能用法 + 反思。"""
+    root = os.path.dirname(os.path.abspath(__file__))
+    def cnt(rel):
+        try:
+            return sum(1 for _ in open(os.path.join(root, rel), encoding="utf-8"))
+        except Exception:
+            return 0
+    def tail(rel, n=14):
+        try:
+            lines = [x.strip() for x in open(os.path.join(root, rel), encoding="utf-8") if x.strip()]
+            return lines[-n:]
+        except Exception:
+            return []
+    know = cnt(os.path.join("self_learn", "little_brain_knowledge.txt"))
+    logs = cnt(os.path.join("logs", "chat_history.jsonl"))
+    good = bad = corr = 0
+    try:
+        for ln in open(os.path.join(root, "logs", "feedback.jsonl"), encoding="utf-8"):
+            try:
+                r = json.loads(ln)
+            except Exception:
+                continue
+            f = r.get("feedback", "")
+            if f in ("good", "👍") or str(f).strip("星") in ("4", "5"):
+                good += 1
+            elif f in ("bad", "👎"):
+                bad += 1
+            if r.get("corrected_reply"):
+                corr += 1
+    except Exception:
+        pass
+    try:
+        import sys as _s, os as _o
+        _s.path.insert(0, os.path.join(root, "self_learn"))
+        import vstore
+        vc = vstore.count()
+    except Exception:
+        vc = 0
+    lessons = tail(os.path.join("self_learn", "little_brain_knowledge.txt"))
+    return jsonify({"know": know, "logs": logs, "good": good, "bad": bad, "corr": corr,
+                    "vec": vc, "lessons": lessons})
+
+
 @app.route("/api/growth")
+
 def api_growth():
     """小脑成长指标(面板用)。"""
     root = os.path.dirname(os.path.abspath(__file__))
@@ -1116,25 +1209,61 @@ def _growth_html():
     except Exception:
         pass
     bar = min(100, int(know / 5))
-    return ("""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>小焦成长报告</title>
-<style>body{margin:0;font-family:'Segoe UI',sans-serif;background:linear-gradient(160deg,#0e1116,#141a2e);color:#e8ebf3;display:flex;justify-content:center;padding:40px 16px}
-.card{max-width:520px;width:100%%;background:#151a26;border:1px solid #2a3140;border-radius:20px;padding:28px;box-shadow:0 30px 80px #0009}
-h1{font-size:22px;margin:0 0 4px}.sub{color:#8b93a3;font-size:13px;margin-bottom:22px}
-.big{font-size:44px;font-weight:800;background:linear-gradient(135deg,#5b5ff5,#7c5cf0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.row{display:flex;gap:12px;margin-top:18px}.cell{flex:1;background:#0e1116;border:1px solid #232a3e;border-radius:12px;padding:14px;text-align:center}
-.cell .n{font-size:24px;font-weight:700}.cell .t{font-size:12px;color:#8b93a3;margin-top:4px}
-.foot{margin-top:26px;color:#6e7681;font-size:12px;text-align:center;line-height:1.7}
-.bar{height:10px;background:#0e1116;border-radius:6px;overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:linear-gradient(90deg,#5b5ff5,#7c5cf0);border-radius:6px}</style></head><body><div class="card">
-<h1>🐳 小焦 · 小脑成长报告</h1><div class="sub">小脑跟着大脑学 · 别人靠算力，小脑靠文本</div>
-<div class="big">@@KNOW@@</div><div style="color:#8b93a3;font-size:13px">小脑知识库累计（条）—— 越长越强</div>
-<div class="bar"><i style="width:@@BAR@@%"></i></div>
-<div class="row"><div class="cell"><div class="n">@@LOGS@@</div><div class="t">交互记录</div></div>
-<div class="cell"><div class="n">@@GOOD@@</div><div class="t">👍 点赞</div></div>
-<div class="cell"><div class="n">@@CORR@@</div><div class="t">✏️ 被更正</div></div></div>
-<div class="foot">它不会很多话，但会慢慢成为只属于你的那一只 🐳<br>xiaojiao-harness · 持续学习 · DSH 插件生态</div>
+    try:
+        import sys as _s, os as _o
+        _s.path.insert(0, os.path.join(root, "self_learn"))
+        import vstore
+        vec = vstore.count()
+    except Exception:
+        vec = 0
+    lessons = []
+    try:
+        ls = [x.strip() for x in open(os.path.join(root, "self_learn", "little_brain_knowledge.txt"), encoding="utf-8") if x.strip()]
+        lessons = ls[-8:][::-1]
+    except Exception:
+        pass
+    lhtml = "".join("<div class='bli'>" + (l[:64] + ("…" if len(l) > 64 else "")) + "</div>" for l in lessons) or "<div class='bli think'>还没学到东西，多聊几轮、点几个👍吧</div>"
+    return ("""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>小焦成长报告</title>
+<style>*{box-sizing:border-box}body{margin:0;font-family:'Segoe UI',sans-serif;background:linear-gradient(160deg,#0e1116,#141a2e);color:#e8ebf3;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:32px 16px}
+.wrap{max-width:760px;width:100%}
+.hero{text-align:center;margin-bottom:22px}
+.hero h1{font-size:30px;margin:0 0 8px;font-weight:800}
+.hero .sub{color:#8b93a3;font-size:14px}
+.big{font-size:72px;font-weight:800;background:linear-gradient(135deg,#5b5ff5,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1}
+.big-l{color:#8b93a3;font-size:14px;margin-top:6px}
+.bar{height:12px;background:#0e1116;border:1px solid #232a3e;border-radius:8px;overflow:hidden;margin-top:12px}.bar i{display:block;height:100%;background:linear-gradient(90deg,#5b5ff5,#7c5cf0)}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:24px}
+.card{background:#151a26;border:1px solid #2a3140;border-radius:16px;padding:20px;text-align:center}
+.card .n{font-size:36px;font-weight:800;color:#5b5ff5}
+.card .t{font-size:13px;color:#8b93a3;margin-top:6px}
+.panel{background:#151a26;border:1px solid #2a3140;border-radius:16px;padding:20px;margin-top:24px}
+.panel h3{margin:0 0 12px;font-size:16px;color:#cbd0dc}
+.bli{font-size:13px;color:#c9d1d9;padding:8px 2px;border-bottom:1px solid #1a2030;line-height:1.6;font-family:Consolas,monospace}
+.think{color:#6e7681;font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:26px}
+.chip{background:#1a2030;border:1px solid #2a3140;border-radius:20px;padding:7px 14px;font-size:13px;color:#aab2c0}
+.foot{text-align:center;color:#6e7681;font-size:12px;line-height:1.8;margin-top:30px}
+@media(max-width:600px){.cards{grid-template-columns:1fr 1fr}.big{font-size:56px}}
+</style></head><body><div class="wrap">
+<div class="hero"><h1>🐳 小焦 · 小脑成长报告</h1><div class="sub">小脑跟着大脑学 · 别人靠算力，小脑靠文本</div></div>
+<div class="card"><div class="big">@@KNOW@@</div><div class="big-l">小脑知识库累计（条）—— 越长越强</div>
+<div class="bar"><i style="width:@@BAR@@%"></i></div></div>
+<div class="cards">
+<div class="card"><div class="n">@@VEC@@</div><div class="t">🧠 向量知识</div></div>
+<div class="card"><div class="n">@@LOGS@@</div><div class="t">💬 交互记录</div></div>
+<div class="card"><div class="n">@@GOOD@@</div><div class="t">👍 点赞</div></div>
+<div class="card"><div class="n">@@BAD@@</div><div class="t">👎 踩</div></div>
+<div class="card"><div class="n">@@CORR@@</div><div class="t">✏️ 被更正</div></div>
+<div class="card"><div class="n">⭐</div><div class="t">持续学习中</div></div>
+</div>
+<div class="panel"><h3>🧠 最近学到</h3>@@LESSONS@@</div>
+<div class="chips"><span class="chip">持续学习</span><span class="chip">DSH 插件生态</span><span class="chip">免密钥联网</span><span class="chip">多人格</span><span class="chip">本地隐私</span></div>
+<div class="foot">它不会很多话，但会慢慢成为只属于你的那一只 🐳<br>xiaojiao-harness · 持续学习 · DSH 插件生态 · Made with ❤️</div>
 </div></body></html>"""
         .replace("@@KNOW@@", str(know)).replace("@@BAR@@", str(bar))
-        .replace("@@LOGS@@", str(logs)).replace("@@GOOD@@", str(good)).replace("@@CORR@@", str(corr)))
+        .replace("@@VEC@@", str(vec)).replace("@@LOGS@@", str(logs))
+        .replace("@@GOOD@@", str(good)).replace("@@BAD@@", str(bad)).replace("@@CORR@@", str(corr))
+        .replace("@@LESSONS@@", lhtml))
 
 
 @app.route("/api/settings", methods=["GET"])
@@ -1399,11 +1528,39 @@ HTML = r"""<!DOCTYPE html>
   .setbody{background:#141822;border:1px solid #262b3a;border-radius:14px;padding:22px}
   .sec{display:none}
   .sec.show{display:block}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:999}
+  .modal{background:#151a26;border:1px solid #2a3140;border-radius:14px;padding:20px;width:min(420px,90vw);box-shadow:0 20px 60px #000a;color:#e8ebf3}
+  .modal h3{font-size:15px;margin:0 0 12px;font-weight:600}
+  .modal input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;font-size:14px}
+  .modal .m-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
+  .modal button{padding:7px 14px;border-radius:8px;border:1px solid #2a3140;background:#222a3e;color:#e8ebf3;cursor:pointer}
+  .modal button.primary{background:linear-gradient(135deg,#5b5ff5,#7c5cf0);border:none;color:#fff}
+  .brainbg{position:fixed;inset:0;background:rgba(5,7,12,.82);display:flex;align-items:center;justify-content:center;z-index:998;padding:24px}
+  .brain{width:min(860px,96vw);max-height:92vh;overflow-y:auto;background:#11141e;border:1px solid #2a3140;border-radius:18px;padding:24px;box-shadow:0 30px 90px #000a;color:#e8ebf3}
+  .brain-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+  .brain-head .logo{font-size:22px;font-weight:800}
+  .brain-sub{color:#8b93a3;font-size:13px}
+  .brain-head .x{margin-left:auto}
+  .brain-stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:18px}
+  .brain-stats .bs{background:#0e1116;border:1px solid #232a3e;border-radius:12px;padding:12px;text-align:center}
+  .brain-stats .bs .n{font-size:24px;font-weight:700;color:#5b5ff5}
+  .brain-stats .bs .t{font-size:11px;color:#8b93a3;margin-top:4px}
+  .brain-cols{display:grid;grid-template-columns:1.4fr 1fr;gap:16px}
+  .brain-col h4{margin:0 0 8px;font-size:14px;color:#cbd0dc}
+  .brain-list{background:#0e1116;border:1px solid #232a3e;border-radius:12px;padding:10px;max-height:340px;overflow-y:auto}
+  .brain-list .bli{font-size:12px;color:#aab2c0;padding:6px 4px;border-bottom:1px solid #1a2030;line-height:1.5}
+  .brain-note{font-size:13px;color:#8b93a3;line-height:1.8}
+  .wswrap{display:block;cursor:pointer}
+  #wsPanel{margin:4px 8px;background:#0e1116;border:1px solid #232a3e;border-radius:10px;padding:8px;max-height:260px;overflow-y:auto}
+  .wsitem{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;font-size:13px;color:#cbd0dc;cursor:pointer}
+  .wsitem:hover{background:#1e2430}
+  .wsitem .ic{flex:0 0 18px;font-size:15px}
+  .wsitem .sz{margin-left:auto;font-size:11px;color:#6e7681}
 </style></head><body>
 <div id="app">
   <div id="sidebar">
     <div class="sbtop"><button class="newchat" onclick="newChat()">➕ 新会话</button></div>
-    <div class="sbws"><span>🗂️ 工作区</span><span class="wsicons"><span class="wsc" title="搜索会话" onclick="openSearch()">🔍</span>&nbsp;<span class="wsc" title="打开设置" onclick="openSettings()">⚙️</span>&nbsp;<span class="wsc" title="刷新会话" onclick="loadSessions()">↻</span></span></div>
+    <div class="sbws"><span class="wswrap" onclick="toggleWorkspace()">🗂️ 工作区</span><span class="wsicons"><span class="wsc" title="搜索会话" onclick="openSearch()">🔍</span>&nbsp;<span class="wsc" title="打开设置" onclick="openSettings()">⚙️</span>&nbsp;<span class="wsc" title="刷新会话" onclick="loadSessions()">↻</span></span></div>
     <div class="sbdocs">
       <div class="sbtabs"><span class="on" onclick="setTab(this,1)">💬 对话</span><span onclick="setTab(this,2)">🧭 轨迹</span></div>
       <div id="sessionList"></div>
@@ -1420,7 +1577,7 @@ HTML = r"""<!DOCTYPE html>
   <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2">2 个后台任务并行中</span></div>
   <div class="hdr-right">
     <button class="icon-btn" id="toolsBtn" onclick="toggleTools()">🛠️ 工具</button>
-    <button class="icon-btn" onclick="openGrowth()">🧠 小脑</button>
+    <button class="icon-btn" onclick="openBrain()">🧠 小脑</button>
     <button class="icon-btn" onclick="openSettings()">⚙️ 设置</button>
     <button class="icon-btn" onclick="copyPage()">📄 Session log ⚡</button>
   </div>
@@ -1442,11 +1599,17 @@ HTML = r"""<!DOCTYPE html>
     <div class="m-actions"><button onclick="closeSearch()">取消</button><button class="primary" onclick="doSearch()">确定</button></div>
   </div>
 </div>
-<div id="growthBg" class="modal-bg" style="display:none">
-  <div class="modal">
-    <h3>🧠 小脑成长</h3>
-    <div id="gstat">读取中…</div>
-    <div class="m-actions"><button onclick="closeGrowth()">关闭</button><button class="primary" onclick="window.open('/growth')">📄 生成成长报告</button></div>
+<div id="brainBg" class="brainbg" style="display:none">
+  <div class="brain">
+    <div class="brain-head"><span class="logo">🐳 小脑</span><span class="brain-sub">小焦真正自研的那颗会学习的脑</span><button class="icon-btn x" onclick="closeBrain()">✕</button></div>
+    <div class="brain-stats" id="brainStats">读取中…</div>
+    <div class="brain-cols">
+      <div class="brain-col"><h4>🧠 学到的功能用法</h4><div id="brainLessons" class="brain-list">…</div></div>
+      <div class="brain-col"><h4>🧭 说明</h4><div class="brain-note">
+        「别人靠算力，小脑靠文本。」每次你点👍/被更正，大脑的好答案就写进小脑知识库，越长越强；小脑检索命中即可复用。<br><br>
+        <button class="btn-sec" onclick="window.open('/growth')">📄 生成成长报告（可分享）</button>
+      </div></div>
+    </div>
   </div>
 </div>
 <div id="settings">
@@ -1542,16 +1705,30 @@ function loadTrace(){const el=document.getElementById('traceList');
     el.innerHTML=r.length?r.map(x=>'<div class="srci"><div class="st">'+esc(x.tool||'')+'</div><div class="sc">'+esc(String(x.result||'').slice(0,80))+'</div></div>').join(''):'<div class="think">暂无工具轨迹</div>';}catch(e){}}
 let fullAccess=true;
 
-function openGrowth(){document.getElementById('growthBg').style.display='flex';loadGrowth();}
-function closeGrowth(){document.getElementById('growthBg').style.display='none';}
-async function loadGrowth(){try{const d=await (await fetch('/api/growth')).json();
-  const el=document.getElementById('gstat');
-  el.innerHTML='<div class="grow-row"><div class="grow-n">'+d.know+'</div><div class="grow-t">小脑知识库(条) · 越长越强</div></div>'+
-   '<div class="grow-row"><div class="grow-n">'+d.logs+'</div><div class="grow-t">交互记录(次)</div></div>'+
-   '<div class="grow-row"><div class="grow-n">'+d.good+'</div><div class="grow-t">👍 点赞</div></div>'+
-   '<div class="grow-row"><div class="grow-n">'+d.corr+'</div><div class="grow-t">✏️ 被更正</div></div>'+
-   '<div style="margin-top:10px;font-size:12px;color:#8b93a3">点「生成成长报告」→ 一份可分享的《小脑成长报告》</div>';
- }catch(e){document.getElementById('gstat').textContent='读取失败';}}
+
+async function toggleWorkspace(){const el=document.getElementById("wsPanel");if(el.style.display==="none"){el.style.display="block";await loadWorkspace();}else{el.style.display="none";}}
+async function loadWorkspace(){try{const d=await (await fetch("/api/workspace")).json();const el=document.getElementById("wsPanel");
+  el.innerHTML=d.length?d.map(function(x){return "<div class=\"wsitem\" data-n=\""+esc(x.name)+"\" onclick=\"openWsFile(this.dataset.n)\"><span class=\"ic\">"+(x.type==="dir"?"📁":"📄")+"</span><span>"+esc(x.name)+"</span><span class=\"sz\">"+esc(x.size)+"</span></div>";}).join(""):"<div class=\"think\">空</div>";}catch(e){document.getElementById("wsPanel").innerHTML="<div class=\"think\">读取失败</div>";}}
+async function openWsFile(name){try{const d=await (await fetch("/api/ws/open",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:name})})).json();
+  if(!d.ok){alert(d.error||"无法打开");return;}
+  const cur=document.getElementById("modalBg");cur.style.display="flex";
+  cur.innerHTML="<div class=\"modal modal-wide\"><h3>📄 "+esc(d.name)+"</h3><pre class=\"wspre\">"+esc(d.content)+"</pre><div class=\"m-actions\"><button onclick=\"closeSearch()\">关闭</button></div></div>";
+}catch(e){alert("读取失败");}}
+
+function openBrain(){document.getElementById('brainBg').style.display='flex';loadBrain();}
+function closeBrain(){document.getElementById('brainBg').style.display='none';}
+async function loadBrain(){try{const d=await (await fetch('/api/brain')).json();
+  document.getElementById('brainStats').innerHTML=
+   '<div class="bs"><div class="n">'+d.know+'</div><div class="t">知识库(条)</div></div>'+
+   '<div class="bs"><div class="n">'+d.vec+'</div><div class="t">向量知识</div></div>'+
+   '<div class="bs"><div class="n">'+d.logs+'</div><div class="t">交互(次)</div></div>'+
+   '<div class="bs"><div class="n">'+d.good+'</div><div class="t">👍 点赞</div></div>'+
+   '<div class="bs"><div class="n">'+d.bad+'</div><div class="t">👎 踩</div></div>'+
+   '<div class="bs"><div class="n">'+d.corr+'</div><div class="t">✏️ 更正</div></div>';
+  const ls=document.getElementById('brainLessons');
+  const arr=d.lessons||[];
+  ls.innerHTML=arr.length?arr.slice(-12).reverse().map(x=>'<div class="bli">'+esc(x)+'</div>').join(''):'<div class="think">还没学到东西，多聊几轮、点几个👍吧</div>';
+ }catch(e){document.getElementById('brainStats').textContent='读取失败';}}
 
 function openSearch(){document.getElementById('modalBg').style.display='flex';const i=document.getElementById('msq');i.value='';i.focus();}
 function closeSearch(){document.getElementById('modalBg').style.display='none';}
@@ -1663,12 +1840,11 @@ async function confirmAction(){const r=await fetch('/api/confirm',{method:'POST'
 inp.addEventListener('keydown',e=>{if(e.key==='Enter')send();});
 
 const plugEl=document.getElementById('s_plugins');let plugins=[];
-async 
 function applyPersona(){const v=document.getElementById('s_persona').value;if(!v)return;
   fetch('/api/persona',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role:v})}).then(r=>r.json()).then(d=>{const m=document.getElementById('personaMsg');if(m)m.textContent=d.ok?'✅ 人格已切换（下次对话生效）':'❌ '+d.error;});
 }
 
-function openSettings(){
+async function openSettings(){
   setSec('general');
   const r=await fetch('/api/settings');const d=await r.json();const c=d.control;
   document.getElementById('s_name').value=c.model_name||'';
