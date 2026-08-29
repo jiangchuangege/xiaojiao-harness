@@ -49,7 +49,12 @@ def _worker(job_id, prompt):
         ckpt = config.find_checkpoint() or "dit_fp8.safetensors"
         wf = _load_workflow(prompt, ckpt)
         pid = cc.submit_workflow(wf)
-        fn, sub, ftype = cc.wait_output(pid)
+        def _prog(value, maxv):
+            try:
+                _jobs[job_id]["progress"] = {"value": value, "max": maxv}
+            except Exception:
+                pass
+        fn, sub, ftype = cc.wait_output(pid, progress_cb=_prog)
         name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + "_wan"
         out = os.path.join(config.OUT_DIR, name + (os.path.splitext(fn)[1] or ".mp4"))
         cc.download_video(fn, sub, ftype, out)

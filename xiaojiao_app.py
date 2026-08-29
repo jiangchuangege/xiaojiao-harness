@@ -1517,6 +1517,10 @@ HTML = r"""<!DOCTYPE html>
   button:hover{background:#6366f1}
   .think{color:#7a8290;font-size:13px;padding:6px 2px}
   .think{display:flex;align-items:center;gap:8px}
+  .pvbar{height:4px;background:#0e1116;border-radius:3px;margin-top:6px;overflow:hidden;max-width:420px}
+  .pvbar i? no
+  .pvbar{height:4px;background:#0e1116;border-radius:3px;margin-top:6px;overflow:hidden;max-width:420px;display:block}
+  .pvbar{transition:width .4s}
   .spin{width:13px;height:13px;border:2px solid #405a99;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex:0 0 auto}
   @keyframes spin{to{transform:rotate(360deg)}}
   /* 设置面板 */
@@ -1768,7 +1772,7 @@ async function makeVideo(){const q=prompt('输入视频场景（真·AI 文生�
       else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
       else if(st.state==='unknown'){clearInterval(iv);b.innerHTML='⚠️ 任务状态丢失（可能已结束或服务器重启）。<br>请点 🎬 重新生成，或到 ComfyUI(<b>127.0.0.1:8188</b>)看真实结果。';}
       else if(n*5>2700){clearInterval(iv);b.innerHTML='⏱️ 已等 '+Math.round(n*5/60)+' 分钟（超时）。到 ComfyUI(8188) 看是否仍在跑/已出片，或重新生成。';}
-      else{b.textContent='🎬 '+(st.message||'生成中…')+'（已等 '+Math.round(n*5)+'s，到 8188 看真实进度）';}
+      else{var pr=(st.progress&&st.progress.max)?Math.round(100*st.progress.value/st.progress.max):0;var msg='🎬 '+((st.message||"生成中…")+(pr?'（第 '+st.progress.value+'/'+st.progress.max+' 步，'+pr+'%）':''))+'（已等 '+Math.round(n*5)+'s）';b.textContent=msg;if(pr>0){var bar=b.nextElementSibling;if(!bar||!bar.classList.contains("pvbar")){bar=document.createElement("div");bar.className="pvbar";b.after(bar);}bar.style.width=pr+"%";}}
      }catch(e){}
    },5000);
   }catch(e){b.innerHTML='⚠️ 出错了：'+esc(e.message);}}
@@ -1810,7 +1814,7 @@ async function resumeVideoJob(){let job='';
       else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
       else if(st.state==='unknown'){clearInterval(iv);b.innerHTML='⚠️ 任务状态丢失（可能已结束或服务器重启）。请重新生成，或到 8188 查看。';}
       else if(n*5>2700){clearInterval(iv);b.textContent='⏱️ 超时，到 8188 看是否完成。';}
-      else{b.textContent='🎬 '+(st.message||'生成中…')+'（已等 '+Math.round(n*5)+'s，到 8188 看真实进度）';}
+      else{var pr=(st.progress&&st.progress.max)?Math.round(100*st.progress.value/st.progress.max):0;var msg='🎬 '+((st.message||"生成中…")+(pr?'（第 '+st.progress.value+'/'+st.progress.max+' 步，'+pr+'%）':''))+'（已等 '+Math.round(n*5)+'s）';b.textContent=msg;if(pr>0){var bar=b.nextElementSibling;if(!bar||!bar.classList.contains("pvbar")){bar=document.createElement("div");bar.className="pvbar";b.after(bar);}bar.style.width=pr+"%";}}
     }catch(e){}
   },5000);
 }

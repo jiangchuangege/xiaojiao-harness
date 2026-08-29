@@ -21,6 +21,14 @@ def wait_output(prompt_id, timeout=1800, progress_cb=None):
     """轮询 /history 直到出视频文件；返回 (filename, subfolder, type)。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
+        # 实时进度(ComfyUI /progress)
+        if progress_cb:
+            try:
+                pr = requests.get(config.COMFY_URL + "/progress", timeout=3).json()
+                if pr and pr.get("max"):
+                    progress_cb(int(pr.get("value", 0)), int(pr.get("max", 0)))
+            except Exception:
+                pass
         try:
             h = requests.get(config.COMFY_URL + "/history/%s" % prompt_id, timeout=15).json()
         except Exception:
@@ -33,8 +41,6 @@ def wait_output(prompt_id, timeout=1800, progress_cb=None):
                     for f in o.get(key, []):
                         if key != "images" or f.get("type") == "output":
                             return f.get("filename"), f.get("subfolder", ""), f.get("type", "output")
-        if progress_cb:
-            progress_cb()
         time.sleep(3)
     raise TimeoutError("视频生成超时(30分钟)")
 
