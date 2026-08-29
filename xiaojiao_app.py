@@ -1870,10 +1870,26 @@ function renderMd(text){
   return out;
 }
 function renderBlocks(seg){
-  // 按空行分块；块内若是表格则转 table，否则行内 md
+  // 按空行分块；识别：分割线/引用块/表格，否则行内 md
   if(!seg)return '';
   let blocks=seg.split(/\n\s*\n/),html='';
-  blocks.forEach(b=>{const t=renderTableBlock(b);html+=t?t:inline(esc(b));});
+  blocks.forEach(b=>{
+    const line=(b||'').trim();
+    // --- / *** / ___ 分割线
+    if(/^([-*_])\1{2,}\s*$/.test(line)){html+='<hr style="border:none;border-top:1px solid #2a3140;margin:12px 0">';return;}
+    // #/#/### 标题
+    const hm=b.match(/^(#{1,3})\s+(.+)/);
+    if(hm){html+='<div class="mdh">'+esc(hm[2])+'</div>';return;}
+    // > 引用块(多行)
+    const qm=b.match(/^((?:\s*>.*\n?)+)/);
+    if(qm){
+      const inner=qm[1].split('\n').map(l=>l.replace(/^\s*>\s?/,'')).join('\n');
+      html+='<blockquote style="border-left:3px solid #405a99;margin:6px 0;padding:2px 12px;color:#aab2c0;background:#131a2b;border-radius:8px">'+inline(esc(inner))+'</blockquote>';
+      return;
+    }
+    const t=renderTableBlock(b);
+    html+= t?t:inline(esc(b));
+  });
   return html;
 }
 function add(role,text,src){const m=document.createElement('div');m.className='m '+role;
