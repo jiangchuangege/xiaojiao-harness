@@ -865,6 +865,7 @@ def api_chat_pending():
 
 
 
+@app.route("/api/sessions")
 def api_sessions():
     d = _sessions()
     return jsonify({"current": d.get("current"),
@@ -1779,7 +1780,20 @@ async function resumeChat(){try{const p=await (await fetch('/api/chat/pending'))
     if(!u.pending){clearInterval(iv);const b=m.querySelector('.b');b.innerHTML=u.content?renderMd(u.content):'（回答完成）';feed.scrollTop=feed.scrollHeight;}}catch(e){}},2500);
   }catch(e){}}
 
-async function resumeVideoJob(){let job='';
+async 
+function syncLoop(){try{loadSessions();}catch(e){}
+  // 服务器端当前视频任务 -> 顶部小提示(跨标签/刷新都在)
+  try{fetch('/api/video/current').then(r=>r.json()).then(c=>{
+    const v=(c.job||{});
+    let pill=document.getElementById('syncPill');
+    if(!pill){pill=document.createElement('span');pill.id='syncPill';pill.style.cssText='font-size:11px;padding:2px 8px;border-radius:10px;background:#5b5ff533;color:#a78bfa;margin-left:6px';const h=document.querySelector('.tag');if(h)h.after(pill);}
+    if(c.job&&c.job.state&&['queued','switching','generating'].indexOf(c.job.state)>=0){pill.textContent='🎬 生成中';pill.style.display='';}
+    else if(c.job&&c.job.state==='done'&&c.job.url){pill.textContent='🎬 完成';setTimeout(()=>{pill.style.display='none'},8000);}
+    else{pill.style.display='none';}
+  }).catch(()=>{});}catch(e){}}
+setInterval(syncLoop,4000);
+
+function resumeVideoJob(){let job='';
   // 优先服务器端当前任务(跨浏览器/刷新/重启)
   try{const c=await (await fetch('/api/video/current')).json();
     if(c.job&&c.job.id){job=c.job.id;try{localStorage.setItem('xj_video_job',job);}catch(e){}}
