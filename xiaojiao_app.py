@@ -921,10 +921,9 @@ def api_chat():
     if not answer_final:
         answer_final = "🤖 本地大模型未连接（8080 未启动），小焦暂时没法回答。请先运行 `python start_xiaojiao.py`。"
     s, d = get_current_session()
-    for m in reversed(s.get("messages", [])):
+    for m in s.get("messages", []):
         if m.get("role") == "小焦" and "__pending__" in str(m.get("content", "")):
             m["content"] = answer_final
-            break
     _save_sessions(d)
     log_id = _record_interaction(user_input, answer_final, tool_trace)   # 内置·自动记录
     return jsonify({
@@ -1793,7 +1792,7 @@ function syncLoop(){try{loadSessions();}catch(e){}
   }).catch(()=>{});}catch(e){}}
 setInterval(syncLoop,4000);
 
-function resumeVideoJob(){let job='';
+async function resumeVideoJob(){let job='';
   // 优先服务器端当前任务(跨浏览器/刷新/重启)
   try{const c=await (await fetch('/api/video/current')).json();
     if(c.job&&c.job.id){job=c.job.id;try{localStorage.setItem('xj_video_job',job);}catch(e){}}
@@ -1931,7 +1930,9 @@ async function newChat(){await fetch('/api/session/new',{method:'POST'});clearFe
 async function openSession(id){const r=await fetch('/api/session/'+id);const d=await r.json();clearFeed();(d.messages||[]).forEach(h=>add(h.role==='用户'?'user':'bot',h.content));loadSessions();}
 function clearFeed(){document.getElementById('feed').innerHTML='<div class="think">👋 新对话，问小焦一个问题…</div>';}
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('hidden');}
-(async()=>{try{resumeVideoJob();resumeChat();const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);loadModels();loadHistory();loadSessions();}catch(e){}})();
+(async()=>{try{loadModels();loadHistory();loadSessions();}catch(e){}
+ try{const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);}catch(e){}
+ resumeVideoJob();resumeChat();})();
 async function confirmAction(){const r=await fetch('/api/confirm',{method:'POST'});const d=await r.json();
  add('bot',(d.result||'已执行').slice(0,1200));}
 inp.addEventListener('keydown',e=>{if(e.key==='Enter')send();});
