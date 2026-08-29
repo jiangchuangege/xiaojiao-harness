@@ -373,7 +373,7 @@ flowchart TD
 
 ## 🛡️ 安全说明
 
-- **危险命令会拦**：碰到 `rm / del / format / shutdown / reg delete / taskkill /f`，或往系统目录写文件，小焦**先挂起、等你点「✅ 确认执行」**才执行。
+- **危险命令会拦**：碰到 `rm / del / format / shutdown / reg delete / taskkill /f`，或往系统目录写文件，小焦会先挂起、等你点「✅ 确认执行」才执行。
 - **本地离线**：模型、记忆、会话都在你机器上，不上传。
 - **插件要自己信得过**：插件的 `execute` 能做的事 = 你代码能做的事，别装来路不明的插件。
 
