@@ -777,8 +777,6 @@ def agent_run(user_input):
     # 5. 落地上下文
     if answer:
         needs_confirm = PENDING is not None and answer.startswith("〔待确认〕")
-        append_msg("用户", user_input)
-        append_msg("小焦", answer)
         return answer, True, info, needs_confirm, tool_trace
 
     # 6. 无任何可用大脑（本地大模型未连接）时的降级（只给一句简洁提示，不瞎输出联网内容）
@@ -851,7 +849,19 @@ def api_ws_open():
 
 
 
-@app.route("/api/sessions")
+@app.route("/api/chat/pending")
+def api_chat_pending():
+    """当前会话最后一条小焦消息是否仍在生成(pending)；刷新后前端据此续显"正在回答"。"""
+    try:
+        msgs = current_messages()
+        last = msgs[-1] if msgs else {}
+        bot = last if last.get("role") == "小焦" else None
+        pending = bool(bot and "__pending__" in str(bot.get("content", "")))
+        return jsonify({"pending": pending, "content": "" if pending else (bot or {}).get("content", "")})
+    except Exception as e:
+        return jsonify({"pending": False, "content": ""})
+
+
 
 
 
@@ -901,8 +911,21 @@ def api_chat():
     user_input = (data.get("message") or "").strip()
     if not user_input:
         return jsonify({"error": "空消息"}), 400
+    # 先写用户 + 占位(空)小焦消息：刷新后能读到"正在回答"
+    append_msg("用户", user_input)
+    append_msg("小焦", "⏳__pending__")
     answer, online, info, needs_confirm, tool_trace = agent_run(user_input)
-    log_id = _record_interaction(user_input, answer, tool_trace)   # 内置·自动记录
+    # 把占位小焦消息更新为真实回答（含最后那句提示）
+    answer_final = answer
+    if not answer_final:
+        answer_final = "🤖 本地大模型未连接（8080 未启动），小焦暂时没法回答。请先运行 `python start_xiaojiao.py`。"
+    s, d = get_current_session()
+    for m in reversed(s.get("messages", [])):
+        if m.get("role") == "小焦" and "__pending__" in str(m.get("content", "")):
+            m["content"] = answer_final
+            break
+    _save_sessions(d)
+    log_id = _record_interaction(user_input, answer_final, tool_trace)   # 内置·自动记录
     return jsonify({
         "answer": answer,
         "brain_online": online,
@@ -1748,6 +1771,14 @@ async function makeVideo(){const q=prompt('输入视频场景（真·AI 文生�
    },5000);
   }catch(e){b.innerHTML='⚠️ 出错了：'+esc(e.message);}}
 
+async 
+async function resumeChat(){try{const p=await (await fetch('/api/chat/pending')).json();
+  if(!p.pending){return;}
+  const m=document.createElement('div');m.className='m bot';m.innerHTML='<div class="b"><span class="spin"></span> 正在回答（可先干别的，恢复中）…</div>';feed.appendChild(m);feed.scrollTop=feed.scrollHeight;
+  const iv=setInterval(async()=>{try{const u=await (await fetch('/api/chat/pending')).json();
+    if(!u.pending){clearInterval(iv);const b=m.querySelector('.b');b.innerHTML=u.content?renderMd(u.content):'（回答完成）';feed.scrollTop=feed.scrollHeight;}}catch(e){}},2500);
+  }catch(e){}}
+
 async function resumeVideoJob(){let job='';
   // 优先服务器端当前任务(跨浏览器/刷新/重启)
   try{const c=await (await fetch('/api/video/current')).json();
@@ -1823,7 +1854,8 @@ function renderBlocks(seg){
 }
 function add(role,text,src){const m=document.createElement('div');m.className='m '+role;
  m.innerHTML='<div class="b">'+(role==='bot'?renderMd(text):esc(text))+'</div>';
- if(role==='bot'){const row=document.createElement('div');row.className='msgbot';
+ if(role==='bot'&&((''+text).indexOf('__pending__')>=0||text==='⏳')){m.innerHTML='<div class="b"><span class="spin"></span> 正在回答…</div>';feed.appendChild(m);return;}
+   if(role==='bot'){const row=document.createElement('div');row.className='msgbot';
    row.innerHTML='<button onclick="copyMsg(this)">⧉ 复制</button>';m.appendChild(row);}
  feed.appendChild(m);
  if(src&&src.length){const t=document.createElement('button');t.className='srcbtn';t.textContent='🔎 查看来源 ('+src.length+')';
@@ -1885,7 +1917,7 @@ async function newChat(){await fetch('/api/session/new',{method:'POST'});clearFe
 async function openSession(id){const r=await fetch('/api/session/'+id);const d=await r.json();clearFeed();(d.messages||[]).forEach(h=>add(h.role==='用户'?'user':'bot',h.content));loadSessions();}
 function clearFeed(){document.getElementById('feed').innerHTML='<div class="think">👋 新对话，问小焦一个问题…</div>';}
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('hidden');}
-(async()=>{try{resumeVideoJob();const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);loadModels();loadHistory();loadSessions();}catch(e){}})();
+(async()=>{try{resumeVideoJob();resumeChat();const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);loadModels();loadHistory();loadSessions();}catch(e){}})();
 async function confirmAction(){const r=await fetch('/api/confirm',{method:'POST'});const d=await r.json();
  add('bot',(d.result||'已执行').slice(0,1200));}
 inp.addEventListener('keydown',e=>{if(e.key==='Enter')send();});
