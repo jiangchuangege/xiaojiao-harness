@@ -1737,15 +1737,30 @@ async function makeVideo(){const q=prompt('输入视频场景（真·AI 文生�
   try{const d=await (await fetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:q})})).json();
    if(d.busy){b.innerHTML='⏳ 正在生成/切换模型中，请稍候…';return;}
    if(!d.ok){b.innerHTML='⚠️ '+esc(d.error||'启动失败');return;}
+   try{localStorage.setItem('xj_video_job',d.job);}catch(e){}
    let n=0;
    const iv=setInterval(async()=>{n++;
      try{const st=await (await fetch('/api/video/status?job='+d.job)).json();
-      if(st.state==='done'){clearInterval(iv);b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频 · '+esc(q)+'</div>';feed.scrollTop=feed.scrollHeight;}
-      else if(st.state==='error'){clearInterval(iv);b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
+      if(st.state==='done'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频 · '+esc(q)+'</div>';feed.scrollTop=feed.scrollHeight;}
+      else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
       else{b.textContent='🎬 '+esc(st.message||'处理中…')+'（已等 '+(n*5)+'s）';}
      }catch(e){}
    },5000);
   }catch(e){b.innerHTML='⚠️ 出错了：'+esc(e.message);}}
+
+function resumeVideoJob(){let job='';try{job=localStorage.getItem('xj_video_job')||'';}catch(e){}
+  if(!job)return;
+  const m=document.createElement('div');m.className='m bot';m.innerHTML='<div class="b">🎬 恢复上次生成进度…</div>';feed.appendChild(m);
+  const b=m.querySelector('.b');let n=0;
+  const iv=setInterval(async()=>{n++;
+    try{const st=await (await fetch('/api/video/status?job='+job)).json();
+      if(st.state==='done'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){}
+        b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频（刷新前生成）</div>';feed.scrollTop=feed.scrollHeight;}
+      else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
+      else{b.textContent='🎬 '+esc(st.message||'生成中…')+'（已等 '+(n*5)+'s）';}
+    }catch(e){}
+  },5000);
+}
 function openBrain(){document.getElementById('brainBg').style.display='flex';loadBrain();}
 function closeBrain(){document.getElementById('brainBg').style.display='none';}
 async function loadBrain(){try{const d=await (await fetch('/api/brain')).json();
@@ -1865,7 +1880,7 @@ async function newChat(){await fetch('/api/session/new',{method:'POST'});clearFe
 async function openSession(id){const r=await fetch('/api/session/'+id);const d=await r.json();clearFeed();(d.messages||[]).forEach(h=>add(h.role==='用户'?'user':'bot',h.content));loadSessions();}
 function clearFeed(){document.getElementById('feed').innerHTML='<div class="think">👋 新对话，问小焦一个问题…</div>';}
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('hidden');}
-(async()=>{try{const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);loadModels();loadHistory();loadSessions();}catch(e){}})();
+(async()=>{try{resumeVideoJob();const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);loadModels();loadHistory();loadSessions();}catch(e){}})();
 async function confirmAction(){const r=await fetch('/api/confirm',{method:'POST'});const d=await r.json();
  add('bot',(d.result||'已执行').slice(0,1200));}
 inp.addEventListener('keydown',e=>{if(e.key==='Enter')send();});

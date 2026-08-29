@@ -36,7 +36,7 @@
   "inputs": {
    "width": 832,
    "height": 480,
-   "num_frames": 49
+   "num_frames": 33
   }
  },
  "5": {
@@ -54,7 +54,7 @@
     "3",
     0
    ],
-   "steps": 24,
+   "steps": 16,
    "cfg": 5.0,
    "shift": 7.0,
    "seed": 42,
