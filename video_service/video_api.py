@@ -11,6 +11,22 @@ import comfy_client as cc
 bp = Blueprint("video_service", __name__)
 _jobs = {}  # job_id -> state
 _jobs_lock = threading.Lock()
+_JOBS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_jobs.json")
+
+
+def _persist():
+    try:
+        with _jobs_lock:
+            json.dump(_jobs, open(_JOBS_FILE, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:
+        pass
+
+
+try:
+    _jobs.update(json.load(open(_JOBS_FILE, encoding="utf-8")))
+except Exception:
+    pass
+
 
 
 def _load_workflow(prompt, ckpt):
@@ -29,6 +45,7 @@ def _worker(job_id, prompt):
         with _jobs_lock:
             _jobs[job_id].update(kw)
     upd(state="switching", message="卸载大脑，腾出显存…")
+    _persist()
     try:
         # a. 卸载大脑(释放显存)
         ms.stop_brain()
@@ -51,6 +68,7 @@ def _worker(job_id, prompt):
         # e. 恢复大脑
         ms.start_brain()
         upd(state="done", message="完成", url="/videos/" + os.path.basename(out))
+        _persist()
     except Exception as e:
         # 异常兜底：无论如何尽量恢复大脑
         try:
@@ -62,6 +80,7 @@ def _worker(job_id, prompt):
         except Exception:
             pass
         upd(state="error", error=str(e), message="生成失败，已尽力恢复大脑")
+        _persist()
 
 
 @bp.route("/api/video", methods=["POST"])
@@ -77,6 +96,7 @@ def api_video():
                 return jsonify({"ok": False, "busy": True, "error": "正在生成/切换模型中，请稍候"}), 200
         job_id = datetime.datetime.now().strftime("%H%M%S%f")
         _jobs[job_id] = {"state": "queued", "prompt": prompt, "message": "排队中"}
+        _persist()
     threading.Thread(target=_worker, args=(job_id, prompt), daemon=True).start()
     return jsonify({"ok": True, "job": job_id})
 
