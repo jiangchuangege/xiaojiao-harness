@@ -124,12 +124,19 @@ flowchart TD
 ### 一条消息在内部怎么走
 
 1. **注入人设 + 真实路径**（当前目录/桌面 + 技能插件内容）→ 这就是"小焦人格"生效的原因。
+
 2. **取记忆**：从 `xiaojiao_knowledge_memory.json` 找相关历史知识。
+
 3. **取会话**：拿最近 N 条对话当上下文。
+
 4. **联网（可选）**：Bing/Sogou 抓关键信息注入。
+
 5. **大脑推理**：`brain.engine` 决定用本地 llama / 外接 API。模型用 function-calling 想"要不要调工具、调哪个、参数是啥"。
+
 6. **执行工具**：模型决定"建目录→写文件→打开"，框架逐个执行（内置/插件），显示工具轨迹；危险命令先挂起、等你点「✅ 确认执行」。
+
 7. **记忆沉淀 + 会话存**。
+
 8. **返回**：模型基于工具结果给一句简短总结。
 
 > 更细的实现见 [docs/architecture.md](docs/architecture.md)。
@@ -341,12 +348,19 @@ flowchart TD
 把这段流程走一遍，你就知道"做出来"是什么意思：
 
 1. **喂料（主料是 LCCC）** — `convert.py` 读 **LCCC**（中文多轮对话语料，`LCCC-base_train/test/valid.json`），把每一轮"用户 @小焦"拆成一对，去掉中文之间的空格，逐行写成 `用户 <话> 小焦 <话>` 的训练池文本。**LCCC 就是它最基础的"粮食"**。
+
 2. **清洗** — `clean_data.py` / `prepare_clean_pool.py` 用正则（`^用户 .+ 小焦 .+`）过滤不合规行、剔掉垃圾词，得到干净的 `training_data_pool_clean.txt`。
+
 3. **蒸馏再来一勺** — `massive_distill.py` 调本地大模型，按 `日常聊天/Python/角色扮演…` 等 **40+ 主题**生成 3–5 轮对话，追加进训练池；`distill_and_train.py` 把知识库切成问答对。这是"老师喂给学生的菜"。
+
 4. **建词表** — `train_model.py` 的 `build_vocab` 扫描训练池，收集**所有出现的字符**（字符级），得到 `vocab_size=6305` 的词表 `vocab.pkl`。
+
 5. **搭模型** — `MiniGPT`：字符级因果 Transformer，`embed=512, heads=8, hidden=2048, layers=8, seq=64`，**用 `TransformerEncoderLayer` + 因果掩码**（Pre-LN / batch_first），约**几千万参数**。
+
 6. **训练** — `train_model.py`：`LazyTextDataset` 按 `seq_len//2` 步长滑动窗口采样（不吃满内存）；`AdamW`（8-bit 优先）、`CrossEntropyLoss`、`amp` 混合精度 + `梯度累积`；出现 `Loss=NaN` 自动跳过；支持从 `.pth` **断点续训**。
+
 7. **存好** — 每步存 `mini_gpt_model.pth`，并把**真实架构写进 `model_config.json`**（加载不再猜），`vocab.pkl`、`progress.txt` 一并落盘。
+
 8. **推理** — `xiaojiao_harness.py`：先**语义检索**（在训练池里找最像的历史问答，命中高直出），否则用 `temperature + top_k + 重复惩罚` 让模型自由生成。
 
 > 一句话：**LCCC 当主食，大模型蒸馏当加餐，字符级小 Transformer 负责把它们"吃成"自己的说话方式。**
