@@ -13,7 +13,7 @@ def _sweep():
     """清理卡死/超时(30分钟)的 switching/generating 任务，避免'请稍候'死锁。"""
     now = time.time()
     for jid, j in list(_jobs.items()):
-        if j.get("state") in ("switching", "generating") and now - j.get("ts", 0) > 1800:
+        if j.get("state") in ("switching", "generating") and now - j.get("ts", 0) > 600:
             j["state"] = "error"
             j["message"] = "生成超时(30分钟)，请重新生成"
 

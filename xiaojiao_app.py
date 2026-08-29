@@ -1616,7 +1616,7 @@ HTML = r"""<!DOCTYPE html>
   <div id="main">
 <header>
   <button class="icon-btn sd-toggle" id="sdToggle" onclick="toggleSidebar()" title="收起/展开侧栏">⟨</button>
-  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2">2 个后台任务并行中</span></div>
+  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span></div>
   <div class="hdr-right">
     <button class="icon-btn" id="toolsBtn" onclick="toggleTools()">🛠️ 工具</button>
     <button class="icon-btn" onclick="openBrain()">🧠 小脑</button>
@@ -1792,7 +1792,10 @@ function syncLoop(){try{loadSessions();}catch(e){}
     const v=(c.job||{});
     let pill=document.getElementById('syncPill');
     if(!pill){pill=document.createElement('span');pill.id='syncPill';pill.style.cssText='font-size:11px;padding:2px 8px;border-radius:10px;background:#5b5ff533;color:#a78bfa;margin-left:6px';const h=document.querySelector('.tag');if(h)h.after(pill);}
-    if(c.job&&c.job.state&&['queued','switching','generating'].indexOf(c.job.state)>=0){pill.textContent='🎬 生成中';pill.style.display='';}
+    const tb=document.getElementById('taskBadge');
+    const act=(c.job&&['queued','switching','generating'].indexOf(c.job.state)>=0);
+    if(tb){tb.style.display='';tb.textContent=act?'🎬 1 个后台任务：视频生成':'⏳ 空闲';tb.style.color=act?'#f0a848':'#7a8290';}
+    if(act){pill.textContent='🎬 生成中';pill.style.display='';}
     else if(c.job&&c.job.state==='done'&&c.job.url){pill.textContent='🎬 完成';setTimeout(()=>{pill.style.display='none'},8000);}
     else{pill.style.display='none';}
   }).catch(()=>{});}catch(e){}}
