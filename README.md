@@ -19,6 +19,8 @@
 
 ---
 
+> 🧠 自研小模型 · 💬 聊天 · 🌐 联网搜索 · 💾 记忆 · 🛠️ 工具 · 🧩 四类插件生态(py/js/api/skill) · 🔌 DSH 社区插件兼容 · 🧠 持续学习 · 🔗 DSH 接入小焦
+
 ## 📖 先说一句
 
 **DeepSeek Harness 插件生态伙伴 · 本地 AI 助手（dsh-plugin / deepseek-harness-plugin）**
@@ -451,6 +453,8 @@ flowchart TD
 - **自动记录**：答完自动写 `logs/chat_history.jsonl`。
 - **自动打勾**：每条回复带 👍/👎，点一下即反馈。
 - **自动学习**：被赞/高星/被更正 → 写进 `self_learn/little_brain_knowledge.txt` + 检索池。
+- **向量数据库**：`self_learn/vstore.py`（零依赖 Embedding+余弦，对标 Chroma/FAISS）——学到的**功能用法/反思**向量化入 `knowledge_vec.json`，小脑检索**先向量命中即复用**，比字符检索更准。
+- **反思机制**：用户 👎/更正 → 生成"为什么没答好/下次怎么改"的反思 → 存知识库 + 向量库（小脑越用越强）。
 - **能重训**：数据够了 `train_model.py` 让**小模型本身**也吸收（备份+验证+回退）。
 
 > 原理/图/如何优化 详见 [docs/self_learn.md](docs/self_learn.md)。
