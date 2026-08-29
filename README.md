@@ -530,6 +530,19 @@ flowchart TD
 
 ---
 
+## 🎬 真·文生视频（本地 ComfyUI + Wan2.1）
+
+小焦网页里有 **🎬 生成视频**：点它输入场景 → **自动卸载大脑腾显存 → 启动 ComfyUI + Wan2.1-FP8 → 生成真视频 → 自动恢复大脑**（8G 显存按需切换，对用户透明）。
+
+- **真 AI 生成**：`video_service/`（ComfyUI + WanVideoWrapper 工作流，480p，约2-3分钟）。
+- **实时进度**：网页显示"第X/14步 / Z%"进度条 + 后台任务徽章。
+- **中途刷新/换页面也不丢进度**（服务器持久化 + 状态无锁读取）。
+- **配置**：ComfyUI 位置、模型名在 `video_service/config.py`（环境变量 `XIAOJIAO_COMFY_DIR` 等）。
+
+> 详见 [docs/video.md](docs/video.md)。
+
+---
+
 ## 📄 License
 
 基于 [MIT License](LICENSE) 开源，随便用、随便改、随便分享。
