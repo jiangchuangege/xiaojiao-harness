@@ -1,13 +1,22 @@
 # video_service/video_api.py —— Web 扩展（Blueprint）：真·文生视频（ComfyUI + Wan2.1）
 # 模型按需切换：卸载大脑 → 起 ComfyUI → 生成 → 卸载 ComfyUI → 恢复大脑（对用户透明）
 # 任务状态用普通 dict 读写（GIL 安全），不持锁 —— 避免模型切换/任务线程把状态接口堵死。
-import os, json, threading, datetime
+import os, json, threading, datetime, time
 from flask import Blueprint, request, jsonify
 import config, model_switch as ms, comfy_client as cc
 
 bp = Blueprint("video_service", __name__)
 _jobs = {}
 _JOBS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_jobs.json")
+
+def _sweep():
+    """清理卡死/超时(30分钟)的 switching/generating 任务，避免'请稍候'死锁。"""
+    now = time.time()
+    for jid, j in list(_jobs.items()):
+        if j.get("state") in ("switching", "generating") and now - j.get("ts", 0) > 1800:
+            j["state"] = "error"
+            j["message"] = "生成超时(30分钟)，请重新生成"
+
 
 def _persist():
     try:
@@ -62,6 +71,7 @@ def _worker(job_id, prompt):
 
 @bp.route("/api/video", methods=["POST"])
 def api_video():
+    _sweep()
     d = request.get_json(force=True, silent=True) or {}
     prompt = (d.get("prompt") or "").strip()[:80]
     if not prompt:
@@ -70,7 +80,7 @@ def api_video():
         if j.get("state") in ("switching", "generating"):
             return jsonify({"ok": False, "busy": True, "error": "正在生成/切换模型中，请稍候"}), 200
     job_id = datetime.datetime.now().strftime("%H%M%S%f")
-    _jobs[job_id] = {"state": "queued", "prompt": prompt, "message": "排队中"}
+    _jobs[job_id] = {"state": "queued", "prompt": prompt, "message": "排队中", "ts": time.time()}
     _persist()
     threading.Thread(target=_worker, args=(job_id, prompt), daemon=True).start()
     return jsonify({"ok": True, "job": job_id})
