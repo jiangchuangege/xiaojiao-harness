@@ -951,7 +951,13 @@ def _save_control(brain=None, models=None):
 
 @app.route("/api/models", methods=["GET"])
 def api_models():
-    return jsonify({"active": BRAIN_ENGINE, "models": _get_models()})
+    cur = None
+    eng = BRAIN_ENGINE
+    base = (CONTROL.get("brain", {}).get("api", {}).get("base_url", "") or "")
+    for m in _get_models():
+        if m.get("engine") == eng and (m.get("base_url", "") == base or not base):
+            cur = m.get("name"); break
+    return jsonify({"active": BRAIN_ENGINE, "current": cur, "models": _get_models()})
 
 
 @app.route("/api/model/select", methods=["POST"])
@@ -1470,8 +1476,8 @@ function setToolsOn(on){const b=document.getElementById('toolsBtn');b.className=
 async function toggleTools(){const r=await fetch('/api/tools_toggle',{method:'POST'});const d=await r.json();setToolsOn(d.tools_on);}
 async function loadModels(){try{const r=await fetch('/api/models');const d=await r.json();const sel=document.getElementById('modelSel');let ms=(d&&d.models)||[];
   sel.innerHTML=ms.length?ms.map(m=>'<option value="'+esc(m.name)+'">'+esc(m.name)+'</option>').join(''):'<option value="">未配置模型</option>';
-  if(!sel.value) sel.value=(ms[0]&&ms[0].name)||'';}catch(e){document.getElementById('modelSel').innerHTML='<option value="">模型加载失败</option>';}}
-async function selectModel(){const v=document.getElementById('modelSel').value;await fetch('/api/model/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:v})});location.reload();}
+  sel.value=(d&&d.current)||((ms[0]&&ms[0].name)||'');}catch(e){document.getElementById('modelSel').innerHTML='<option value="">模型加载失败</option>';}}
+async function selectModel(){const v=document.getElementById('modelSel').value;await fetch('/api/model/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:v})});}
 async function loadHistory(){try{const r=await fetch('/api/history');const hs=await r.json();if(Array.isArray(hs)&&hs.length){hs.forEach(h=>add(h.role==='用户'?'user':'bot',h.content));}}catch(e){}}
 async function loadSessions(){try{const r=await fetch('/api/sessions');const d=await r.json();const el=document.getElementById('sessionList');
   el.innerHTML=(d.sessions||[]).map(s=>'<button class="sess '+(s.id===d.current?'active':'')+'" onclick="openSession(\''+s.id+'\')">'+esc(s.title||'新对话')+'</button>').join('')||'<div class="think">暂无会话</div>';}catch(e){}}
