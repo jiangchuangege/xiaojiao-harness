@@ -121,3 +121,10 @@ def api_video_state():
 def serve_video(name):
     from flask import send_from_directory
     return send_from_directory(config.OUT_DIR, name)
+
+
+@bp.route("/media/<path:name>")
+def serve_media(name):
+    from flask import send_from_directory
+    media_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "media")
+    return send_from_directory(media_dir, name)
