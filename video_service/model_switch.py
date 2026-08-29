@@ -11,8 +11,8 @@ _comfy_proc = None
 
 
 def get_state():
-    with _lock:
-        return dict(_state)
+    # 无锁快照：直接读 dict 副本，绝不等模型切换锁(避免状态读取被长阻塞操作堵住)
+    return dict(_state)
 
 
 def _set(phase, message="", progress=None, error=None):
