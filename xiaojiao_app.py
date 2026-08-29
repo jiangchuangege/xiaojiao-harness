@@ -49,6 +49,7 @@ LLM_KEY = BRAIN.get("api", {}).get("api_key", "")
 LLM_MODEL = BRAIN.get("api", {}).get("model", MODEL_NAME)
 SYSTEM_PROMPT = CONTROL.get("role", "")             # ← 人设/类型，改 control 文件即换模型人格
 CAP = CONTROL.get("capabilities", {})
+FULL_ACCESS = CONTROL.get("capabilities", {}).get("full_access", True)  # True=全权限(危险命令也不询问直接执行)；False=只读(每次执行都询问)
 BEH = CONTROL.get("behavior", {})
 
 HISTORY_FILE = "xiaojiao_history.json"              # 对话上下文（持久化）
@@ -497,11 +498,13 @@ def is_dangerous(name, args):
 def run_tool(name, args, force=False):
     global PENDING
     args = args or {}
-    # 危险动作：除非用户已确认(force)，否则挂起等待确认
-    if not force and is_dangerous(name, args):
-        PENDING = (name, args)
-        desc = f"运行命令「{args.get('command','')}」" if name == "run_command" else f"写入文件「{args.get('path','')}」"
-        return f"〔待确认〕小焦想执行：{desc}。请用户确认后再执行。"
+    # 权限模式：Full access(默认)=所有命令直接执行、危险命令也不询问；Read-only=每次执行命令都询问
+    if not force:
+        ask = (not FULL_ACCESS and name in ("run_command", "write_file", "open_app"))
+        if ask:
+            PENDING = (name, args)
+            desc = f"运行命令「{args.get('command','')}」" if name == "run_command" else f"写入文件「{args.get('path','')}」"
+            return f"〔待确认〕小焦想执行：{desc}。请用户确认后再执行。"
     PENDING = None
     try:
         if name == "run_command":
@@ -908,6 +911,25 @@ def api_feedback():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/access", methods=["GET", "POST"])
+def api_access():
+    """权限模式：GET=读当前；POST=切换 Full access(全权限)/Read-only(每次执行都询问)。"""
+    global FULL_ACCESS
+    if request.method == "GET":
+        return jsonify({"full_access": FULL_ACCESS})
+    d = request.get_json(force=True, silent=True) or {}
+    on = d.get("full_access", not FULL_ACCESS)
+    FULL_ACCESS = bool(on)
+    try:
+        cap = dict(CONTROL.get("capabilities", {})); cap["full_access"] = FULL_ACCESS
+        control = json.loads(open("xiaojiao_control.json", encoding="utf-8").read())
+        control["capabilities"] = cap
+        json.dump(control, open("xiaojiao_control.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "full_access": FULL_ACCESS})
+
+
 @app.route("/api/tools_toggle", methods=["GET", "POST"])
 def api_tools_toggle():
     """工具开关：读(GET) / 切换(POST)。开=必须执行工具，关=只聊天。"""
@@ -1275,10 +1297,11 @@ HTML = r"""<!DOCTYPE html>
 <div id="app">
   <div id="sidebar">
     <div class="sbtop"><button class="newchat" onclick="newChat()">➕ 新会话</button></div>
-    <div class="sbws"><span>🗂️ 工作区</span><span class="wsicons">🔍&nbsp;📁&nbsp;↗</span></div>
+    <div class="sbws"><span>🗂️ 工作区</span><span class="wsicons"><span class="wsc" title="搜索会话" onclick="openSearch()">🔍</span>&nbsp;<span class="wsc" title="打开设置" onclick="openSettings()">⚙️</span>&nbsp;<span class="wsc" title="刷新会话" onclick="loadSessions()">↻</span></span></div>
     <div class="sbdocs">
-      <div class="sbtabs"><span class="on">💬 对话</span><span>🧭 轨迹</span></div>
+      <div class="sbtabs"><span class="on" onclick="setTab(this,1)">💬 对话</span><span onclick="setTab(this,2)">🧭 轨迹</span></div>
       <div id="sessionList"></div>
+      <div id="traceList" style="display:none;text-align:center"></div>
     </div>
     <div class="sb-foot">
       <div class="sbrow" id="toolsRow" onclick="toggleTools()">🛠️ 工具调用 <span class="perm" id="toolsPerm">开</span></div>
@@ -1287,6 +1310,7 @@ HTML = r"""<!DOCTYPE html>
   </div>
   <div id="main">
 <header>
+  <button class="icon-btn sd-toggle" id="sdToggle" onclick="toggleSidebar()" title="收起/展开侧栏">⟨</button>
   <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2">2 个后台任务并行中</span></div>
   <div class="hdr-right">
     <button class="icon-btn" id="toolsBtn" onclick="toggleTools()">🛠️ 工具</button>
@@ -1296,7 +1320,7 @@ HTML = r"""<!DOCTYPE html>
 </header>
 <div id="feed"><div class="think">👋 你好，我是小焦。有问题直接问我，我会联网搜索并结合记忆回答。</div></div>
 <footer><div class="bar">
-  <span class="ws-ind">🔐 Full access</span>
+  <span class="ws-ind" id="wsInd" onclick="toggleAccess()" title="点击：Full access(所有命令直接执行,危险也不询问)/Read-only(每次执行都询问)">🔐 Full access</span>
   <input id="inp" placeholder="向小焦提问…" autocomplete="off"/>
   <select id="modelSel" class="iconselect" onchange="selectModel()"></select>
   <button onclick="send()" title="发送">➤</button>
@@ -1304,6 +1328,13 @@ HTML = r"""<!DOCTYPE html>
   </div>
 </div>
 
+<div id="modalBg" class="modal-bg" style="display:none">
+  <div class="modal">
+    <h3>🔍 搜索会话</h3>
+    <input id="msq" placeholder="输入关键词，过滤会话…" onkeydown="if(event.key==='Enter')doSearch()"/>
+    <div class="m-actions"><button onclick="closeSearch()">取消</button><button class="primary" onclick="doSearch()">确定</button></div>
+  </div>
+</div>
 <div id="settings">
   <div class="setwrap">
     <div class="setnav">
@@ -1385,6 +1416,25 @@ function copyCode(btn){const pre=btn.closest('.codebox').querySelector('code');c
   navigator.clipboard.writeText(t).then(()=>{btn.textContent='✓ 已复制';setTimeout(()=>btn.textContent='⧉ 复制',1200);}).catch(()=>{});}
 function copyMsg(btn){const b=btn.closest('.m').querySelector('.b');
   navigator.clipboard.writeText(b.innerText).then(()=>{btn.textContent='✓ 已复制';setTimeout(()=>btn.textContent='复制',1200);}).catch(()=>{});}
+
+function toggleSidebar(){const sb=document.getElementById('sidebar');const col=sb.classList.toggle('collapsed');
+  const t=document.getElementById('sdToggle');if(t)t.textContent=col?'⟩':'⟨';}
+function setTab(el,n){document.querySelectorAll('.sbtabs span').forEach(x=>x.classList.remove('on'));el.classList.add('on');
+  document.getElementById('sessionList').style.display=n===1?'block':'none';
+  document.getElementById('traceList').style.display=n===2?'block':'none';
+  if(n===2)loadTrace();}
+function loadTrace(){const el=document.getElementById('traceList');
+  try{const r=JSON.parse(localStorage.getItem('xj_trace')||'[]');
+    el.innerHTML=r.length?r.map(x=>'<div class="srci"><div class="st">'+esc(x.tool||'')+'</div><div class="sc">'+esc(String(x.result||'').slice(0,80))+'</div></div>').join(''):'<div class="think">暂无工具轨迹</div>';}catch(e){}}
+let fullAccess=true;
+function openSearch(){document.getElementById('modalBg').style.display='flex';const i=document.getElementById('msq');i.value='';i.focus();}
+function closeSearch(){document.getElementById('modalBg').style.display='none';}
+function doSearch(){const q=document.getElementById('msq').value.trim();if(!q){closeSearch();return;}
+  const boxes=[...document.querySelectorAll('#sessionList .sess')];boxes.forEach(b=>{b.style.display=b.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';});closeSearch();}
+function toggleAccess(){const nv=!fullAccess;fetch('/api/access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({full_access:nv})}).then(r=>r.json()).then(d=>{fullAccess=d.full_access;refreshAccess();});}
+function refreshAccess(){const w=document.getElementById('wsInd');if(w){w.textContent=fullAccess?'🔐 Full access':'🔒 Read-only';w.style.color=fullAccess?'#4ade80':'#f87171';}}
+async function loadAccess(){try{const d=await (await fetch('/api/access')).json();fullAccess=!!d.full_access;refreshAccess();}catch(e){}}
+
 function copyPage(){const t=(document.getElementById('feed')?.innerText||'').trim()||'（暂无对话）';
   navigator.clipboard.writeText(t).then(()=>{alert('已复制当前会话日志');}).catch(()=>{});}
 function renderTableBlock(text){
@@ -1435,7 +1485,8 @@ async function send(){const t=inp.value.trim();if(!t)return;inp.value='';
  const timer=setInterval(()=>{si=(si+1)%stages.length;const s=th.querySelector('.stag');if(s)s.textContent=stages[si];},2200);
  try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:t})});
   const d=await r.json();clearInterval(timer);th.remove();
-  if(d.tool_trace&&d.tool_trace.length){const tt=document.createElement('div');tt.className='tooltrace';
+  if(d.tool_trace&&d.tool_trace.length){try{localStorage.setItem('xj_trace',JSON.stringify(d.tool_trace.slice(0,10)));}catch(e){}
+   const tt=document.createElement('div');tt.className='tooltrace';
     tt.innerHTML=d.tool_trace.map(x=>'🔧 调用 <b>'+esc(x.tool)+'</b> → '+esc((x.result||'').slice(0,200))).join('<br>');feed.appendChild(tt);}
   setToolsOn(d.tools_on);
   typeAnswer(d.answer,d.sources||[],d.log_id);
@@ -1466,7 +1517,8 @@ function addSrc(msrcEl,src){if(!src||!src.length)return;const t=document.createE
   msrcEl.appendChild(t);}
 function setToolsOn(on){const b=document.getElementById('toolsBtn');b.className='icon-btn '+(on?'on':'off');b.textContent=(on?'🛠️ 工具 · 开':'🛠️ 工具 · 关');
  const p=document.getElementById('toolsPerm');if(p)p.textContent=on?'开':'关';
- const r=document.getElementById('toolsRow');if(r)r.style.color=on?'#4ade80':'#f87171';}
+ const r=document.getElementById('toolsRow');if(r)r.style.color=on?'#4ade80':'#f87171';
+ const w=document.getElementById('wsInd');if(w){w.textContent=on?'🔐 Full access':'🔒 Read-only';} }
 async function toggleTools(){const r=await fetch('/api/tools_toggle',{method:'POST'});const d=await r.json();setToolsOn(d.tools_on);}
 async function loadModels(){try{const r=await fetch('/api/models');const d=await r.json();const sel=document.getElementById('modelSel');let ms=(d&&d.models)||[];
   sel.innerHTML=ms.length?ms.map(m=>'<option value="'+esc(m.name)+'">'+esc(m.name)+'</option>').join(''):'<option value="">未配置模型</option>';
