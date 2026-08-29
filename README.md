@@ -469,7 +469,7 @@ flowchart TD
     A --> S["联网 search"]
     A --> C{"选大脑"}
     C -->|auto/llama| BIG["本地大模型 8080<br/>llama-server / xiaojiao1.0-4B.gguf"]
-    C -->|xiaojiao| SMALL["自研小模型<br/>xiaojiao_harness.py → mini_gpt_model.pth"]
+    C -->|xiaojiao| SMALL["自研小模型(小脑)<br/>xiaojiao_harness.py → mini_gpt_model.pth<br/>检索用向量库"]
     BIG --> TOOLS["工具: run_command/write_file/open_app<br/>+ 插件(py/js/api/skill)"]
     A --> TOOLS
     SMALL --> RET["检索池 training_data_pool_clean.txt"]

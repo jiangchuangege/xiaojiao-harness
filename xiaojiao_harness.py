@@ -171,10 +171,17 @@ def load_reply_index(path=POOL_PATH, max_pairs=RETRIEVE_MAX_PAIRS):
 
 
 def retrieve_reply(query, index, threshold=RETRIEVE_THRESHOLD):
-    """在问答库里找与 query 最相似的历史问题，返回其回答；命中率低则返回 None。
-
-    用“字符二元组”重叠作为相似度，避免被“什么/是”这类高频词带偏。
-    """
+    """① 先用【向量库】(self_learn/vstore.py，含反思+功能用法)语义检索，命中即复用；
+       ② 否则回退字符二元组重叠检索。让"小脑"用上向量库、越用越强。"""
+    try:
+        import sys as _sys, os as _os
+        _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "self_learn"))
+        import vstore
+        vr = vstore.search(query, k=1, threshold=0.13)
+        if vr["hit"] and vr["best"][1]:
+            return vr["best"][1], vr["best"][0]
+    except Exception:
+        pass
     q = _bigrams(query)
     best_reply, best_score = None, 0.0
     for user_bi, user, reply in index:
