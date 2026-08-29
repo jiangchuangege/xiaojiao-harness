@@ -943,7 +943,7 @@ def _save_control(brain=None, models=None):
     saved = {"model_name": MODEL_NAME,
              "brain": brain if brain else CONTROL.get("brain", {}),
              "role": SYSTEM_PROMPT, "capabilities": CAP, "behavior": BEH,
-             "models": models if models is not None else _get_models()}
+             "models": models if models is not None else _get_models(), "dsh": CONTROL.get("dsh", {})}
     json.dump(saved, open("xiaojiao_control.json", "w", encoding="utf-8"),
               ensure_ascii=False, indent=2)
     reload_control()

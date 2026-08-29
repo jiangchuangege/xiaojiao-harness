@@ -61,5 +61,9 @@
       "api_key": "",
       "model": "deepseek-chat"
     }
-  ]
+  ],
+  "dsh": {
+    "enabled": true,
+    "_note": "DSH桥接:true=随start_xiaojiao一起启动桥接服务(无SDK也以降级模式运行)"
+  }
 }
