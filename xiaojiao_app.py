@@ -835,6 +835,20 @@ def api_presets_create():
     return jsonify({"ok": True, "file": fn, "name": name})
 
 
+@app.route("/api/presets/delete", methods=["POST"])
+def api_presets_delete():
+    """删除预设文件。"""
+    d = request.get_json(force=True, silent=True) or {}
+    file = d.get("file", "")
+    if not file.endswith(".json"):
+        file += ".json"
+    fp = os.path.join(_PRESETS_DIR, file)
+    if os.path.exists(fp):
+        os.remove(fp)
+        return jsonify({"ok": True, "file": file})
+    return jsonify({"ok": False, "error": "不存在"}), 404
+
+
 @app.route("/api/presets/detail")
 def api_presets_detail():
     """读取单个预设内容(供 Web 编辑)。"""
@@ -2121,7 +2135,7 @@ function loadPresetCards(){try{fetch('/api/presets').then(r=>r.json()).then(d=>{
   el.innerHTML=(d.presets||[]).map(p=>'<div class="pcard" onclick="loadPreset(\''+esc(p.file)+'\')">'+
     '<div class="pinfo"><span class="pname">'+esc(p.name)+'</span><span class="ptag">内置</span>'+(p.file===d.current?'<span class="cur">当前使用</span>':'')+'</div>'+
     '<div class="pdesc">'+esc(p.desc||'')+'</div><div class="pfile">'+esc(p.file)+'</div>'+
-    '<div class="picons"><span title="编辑" onclick="event.stopPropagation();editPreset(\''+esc(p.file)+'\')">✏️</span><span title="复制" onclick="event.stopPropagation();duplicatePreset(\''+esc(p.file)+'\')">⧉</span><span title="使用" onclick="event.stopPropagation();loadPreset(\''+esc(p.file)+'\')">📂</span></div></div>').join('');
+    '<div class="picons"><span title="编辑" onclick="event.stopPropagation();editPreset(\''+esc(p.file)+'\')">✏️</span><span title="复制" onclick="event.stopPropagation();duplicatePreset(\''+esc(p.file)+'\')">⧉</span><span title="使用" onclick="event.stopPropagation();loadPreset(\''+esc(p.file)+'\')">📂</span><span title="删除" onclick="event.stopPropagation();delPreset(\''+esc(p.file)+'\')">🗑️</span></div></div>').join('');
  }).catch(()=>{});}catch(e){}}
 function loadPreset(file){fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})}).then(r=>r.json()).then(d=>{alert('✅ 已加载预设：'+(d.preset||''));location.reload();}).catch(e=>alert('加载失败：'+e));}
 function duplicatePreset(file){fetch('/api/presets',{method:'GET'}).then(r=>r.json()).then(async d=>{const p=(d.presets||[]).find(x=>x.file===file);const n=p?(p.name+'·副本'):'新预设';await fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,parent:file})});loadPresetCards();});}
@@ -2138,6 +2152,7 @@ function savePreset(){const data={name:document.getElementById('eName').value, r
   capabilities:{web_search:document.getElementById('eSearch').checked, memory:document.getElementById('eMem').checked, run_tools:document.getElementById('eTools').checked},
   behavior:{temperature:+document.getElementById('eTemp').value||0.7, max_tokens:+document.getElementById('eMax').value||1024}};
   fetch('/api/presets/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:window._efile,data:data})}).then(r=>r.json()).then(()=>{alert('✅ 预设已保存');closeEdit();loadPresetCards();});}
+function delPreset(file){if(!confirm('确定删除预设 '+file+' 吗？'))return;fetch('/api/presets/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})}).then(r=>r.json()).then(()=>{alert('✅ 已删除');loadPresetCards();}).catch(e=>alert('删除失败：'+e));}
 function createPreset(){fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'我的预设',parent:'default.json'})}).then(r=>r.json()).then(d=>{alert('已创建自定义预设（可到 presets/ 编辑，或选它试试）');loadPresetCards();});}
 function openEnv(){document.getElementById('envBg').style.display='flex';loadEnv();}
 function closeEnv(){document.getElementById('envBg').style.display='none';}
