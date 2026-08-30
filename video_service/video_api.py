@@ -39,11 +39,43 @@ def _load_workflow(prompt, ckpt):
                 node["inputs"][k] = v
     return wf
 
+
+def _refine_prompt(raw):
+    """用小焦大脑把原始描述精炼成电影级英文提示词(主体/场景/光线/镜头/风格)->更快更好。失败则用原样。"""
+    raw = (raw or "").strip()
+    if not raw: return raw
+    try:
+        import json as _j, requests as _r
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cfg = _j.load(open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
+        base = (cfg.get("brain", {}).get("api", {}).get("base_url") or "http://127.0.0.1:8080/v1")
+        sys_p = ("你是专业电影导演。把用户的视频描述改写成详细、电影级的英文提示词：主体、场景、光线、色调、镜头运动、风格。"
+                 "只输出提示词本身，不要解释、不要负面提示词、不要引号。若用户描述已是英文且详细，直接优化润色。")
+        r = _r.post(base.rstrip("/") + "/chat/completions",
+                    json={"model": "xiaojiao1.0-4B",
+                          "messages": [{"role": "system", "content": sys_p}, {"role": "user", "content": raw}],
+                          "max_tokens": 600, "temperature": 0.7}, timeout=90)
+        if r.status_code == 200:
+            msg = r.json()["choices"][0].get("message", {}); out = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+            if out:
+                if len(out) > 300: out = out[-300:]
+                return out
+    except Exception:
+        pass
+    return raw
+
+
 def _worker(job_id, prompt):
+    _jobs[job_id].update(state="switching", message="精炼提示词…")
+    _persist()
+    refined = _refine_prompt(prompt)
+    _jobs[job_id]["prompt"] = prompt
+    _jobs[job_id]["refined_prompt"] = refined
     _jobs[job_id].update(state="switching", message="卸载大脑，腾出显存…")
     _persist()
     try:
         ms.stop_brain()
+        prompt = refined
         ms.start_comfy()
         _jobs[job_id].update(state="generating", message="正在生成视频…(Wan2.1 FP8)")
         ckpt = config.find_checkpoint() or "dit_fp8.safetensors"
