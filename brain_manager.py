@@ -104,8 +104,8 @@ def wake(brain_key, wait=10):
         ms.stop_brain()      # 让聊天大脑让出显存
         ms.start_comfy()     # 起视频大脑(ComfyUI+Wan)
     elif brain_key == "chat":
-        if not keep_comfy:
-            ms.stop_comfy()  # 让视频大脑让出显存
+        if not (_brain_keep_warm("video") or keep_comfy):
+            ms.stop_comfy()  # 视频大脑默认懒加载: 切聊天就停掉它, 省内存
         ms.start_brain()     # 起聊天大脑
     else:
         _start_llama(b) if b["type"] == "llama" else _start_comfy(b)

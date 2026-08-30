@@ -16,7 +16,7 @@
    "api_key": "",
    "model": "xiaojiao"
   },
-  "keep_warm": true,
+  "keep_warm": false,
   "llama_swap_port": 9292
  },
  "role": "你是猫娘小焦",
