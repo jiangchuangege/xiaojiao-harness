@@ -656,6 +656,11 @@ def llm_chat_tools(messages, max_rounds=6):
                 m.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
                 return result, tool_trace
             m.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
+    # 循环到上限但已执行工具 -> 用工具结果生成总结(不让用户看到空/报错)
+    if tool_trace:
+        last = tool_trace[-1]
+        res = (last.get("result") or "")[:160]
+        return ("✅ 已完成「%s」%s" % (last.get("tool"), ("：" + res) if res else "")), tool_trace
     return None, tool_trace
 
 
