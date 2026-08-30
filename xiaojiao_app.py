@@ -450,9 +450,26 @@ def llm_chat(messages):
 
 
 def llm_online():
-    host = LLM_BASE.split("//")[-1].split("/")[0]
+    """大脑是否在线(本地或外部API)。/health 优先; 外部API可能无/health -> 端口能连通即算在线。"""
+    raw = LLM_BASE or ""
+    host = raw.split("//")[-1].split("/")[0]  # host:port
+    if not host:
+        return False
+    # 1) /health
     try:
-        return requests.get("http://" + host + "/health", timeout=3).status_code == 200
+        if requests.get("http://" + host + "/health", timeout=3).status_code == 200:
+            return True
+    except Exception:
+        pass
+    # 2) 端口连通(外部API如deepseek可能无/health, 但端口可达)
+    try:
+        h, _, pt = host.rpartition(":")
+        port = int(pt) if pt else 443
+        h = h or host
+        import socket
+        s = socket.create_connection((h, port), 3)
+        s.close()
+        return True
     except Exception:
         return False
 
