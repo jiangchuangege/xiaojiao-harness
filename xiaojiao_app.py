@@ -1634,7 +1634,8 @@ HTML = r"""<!DOCTYPE html>
   .modal input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;font-size:14px}
   .modal .m-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
   .modal button{padding:7px 14px;border-radius:8px;border:1px solid #2a3140;background:#222a3e;color:#e8ebf3;cursor:pointer}
-  .splash{position:fixed;inset:0;background:#05070c;display:flex;align-items:center;justify-content:center;z-index:9999}
+  .splash{position:fixed;inset:0;background:#05070c;display:flex;align-items:center;justify-content:center;z-index:9999;animation:spaout .6s ease 1.6s forwards}
+  @keyframes spaout{to{opacity:0;visibility:hidden;pointer-events:none}}
   .s-inner{text-align:center}
   .s-logo{font-size:44px;font-weight:800;background:linear-gradient(90deg,#ff6bcb,#a78bfa);-webkit-background-clip:text;background-clip:text;color:transparent}
   .s-bar{width:220px;height:6px;background:#1a2030;border-radius:3px;margin:18px auto 10px;overflow:hidden}
