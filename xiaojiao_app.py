@@ -691,14 +691,17 @@ def detect_tool_intent(q):
         return "write_file"
     if is_create and is_folder and not is_file:
         return "run_command"
-    if any(k in ql for k in ("运行", "执行", "命令", "跑一下", "删掉", "删除", "移动", "复制", "清理", "关机", "格式化", "mkdir")):
+    if any(k in ql for k in ("运行", "执行", "命令", "跑一下", "删掉", "删除", "移动", "复制", "清理", "关机", "格式化", "mkdir", "安装", "卸载", "重启", "启动服务")):
         return "run_command"
     if any(k in ql for k in ("打开", "启动")):
         return "open_app"
-    if any(k in ql for k in ("列出", "查看目录", "有哪些文件", "list")):
+    if any(k in ql for k in ("列出", "查看目录", "有哪些文件", "list", "看看有什么")):
         return "list_files"
     if any(k in ql for k in ("读取", "查看文件", "读出", "读文件")):
         return "read_file"
+    # 任何"到+某路径"(桌面/文件夹/目录/Downloads) + 做实事动词 -> 视为写文件
+    if any(k in ql for k in ("到", "存到", "放", "输入", "打开")) and any(k in ql for k in ("桌面", "文件夹", "目录", "downloads", "路径", "位置", "school")) and is_create:
+        return "write_file"
     return None
 
 
@@ -781,7 +784,7 @@ def agent_run(user_input):
                     "凡是要创建文件/文件夹/读写文件，一律用绝对路径（如桌面文件用 %s\\文件名）。" % (os.getcwd(), home, desktop, desktop))
         tool_guidance = "\n[工具用法] 写文件/建网站/代码用 write_file(路径用 Windows 绝对路径, 会自动建目录); 查信息/运行命令用 run_command(PowerShell 语法, 不能用并字连接命令要用分号; 不要用 run_command 去写文件)。\n"
         skills = "\n\n[技能插件] " + "\n\n".join(c for _, c in PLUGIN_SKILLS) if PLUGIN_SKILLS else ""
-        skills = tool_guidance + skills
+        skills = tool_guidance + "\n[铁律] 凡是要帮我做实事(写文件/建网页/运行命令/查资料/列文件/读取/打开)，你必须先调用对应工具，不能只把结果或代码直接打在聊天里。\n" + skills
         messages = [{"role": "system", "content": SYSTEM_PROMPT + path_ctx + skills}]
         for h in history[-MAX_HISTORY:]:
             messages.append({"role": "user" if h["role"] == "用户" else "assistant",
