@@ -7,26 +7,26 @@
 :root{--bg:#0a0d14;--panel:#131825;--panel2:#1a2233;--border:#242e44;--tx:#e8ebf3;--muted:#7a8290;--acc:#a78bfa;--pink:#ff6bcb;--ok:#45d483;--warn:#f0a848;--err:#ff6b6b}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--tx);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.5}
-.hd{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--border);background:#0f1320}
+.hd{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--border);background:#0f1320}
+.hd .l{display:flex;align-items:center;gap:12px}
 .hd .logo{font-size:18px;font-weight:800;background:linear-gradient(90deg,var(--acc),var(--pink));-webkit-background-clip:text;background-clip:text;color:transparent}
 .hd .sub{color:var(--muted);font-size:12px}
 .wrap{padding:14px 18px;display:flex;flex-direction:column;gap:14px}
-/* 概览 */
 .cards{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:10px 12px}
-.card .n{font-size:23px;font-weight:800}
-.card .t{font-size:11px;color:var(--muted);margin-top:1px}
+.card .n{font-size:23px;font-weight:800}.card .t{font-size:11px;color:var(--muted);margin-top:1px}
 .card .bar{height:4px;background:var(--panel2);border-radius:3px;margin-top:7px;overflow:hidden}
 .card .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--pink));transition:width .5s}
-/* 大脑卡片 */
+.sec-h{display:flex;justify-content:space-between;align-items:center}
+.sec-h h3{font-size:15px;color:var(--tx)}
+.sec-h button{background:linear-gradient(90deg,#4f46e5,#7c3aed);color:#fff;border:none;border-radius:9px;padding:7px 14px;font-size:13px;cursor:pointer}
 .bg{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
 .brain{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px}
 .brain .top{display:flex;justify-content:space-between;align-items:center}
 .brain .nm{font-weight:700}.brain .ty{font-size:11px;color:var(--muted)}
 .st{font-size:11px;padding:2px 8px;border-radius:10px}
 .st.run{background:#1b3a2b;color:var(--ok)}.st.warm{background:#3a3521;color:var(--warn)}.st.idle{background:#1a2233;color:var(--muted)}.st.err{background:#3a1b1b;color:var(--err)}
-.meta{display:flex;gap:12px;margin:8px 0;font-size:12px;color:var(--muted)}
-.meta b{color:var(--tx)}
+.meta{display:flex;gap:12px;margin:8px 0;font-size:12px;color:var(--muted)}.meta b{color:var(--tx)}
 .conf{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;margin:6px 0}
 .conf .c{display:flex;justify-content:space-between;align-items:center;padding:2px 0}
 .conf input[type=range]{width:90px}
@@ -37,30 +37,43 @@ body{background:var(--bg);color:var(--tx);font-family:'Segoe UI',system-ui,sans-
 .ops{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
 .brain button{border:1px solid var(--border);background:var(--panel2);color:var(--tx);border-radius:8px;padding:6px 4px;font-size:12px;cursor:pointer}
 .brain button:hover{border-color:var(--acc)}
-/* 底部 */
 .row2{display:grid;grid-template-columns:2fr 1fr;gap:14px}
 .pane{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
 .pane h4{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}
-canvas{width:100%;height:130px;display:block}
-.loglist{max-height:180px;overflow:auto;font-size:11px;font-family:Consolas,monospace}
+canvas{width:100%;height:96px;display:block}
+.loglist{max-height:150px;overflow:auto;font-size:11px;font-family:Consolas,monospace}
 .loglist div{padding:3px 0;border-bottom:1px solid #1a2233}
 .loglist .a{color:var(--acc)}.loglist .tt{color:var(--muted)}
-/* 添加大脑 */
-.addbar{display:flex;gap:8px;margin-top:8px}
-.addbar select,.addbar button{background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--tx);padding:6px 10px}
-.addbar select{flex:1}
+/* 添加大脑弹窗 */
+.addbg{position:fixed;inset:0;background:rgba(5,7,12,.7);display:none;align-items:center;justify-content:center;z-index:99}
+.mod{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;width:min(430px,94vw)}
+.mod h3{margin-bottom:12px}
+.mod label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
+.mod input,.mod select{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--tx);padding:8px 10px}
+.mod .btns{display:flex;gap:8px;margin-top:14px;justify-content:flex-end}
+.mod button{border:1px solid var(--border);background:var(--panel2);color:var(--tx);border-radius:8px;padding:8px 16px;cursor:pointer}
+.mod button.pri{background:linear-gradient(90deg,#4f46e5,#7c3aed);border:none;color:#fff}
 </style>
 </head>
 <body>
-<div class="hd"><div class="logo">🧠 小焦 · 大脑仓库监控</div><div class="sub">brain_manager · llama-swap · ComfyUI · 每2秒刷新</div></div>
+<div class="hd"><div class="l"><div class="logo">🧠 小焦 · 大脑仓库监控</div><div class="sub">brain_manager · llama-swap · ComfyUI · 每2秒刷新</div></div></div>
 <div class="wrap">
   <div class="cards" id="overview"></div>
+  <div class="sec-h"><h3>🧠 大脑仓库</h3><button onclick="openAdd()">＋ 添加大脑</button></div>
   <div class="bg" id="brains"></div>
   <div class="row2">
-    <div class="pane"><h4>📈 最近60秒 显存(trend)</h4><canvas id="chart"></canvas></div>
-    <div class="pane"><h4>📋 操作日志</h4><div class="loglist" id="logs"></div>
-      <div class="addbar"><select id="libSel"></select><button onclick="addBrain()">+ 添加大脑</button></div>
-    </div>
+    <div class="pane"><h4>📈 显存/内存 趋势(60s)</h4><canvas id="chart"></canvas></div>
+    <div class="pane"><h4>📋 操作日志</h4><div class="loglist" id="logs"></div></div>
+  </div>
+</div>
+<div class="addbg" id="addBg">
+  <div class="mod">
+    <h3>➕ 添加大脑</h3>
+    <label>模型文件路径(本地)</label><input id="nPath" placeholder="如 G:\模型文件\xxx\main.py 或 模型目录">
+    <label>名称</label><input id="nName" placeholder="如 image / reason">
+    <label>类型</label><select id="nType"><option value="comfy">ComfyUI(视频/图像)</option><option value="llama">LLM(需 llama-swap)</option></select>
+    <label>端口</label><input id="nPort" value="8189">
+    <div class="btns"><button onclick="closeAdd()">取消</button><button class="pri" onclick="confirmAdd()">添加并加载</button></div>
   </div>
 </div>
 <script>
@@ -77,36 +90,32 @@ function render(d){
       `<div class="card"><div class="n">${d.total}</div><div class="t">总大脑数</div></div>`+
       `<div class="card"><div class="n">${d.online}</div><div class="t">在线大脑</div></div>`+
       `<div class="card"><div class="n">${d.warm}</div><div class="t">温存大脑</div></div>`+
-      `<div class="card"><div class="n">${(d.vram_used/1024).toFixed(1)}G</div><div class="t">/${(d.vram_total/1024).toFixed(1)}G 显存</div></div>`;
+      `<div class="card"><div class="n">${(d.vram_used/1024).toFixed(1)}G</div><div class="t">显存占用</div></div>`;
     document.getElementById('brains').innerHTML=(d.brains||[]).map(b=>
       `<div class="brain"><div class="top"><div><div class="nm">${esc(b.name)}</div><div class="ty">${esc(b.type)} · 端口${b.port||'-'} · ${esc(b.extra||'')}</div></div><span class="st ${stC(b.state)}">${esc(b.state)}</span></div>
        <div class="meta"><span>显存 <b>${b.vram_gb}G</b></span><span>任务 <b>${esc(b.task||'—')}</b></span></div>
        <div class="conf"><div class="c"><span>keep_warm(常驻)</span><span class="sw ${b.conf.keep_warm?'on':''}" onclick="tune('${b.key}','keep_warm',!${b.conf.keep_warm})"></span></div>
          <div class="c"><span>卸载优先级</span><input type="range" min="1" max="10" value="${b.conf.priority||5}" onchange="tune('${b.key}','priority',this.value)"><span>${b.conf.priority||5}</span></div>
          <div class="c"><span>挂载内存</span><span class="sw ${b.conf.mem_pinned?'on':''}" onclick="tune('${b.key}','mem_pinned',!${b.conf.mem_pinned})"></span></div></div>
-       <div class="ops">
-         <button onclick="op('switch','${b.key}')">切换</button><button onclick="op('wake','${b.key}')">唤醒</button>
-         <button onclick="op('release','${b.key}')">释放</button><button onclick="op('restart','${b.key}')">重启</button></div>
-       <div class="loglist" style="margin-top:8px;max-height:70px">${(b.log||[]).slice(0,3).map(l=>`<div><span class="a">${esc(l.action)}</span> ${esc(l.target)} ${esc(l.t)}</div>`).join('')||'<div style="color:#7a8290">无</div>'}</div>
+       <div class="ops"><button onclick="op('switch','${b.key}')">切换</button><button onclick="op('wake','${b.key}')">唤醒</button><button onclick="op('release','${b.key}')">释放</button><button onclick="op('restart','${b.key}')">重启</button></div>
       </div>`).join('')||'<div style="color:#7a8290">暂无大脑</div>';
     document.getElementById('logs').innerHTML=(d.logs||[]).map(l=>`<div><span class="a">${esc(l.action)}</span> ${esc(l.target||'')} ${esc(l.note||'')} <span class="tt">${esc(l.t)}</span></div>`).join('')||'<div style="color:#7a8290">暂无</div>';
-    fillLib(d.lib);
-  }catch(e){console.log('render err',e);}
+  }catch(e){console.log('render',e);}
   hist.push({vram:d.vram_used,mem:d.mem_used});if(hist.length>30)hist.shift();draw(d);
 }
 function tune(k,f,v){op('tune',k,{conf:{[f]:v}});}
-function fillLib(lib){const sel=document.getElementById('libSel');if(sel.children.length)return;sel.innerHTML=(lib||[]).map(m=>`<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('');}
-function addBrain(){const v=document.getElementById('libSel').value;if(v)op('add',v);}
 function draw(d){
-  const w=C.width=C.clientWidth,h=C.height=130;ctx.clearRect(0,0,w,h);
-  ctx.strokeStyle='#242e44';ctx.beginPath();for(let i=0;i<=4;i++){const y=h*i/4;ctx.moveTo(0,y);ctx.lineTo(w,y);}ctx.stroke();
+  const w=C.width=C.clientWidth,h=C.height=96;ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle='#242e44';ctx.beginPath();for(let i=0;i<=3;i++){const y=h*i/3;ctx.moveTo(0,y);ctx.lineTo(w,y);}ctx.stroke();
   const mx=Math.max(1,...hist.flatMap(p=>[p.vram,p.mem]));
-  function ln(key,c){if(hist.length<2)return;ctx.strokeStyle=c;ctx.lineWidth=2;ctx.beginPath();hist.forEach((p,i)=>{const x=w*i/(hist.length-1),y=h-p[key]/mx; i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();}
+  function ln(key,c){if(hist.length<2)return;ctx.strokeStyle=c;ctx.lineWidth=2;ctx.beginPath();hist.forEach((p,i)=>{const x=w*i/(hist.length-1),y=h-p[key]/mx;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();}
   ln('vram','#a78bfa');ln('mem','#45d483');
-  ctx.fillStyle='#a78bfa';ctx.fillText('显存',w-40,14);ctx.fillStyle='#45d483';ctx.fillText('内存',w-40,28);
 }
+function openAdd(){document.getElementById('addBg').style.display='flex';}
+function closeAdd(){document.getElementById('addBg').style.display='none';}
+function confirmAdd(){const path=document.getElementById('nPath').value.trim(),name=document.getElementById('nName').value.trim(),type=document.getElementById('nType').value,port=document.getElementById('nPort').value;if(!name){alert('请填名称');return;}op('add',name,{name,name,type,path,port});closeAdd();}
 setInterval(()=>fetch('/api/monitor').then(r=>r.json()).then(render).catch(()=>{}),2000);
-render({brains:[],vram_used:0,vram_total:1,mem_used:0,mem_total:1,total:0,online:0,warm:0,logs:[],lib:[]});
+render({brains:[],vram_used:0,vram_total:1,mem_used:0,mem_total:1,total:0,online:0,warm:0,logs:[]});
 </script>
 </body>
 </html>

@@ -38,27 +38,45 @@ def _nvidia():
 
 
 def _mem():
+    """内存(used/total MB)。psutil 优先, 否则 Windows ctypes。"""
     try:
         import psutil
         v = psutil.virtual_memory()
         return int(v.used / 1048576), int(v.total / 1048576)
     except Exception:
+        pass
+    try:
+        import ctypes
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        m = MEMORYSTATUSEX(); m.dwLength = ctypes.sizeof(m)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+        return int((m.ullTotalPhys - m.ullAvailPhys) / 1048576), int(m.ullTotalPhys / 1048576)
+    except Exception:
         return 0, 0
 
 
 def _llama():
+    """聊天大脑: 端口9292在=在线; 模型加载看 /api/models。"""
     try:
         import requests
         d = requests.get("http://127.0.0.1:9292/api/models", timeout=3).json()
         out = [m.get("id") for m in d.get("data", [])]
-        st = "运行中" if out else "温存"
-        for m in d.get("data", []):
-            v = str((m.get("status") or {}).get("value", ""))
-            if "loaded" in v:
-                st = "运行中"
-        return {"models": out, "state": st, "loaded": bool(d.get("data"))}
+        loaded = bool(d.get("data"))
+        st = "运行中" if loaded else "空闲"
+        return {"models": out, "state": st, "loaded": loaded}
     except Exception:
-        return {"models": [], "state": "空闲", "loaded": False}
+        # 端口在但接口没数据 -> 视为在线
+        try:
+            import socket
+            socket.create_connection(("127.0.0.1", 9292), 0.8).close()
+            return {"models": [], "state": "运行中", "loaded": True}
+        except Exception:
+            return {"models": [], "state": "空闲", "loaded": False}
 
 
 def _comfy():
@@ -130,14 +148,17 @@ def api_monitor_op():
                 pass
             note = "已紧急清空显存"
         elif op == "add":
-            # 从模型库添加并加载
-            for m in MODEL_LIB:
-                if m["id"] == tgt or m["name"] == tgt:
-                    bm.BRAINS.setdefault(m["id"], {"name": m["name"], "type": m["type"], "port": m["port"], "vram_gb": m["vram"], "state": "OFF", "conf": dict(BRAIN_CONF)})
-                    bm.wake(m["id"]); note = "已添加并加载 %s" % m["name"]
-                    break
+            name = d.get("name") or tgt
+            btype = d.get("type") or "comfy"
+            ppath = d.get("path") or ""
+            pid = d.get("id") or name
+            if pid in bm.BRAINS:
+                note = "大脑已存在: %s" % pid
+            elif btype == "comfy":
+                bm.BRAINS.setdefault(pid, {"name": name, "type": "comfy", "port": d.get("port", 8188), "vram_gb": d.get("vram", 5.0), "state": "OFF", "conf": dict(BRAIN_CONF), "path": ppath})
+                bm.wake(pid); note = "已添加并加载 %s" % name
             else:
-                note = "未知模型"
+                note = "仅支持添加视频/ComfyUI 类大脑(路径:%s)" % (ppath or "-")
         elif op == "tune":
             # 调优: 改 keep_warm / priority / mem_pinned
             conf = d.get("conf", {})
