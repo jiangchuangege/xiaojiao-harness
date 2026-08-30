@@ -18,6 +18,32 @@ def _sweep():
             j["message"] = "生成超时(30分钟)，请重新生成"
 
 
+def _schedule_warm_idle(job_id, minutes=10):
+    """视频生成完后: keep_warm=false 时, 温存 N 分钟(ComfyUI不关,连续视频秒级), 超时无新任务则冷启动释放内存。"""
+    def _tick():
+        import time as _t
+        _t.sleep(minutes * 60)
+        try:
+            # 无新视频任务(还在 switching/generating) 就不停
+            busy = any(j.get("state") in ("switching", "generating", "queued") for j in _jobs.values())
+            if not busy and not _keep_warm_flag():
+                import model_switch as _ms
+                _ms.stop_comfy()
+        except Exception:
+            pass
+    threading.Thread(target=_tick, daemon=True).start()
+
+
+def _keep_warm_flag():
+    try:
+        import json as _j, os as _o
+        root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+        d = _j.load(open(_o.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
+        return bool(d.get("brain", {}).get("keep_warm", False))
+    except Exception:
+        return False
+
+
 def _persist():
     try:
         json.dump(_jobs, open(_JOBS_FILE, "w", encoding="utf-8"), ensure_ascii=False)
@@ -175,6 +201,8 @@ def _worker(job_id, prompt):
         import brain_manager as _bm2
         _bm2.switch_to("chat")
         _jobs[job_id].update(state="done", message="完成", url="/videos/" + os.path.basename(out))
+        if not _keep_warm_flag():
+            _schedule_warm_idle(job_id)  # 温存10分钟,超时自动释放内存
     except Exception as e:
         try:
             import brain_manager as _bm3
