@@ -10,6 +10,17 @@ _lock = threading.Lock()
 _comfy_proc = None
 
 
+def _keep_warm():
+    """读操控文件 brain.keep_warm：是否常驻视频模型/不重启ComfyUI。"""
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        import json as _j
+        d = _j.load(open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
+        return bool(d.get("brain", {}).get("keep_warm", False))
+    except Exception:
+        return False
+
+
 def get_state():
     # 无锁快照：直接读 dict 副本，绝不等模型切换锁(避免状态读取被长阻塞操作堵住)
     return dict(_state)
@@ -111,8 +122,13 @@ def start_comfy():
 
 
 def stop_comfy():
-    """卸载视频模型(杀掉 8188)，释放显存。"""
+    """卸载视频模型(杀掉 8188)，释放显存。keep_warm 时保留ComfyUI进程/Wan模型常驻,不杀(视频秒级)。"""
     global _comfy_proc
+    if _keep_warm() and _pid_on_port(config.COMFY_PORT):
+        _set("idle", "视频模型常驻(keep_warm), 不上传…")
+        if _comfy_proc:
+            _comfy_proc = None
+        return
     _set("stop_comfy", "正在卸载视频模型…")
     pid = _pid_on_port(config.COMFY_PORT)
     _kill_pid(pid)
