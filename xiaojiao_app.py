@@ -684,7 +684,8 @@ def detect_tool_intent(q):
     """粗略判断用户请求是否属于“执行类操作”，返回工具类型或 None（仅作兜底提示）。"""
     ql = q.lower()
     is_create = any(k in ql for k in ("创建", "新建", "写", "保存", "生成", "建立", "做一个", "写一个"))
-    is_file = any(k in ql for k in (".txt", ".py", ".html", ".md", ".json", ".js", "index.", "文件", "file"))
+    is_file = any(k in ql for k in (".txt", ".py", ".html", ".md", ".json", ".js", "index.", "文件", "file",
+                                   "html", "网页", "网站", "页面", "自我介绍", "文档", "代码", "内容", "博客", "h5"))
     is_folder = any(k in ql for k in ("文件夹", "目录", "folder", "dir"))
     if is_create and is_file:
         return "write_file"
