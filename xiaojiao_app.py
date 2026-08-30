@@ -244,6 +244,15 @@ def _build_tools():
                 tools.append({"type": "function", "function": {
                     "name": t["name"], "description": t.get("description", ""),
                     "parameters": t.get("parameters", {"type": "object", "properties": {}})}})
+    # 规范化: 每个工具的 parameters 必须是 JSON Schema object(严格API如deepseek要求)
+    for t in tools:
+        fn = t.get("function") or {}
+        prm = fn.get("parameters")
+        if not isinstance(prm, dict) or prm.get("type") is None:
+            prm = dict(prm or {})
+            prm.setdefault("type", "object")
+            prm.setdefault("properties", prm.get("properties") or {})
+            fn["parameters"] = prm
     return tools
 
 # ================== 小焦模型 ==================

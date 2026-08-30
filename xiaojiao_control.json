@@ -1,7 +1,7 @@
 {
   "model_name": "xiaojiao1.0-4B",
   "brain": {
-    "engine": "auto",
+    "engine": "api",
     "_engine": "auto=自动(有大模型就先用大模型,否则用自建小模型) | llama=固定本地大模型 | xiaojiao=固定用自建小模型 | api=外接OpenAI兼容接口",
     "llama": {
       "server": "C:/llama/llama-server.exe",
@@ -12,9 +12,9 @@
       "_note": "大模型(GGUF)文件。已用硬链接 xiaojiao1.0-4B.gguf 指向 4B 大模型。想换大脑改这里。"
     },
     "api": {
-      "api_key": "",
-      "base_url": "http://127.0.0.1:9292/v1",
-      "model": "xiaojiao"
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "sk-a1e26b7b30304e4c9aa858a834384327",
+      "model": "deepseek-chat"
     },
     "keep_warm": false,
     "llama_swap_port": 9292
@@ -27,13 +27,14 @@
     "context_len": 30,
     "auto_deep_think": true,
     "plugins": {
+      "web-search": true,
+      "memory": true,
       "ip": true,
       "js-calc": true,
-      "memory": true,
       "netdoctor": true,
       "search": true,
-      "weather": true,
-      "web-search": true
+      "video_generation": true,
+      "weather": true
     },
     "full_access": true
   },
@@ -49,11 +50,16 @@
       "base_url": "http://127.0.0.1:8080/v1",
       "api_key": "",
       "model": "xiaojiao1.0-4B"
+    },
+    {
+      "name": "deepseek",
+      "engine": "api",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "sk-a1e26b7b30304e4c9aa858a834384327",
+      "model": "deepseek-chat"
     }
   ],
   "dsh": {
     "enabled": true
-  },
-  "preset": "18禁-聊天",
-  "_engine": ""
+  }
 }
