@@ -52,6 +52,7 @@
 | 🔗 | **OpenAI 兼容** | `/v1` 接口，dsh / 任意客户端能接 |
 | 🎬 | **真·文生视频** | 本地 ComfyUI+Wan2.1 真生成（8G按需切换、进度条、刷新不丢） |
 | ⚡ | **多大脑·秒级切换** | llama-swap + keep_warm + 低显存(权重RAM↔显存)，聊天/视频/未来大脑秒切、ComfyUI 进程常驻 |
+| 🧠 | **大脑仓库监控面板** | 实时看所有大脑状态/显存/内存，直接切换·调优·添加大脑（`/monitor`，免写码） |
 
 ---
 
@@ -565,6 +566,22 @@ flowchart LR
 > 详见 [docs/brain-switch.md](docs/brain-switch.md) 与 [docs/tools.md](docs/tools.md)。
 
 
+
+## 🧠 大脑仓库监控面板
+
+小焦的**多大脑**都能在一个网页里实时盯着并直接操作：看每个大脑的状态/显存/内存/任务，切换·唤醒·释放·重启，**调优 keep_warm/优先级/挂载内存（免写码）**，**添加大脑（选本地模型文件路径）**。
+
+```mermaid
+flowchart LR
+    A["🧠 监控面板 /monitor"] -->|每2秒| B["/api/monitor"]
+    B --> C["brain_manager.BRAINS"]
+    B --> D["nvidia-smi 显存"]
+    B --> E["psutil 内存"]
+    B --> F["llama-swap(9292) 聊天脑"]
+    B --> G["ComfyUI(8188) 视频脑"]
+```
+
+> 打开 **`http://127.0.0.1:5000/monitor`**。详见 [docs/monitor.md](docs/monitor.md)。
 
 ## 🙏 致谢（核心工具的作者们）
 
