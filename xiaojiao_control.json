@@ -12,9 +12,9 @@
    "_note": "大模型(GGUF)文件。已用硬链接 xiaojiao1.0-4B.gguf 指向 4B 大模型。想换大脑改这里。"
   },
   "api": {
-   "base_url": "http://127.0.0.1:8080/v1",
+   "base_url": "http://127.0.0.1:9292/v1",
    "api_key": "",
-   "model": "xiaojiao1.0-4B"
+   "model": "coder"
   },
   "keep_warm": false,
   "llama_swap_port": 9292
@@ -34,7 +34,8 @@
    "netdoctor": true,
    "search": true,
    "video_generation": true,
-   "weather": true
+   "weather": true,
+   "music_generation": true
   },
   "full_access": true
  },
@@ -65,5 +66,6 @@
    "api_key": "",
    "model": "coder"
   }
- ]
+ ],
+ "dsh": {}
 }
