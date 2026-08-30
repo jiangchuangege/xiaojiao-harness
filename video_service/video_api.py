@@ -160,7 +160,7 @@ def api_video_refine():
             root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             cfg = _j.load(open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
             base = (cfg.get("brain", {}).get("api", {}).get("base_url") or "http://127.0.0.1:8080/v1")
-            r = _r.post(base.rstrip("/") + "/chat/completions", json={"model":"xiaojiao1.0-4B","messages":[{"role":"system","content":"把这段视频提示词用一句简洁中文概括画面内容，不要多余解释。"},{"role":"user","content":_p}],"max_tokens":60,"temperature":0.3}, timeout=6)
+            r = _r.post(base.rstrip("/") + "/chat/completions", json={"model":"xiaojiao1.0-4B","messages":[{"role":"system","content":"把这段英文视频提示词翻译成一句简洁中文（只说中文，不要英文、不要解释）。"},{"role":"user","content":_p}],"max_tokens":60,"temperature":0.3,"chat_template_kwargs":{"enable_thinking":False}}, timeout=8)
             if r.status_code == 200:
                 c = (r.json()["choices"][0].get("message",{}).get("content") or "").strip()
                 return c or _p
