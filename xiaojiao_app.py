@@ -1774,7 +1774,7 @@ function closeVideo(){document.getElementById('videoBg').style.display='none';}
 async function startVideo(){const q=document.getElementById('vq').value.trim();if(!q){return;}
   const pv=document.getElementById('vpv');pv.style.display='block';pv.innerHTML='⏳ 小焦正在精炼提示词…';document.getElementById('vconfirm').style.display='none';
   try{const d=await (await fetch('/api/video/refine?prompt='+encodeURIComponent(q))).json();
-   pv.innerHTML='<div style="font-size:12px;color:#8b93a3;margin-bottom:4px">✅ 小焦改写后的提示词：</div><div style="font-size:13px;color:#a78bfa;line-height:1.6;background:#0e1116;border:1px solid #2a3140;border-radius:8px;padding:8px">'+esc(d.refined)+'</div><div style="font-size:12px;color:#6e7681;margin-top:6px">满意就点「确认并生成」；不满意重新输入。</div>';
+   pv.innerHTML='<div style="font-size:12px;color:#8b93a3;margin-bottom:4px">✅ 小焦改写后的提示词（英文给视频模型，画质最好）：</div><div style="font-size:13px;color:#a78bfa;line-height:1.6;background:#0e1116;border:1px solid #2a3140;border-radius:8px;padding:8px">'+esc(d.refined)+'</div><div style="font-size:12px;color:#8b93a3;margin-top:6px">📖 中文大意：<span style="color:#cbd0dc">'+esc(d.zh||'电影级画面、柔和光线、清晰细节、顺滑运镜。')+'</span></div><div style="font-size:12px;color:#6e7681;margin-top:6px">满意就点「确认并生成」；不满意重新输入。</div>';
    document.getElementById('vconfirm').style.display='flex';
    window._vq=q; window._vr=d.refined;
   }catch(e){pv.innerHTML='⚠️ '+esc(e.message);}}

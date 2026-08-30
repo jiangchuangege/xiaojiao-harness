@@ -150,7 +150,23 @@ def api_video_refine():
     """只精炼提示词(不学习/不切换)——供前端"确认提示词"流程用。"""
     prompt = (request.args.get("prompt") or "").strip()[:80] or (request.get_json(silent=True) or {}).get("prompt", "")
     refined = _refine_prompt(prompt, save=False)
-    return jsonify({"ok": True, "refined": refined})
+    # 中文大意(给用户看懂): 简单概括原始场景
+    zh = prompt
+    def _zh(_p):
+        try:
+            import json as _j, requests as _r
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            cfg = _j.load(open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
+            base = (cfg.get("brain", {}).get("api", {}).get("base_url") or "http://127.0.0.1:8080/v1")
+            r = _r.post(base.rstrip("/") + "/chat/completions", json={"model":"xiaojiao1.0-4B","messages":[{"role":"system","content":"把这段视频提示词用一句简洁中文概括画面内容，不要多余解释。"},{"role":"user","content":_p}],"max_tokens":60,"temperature":0.3}, timeout=6)
+            if r.status_code == 200:
+                c = (r.json()["choices"][0].get("message",{}).get("content") or "").strip()
+                return c or _p
+        except Exception:
+            pass
+        return _p
+    zh = _zh(refined) if len(refined) > 15 else prompt
+    return jsonify({"ok": True, "refined": refined, "zh": zh})
 
 
 @bp.route("/api/video", methods=["POST"])
