@@ -615,7 +615,12 @@ def llm_chat_tools(messages, max_rounds=6):
         try:
             r = requests.post(url, headers=headers, json=payload, timeout=120)
             if r.status_code != 200:
-                return None, tool_trace
+                # 限流/临时错误 -> 等2s重试一次
+                import time as _t
+                _t.sleep(2)
+                r = requests.post(url, headers=headers, json=payload, timeout=120)
+                if r.status_code != 200:
+                    return None, tool_trace
             msg = r.json()["choices"][0]["message"]
         except Exception:
             return None, tool_trace
@@ -811,7 +816,7 @@ def agent_run(user_input):
         return answer, True, info, needs_confirm, tool_trace
 
     # 6. 无任何可用大脑（本地大模型未连接）时的降级（只给一句简洁提示，不瞎输出联网内容）
-    fallback = "🤖 本地大模型未连接（8080 未启动），小焦暂时没法回答。\n请先运行 `python start_xiaojiao.py` 启动大模型，或确认 8080 端口已就绪。"
+    fallback = "🤖 模型调用出错（可能是连接超时/限流）。请稍后重试，或确认已选中的模型（本地大脑/API）配置正确、端口可达。"
     return fallback, False, [], False, []
 
 
@@ -1184,7 +1189,7 @@ def api_chat():
     # 把占位小焦消息更新为真实回答（含最后那句提示）
     answer_final = answer
     if not answer_final:
-        answer_final = "🤖 本地大模型未连接（8080 未启动），小焦暂时没法回答。请先运行 `python start_xiaojiao.py`。"
+        answer_final = "🤖 模型调用出错（可能是连接超时/限流）。请稍后重试，或确认模型配置正确。"
     s, d = get_current_session()
     for m in s.get("messages", []):
         if m.get("role") == "小焦" and "__pending__" in str(m.get("content", "")):
