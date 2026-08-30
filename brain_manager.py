@@ -16,6 +16,10 @@ BRAINS = {
         "name": "视频大脑 (Wan2.1 + ComfyUI)", "port": 8188,
         "type": "comfy", "vram_gb": 5.0, "state": "OFF", "proc": "comfy",
     },
+    "coder": {  # 编码大脑：Qwen3-Coder 7B (llama-swap 托管, 8G 按需切换)
+        "name": "编码大脑 (Qwen3-Coder 7B)", "port": 9292,
+        "type": "llama", "vram_gb": 4.7, "state": "OFF",
+    },
     # 未来扩展(示例, 加进 BRAINS 即可被调度):
     # "image": {"name":"图像大脑(SD3)","port":8189,"type":"comfy","vram_gb":4.0,"state":"OFF"},
     # "reason": {"name":"推理大脑(DeepSeek)","port":8081,"type":"llama","vram_gb":6.0,"state":"OFF"},

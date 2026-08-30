@@ -5,6 +5,10 @@ models:
     cmd: C:/llama/llama-server.exe --port ${PORT} --model C:/llama/xiaojiao1.0-4B.gguf -c 32768
     ttl: 0               # 不自动卸载(由小焦/视频切换时主动 unload)
     useModelName: xiaojiao1.0-4B
+  coder:
+    cmd: C:/llama/llama-server.exe --port ${PORT} --model C:/llama/Qwen3-Coder-7B-Instruct-Q4_K_M.gguf -c 20000
+    ttl: 0
+    useModelName: qwen3-coder-7b
   # 未来可加更多大脑(填进 models 即可被调度):
   # deepseek:
   #   cmd: ... --port ${PORT} --model <deepseek.gguf>
