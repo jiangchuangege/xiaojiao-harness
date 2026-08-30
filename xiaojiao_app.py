@@ -926,9 +926,9 @@ def api_env():
     # llama-server(大脑, 路径走配置/环境变量)
     ls = os.environ.get("XIAOJIAO_LLAMA_SERVER") or _ll.get("server") or "llama-server"
     ls_ok = os.path.exists(ls) or shutil.which(ls) is not None
-    add("llama-server(聊天大脑)", ls_ok, "本地大脑引擎" + ("，已装" if ls_ok else "，未找到"), "安装 llama.cpp 便携版或设 XIAOJIAO_LLAMA_SERVER", "")
+    add("llama-server(聊天大脑)", ls_ok, "本地大脑引擎" + ("，已装" if ls_ok else "，未找到"), "做法：下载 llama.cpp 便携版 → 解压 → 设环境变量 XIAOJIAO_LLAMA_SERVER=你的路径\\llama-server.exe", "github.com/ggml-org/llama.cpp/releases")
     gf = os.environ.get("XIAOJIAO_LLAMA_GGUF") or _ll.get("gguf") or ""
-    add("聊天模型(xiaojiao1.0-4B)", bool(gf) and exists(gf), ("已放" if gf and exists(gf) else "缺模型: %s" % (gf or "未配置")), "下 gguf 并在配置/环境变量指定", "")
+    add("聊天模型(xiaojiao1.0-4B)", bool(gf) and exists(gf), ("已放" if gf and exists(gf) else "缺模型: %s" % (gf or "未配置")), "做法：下载 xiaojiao1.0-4B.gguf → 设 XIAOJIAO_LLAMA_GGUF=模型路径", "")
     # 大脑在线(llama-swap 端口, 从配置读)
     _bp = 9292
     try:
@@ -945,7 +945,7 @@ def api_env():
     for cd in comfy_dirs:
         if exists(os.path.join(cd, "main.py")):
             comfy = cd; break
-    add("ComfyUI(视频大脑)", bool(comfy), ("位于 " + comfy if comfy else "未找到"), "下 ComfyUI 便携版", "")
+    add("ComfyUI(视频大脑)", bool(comfy), ("位于 " + comfy if comfy else "未找到"), "做法：下载 ComfyUI 便携版(N卡版) → 解压 → 设 XIAOJIAO_COMFY_DIR=你的\\ComfyUI 目录", "github.com/comfyanonymous/ComfyUI/releases")
     ck = r"G:\模型文件\视频模型\dit_fp8.safetensors"
     tc = r"G:\模型文件\视频模型\umt5_fp8.safetensors"
     va = r"G:\模型文件\视频模型\vae_fp8.safetensors"
@@ -955,10 +955,10 @@ def api_env():
     # llama-swap(热切换)
     sw = r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe"
     ok = exists(sw)
-    add("llama-swap(秒切管理)", ok, ("位于" if ok else "未找到") + (os.path.basename(sw) if ok else ""), "放 llama-swap.exe", "")
+    add("llama-swap(秒切管理)", ok, ("位于" if ok else "未找到") + (os.path.basename(sw) if ok else ""), "做法：解压 llama-swap.exe → 设 XIAOJIAO_LLAMA_SWAP=路径", "github.com/mostlygeek/llama-swap/releases")
     add("llama-swap(9292) 在线", port_up(9292), "多大脑秒切管理" + ("在线" if port_up(9292) else "未启动"), "start_xiaojiao 会自动拉起", "")
     # Node.js(.js 插件)
-    add("Node.js(js插件)", shutil.which("node") is not None, "运行 .js 插件用" + ("，已装" if shutil.which("node") else "，未装"), "装 Node.js 或不用 .js 插件", "")
+    add("Node.js(js插件)", shutil.which("node") is not None, "运行 .js 插件用" + ("，已装" if shutil.which("node") else "，未装"), "做法：去 nodejs.org 下载 LTS 版安装(一路默认)", "nodejs.org")
     # GPU
     gpu = False
     try:
@@ -1960,7 +1960,7 @@ function openEnv(){document.getElementById('envBg').style.display='flex';loadEnv
 function closeEnv(){document.getElementById('envBg').style.display='none';}
 async function loadEnv(){try{const d=await (await fetch('/api/env')).json();
   const el=document.getElementById('envList');
-  el.innerHTML=d.items.map(function(i){return '<div class="envitem '+(i.ok?'ok':'no')+'"><div class="st">'+(i.ok?'✓':'✗')+'</div><div class="nm">'+esc(i.name)+'<div class="inf">'+esc(i.info)+(i.ok?'':'<div>需：'+esc(i.need)+'</div>')+'</div></div></div>';}).join('');
+  el.innerHTML=d.items.map(function(i){return '<div class="envitem '+(i.ok?'ok':'no')+'"><div class="st">'+(i.ok?'✓':'✗')+'</div><div class="nm">'+esc(i.name)+'<div class="inf">'+esc(i.info)+(i.ok?'':'<div style="color:#f0a848;margin-top:4px">🔧 '+esc(i.need)+(i.dl?'<br><a href="'+esc(i.dl)+'" target="_blank" style="color:#a78bfa">⬇ 去下载</a>':'')+'</div>')+'</div></div></div>';}).join('');
   const b=document.createElement('div');b.className='envitem '+(d.ok?'ok':'no');b.innerHTML='<div class="st">'+(d.ok?'✓':'✗')+'</div><div class="nm">'+(d.ok?'✅ 环境齐全，可直接用':'⚠️ 有 '+((d.missing||[]).length)+' 项待处理')+'</div>';el.appendChild(b);
  }catch(e){document.getElementById('envList').textContent='检测失败';}}
 function openBrain(){document.getElementById('brainBg').style.display='flex';loadBrain();}
