@@ -115,9 +115,9 @@ def _worker(job_id, prompt):
     _jobs[job_id].update(state="switching", message="卸载大脑，腾出显存…")
     _persist()
     try:
-        ms.stop_brain()
+        import brain_manager as _bm
+        _bm.switch_to("video")
         prompt = refined
-        ms.start_comfy()
         _jobs[job_id].update(state="generating", message="正在生成视频…(Wan2.1 FP8)")
         ckpt = config.find_checkpoint() or "dit_fp8.safetensors"
         wf = _load_workflow(prompt, ckpt)
@@ -132,16 +132,13 @@ def _worker(job_id, prompt):
         out = os.path.join(config.OUT_DIR, name + (os.path.splitext(fn)[1] or ".mp4"))
         cc.download_video(fn, sub, ftype, out)
         _jobs[job_id].update(state="switching", message="卸载视频模型…")
-        ms.stop_comfy()
-        ms.start_brain()
+        import brain_manager as _bm2
+        _bm2.switch_to("chat")
         _jobs[job_id].update(state="done", message="完成", url="/videos/" + os.path.basename(out))
     except Exception as e:
         try:
-            ms.stop_comfy()
-        except Exception:
-            pass
-        try:
-            ms.start_brain()
+            import brain_manager as _bm3
+            _bm3.switch_to("chat")
         except Exception:
             pass
         _jobs[job_id].update(state="error", error=str(e), message="生成失败，已尽力恢复大脑")
