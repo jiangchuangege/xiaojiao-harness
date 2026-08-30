@@ -82,17 +82,19 @@ def _start_comfy(b):
 
 def wake(brain_key, wait=10):
     """唤醒大脑到显存(RUN)，并确保其它大脑让出显存。复用 video_service.model_switch 的真实控制。"""
-    import sys
-    root = os.path.dirname(os.path.abspath(__file__))
-    if os.path.join(root, "video_service") not in sys.path:
-        sys.path.insert(0, os.path.join(root, "video_service"))
+    import sys, os as _os
+    root = _os.path.dirname(_os.path.abspath(__file__))
+    if _os.path.join(root, "video_service") not in sys.path:
+        sys.path.insert(0, _os.path.join(root, "video_service"))
     import model_switch as ms
+    keep_comfy = (_os.environ.get("XIAOJIAO_KEEP_COMFY") == "1")
     b = BRAINS[brain_key]
     if brain_key == "video":
         ms.stop_brain()      # 让聊天大脑让出显存
         ms.start_comfy()     # 起视频大脑(ComfyUI+Wan)
     elif brain_key == "chat":
-        ms.stop_comfy()      # 让视频大脑让出显存
+        if not keep_comfy:
+            ms.stop_comfy()  # 让视频大脑让出显存
         ms.start_brain()     # 起聊天大脑
     else:
         _start_llama(b) if b["type"] == "llama" else _start_comfy(b)
