@@ -503,6 +503,20 @@ TOOLS = [
     {"type": "function", "function": {"name": "write_file", "description": "把文本写入文件",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径"},
                     "content": {"type": "string", "description": "写入的内容"}}, "required": ["path", "content"]}}},
+    {"type": "function", "function": {"name": "edit_file", "description": "在文本文件里精准替换一段内容(第一次出现的)。用于改代码/配置。path=文件, old_string=原文, new_string=新文。",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径"}, "old_string": {"type": "string", "description": "要被替换的原文"}, "new_string": {"type": "string", "description": "替换成的新文"}}, "required": ["path", "old_string", "new_string"]}}},
+    {"type": "function", "function": {"name": "search_files", "description": "按文件名模式查找文件(glob)。path=目录, pattern=如 *.txt 或 **/*.py。",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "要搜索的目录"}, "pattern": {"type": "string", "description": "文件名模式如 *.txt"}}, "required": ["path", "pattern"]}}},
+    {"type": "function", "function": {"name": "grep_files", "description": "在目录里的文件中搜索文本/正则内容。path=目录, pattern=关键词或正则。",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "要搜索的目录"}, "pattern": {"type": "string", "description": "关键词或正则"}}, "required": ["path", "pattern"]}}},
+    {"type": "function", "function": {"name": "fetch_url", "description": "读取一个网址/接口返回的内容(网页文本)。url=完整地址。",
+     "parameters": {"type": "object", "properties": {"url": {"type": "string", "description": "网址"}}, "required": ["url"]}}},
+    {"type": "function", "function": {"name": "ask_user", "description": "向用户提问并给出选项，等待用户选择。用于需要用户拍板时。question=问题, options=选项列表(逗号分隔)。",
+     "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "要问的问题"}, "options": {"type": "string", "description": "选项，逗号分隔"}}, "required": ["question"]}}},
+    {"type": "function", "function": {"name": "background", "description": "在后台运行一条命令(不阻塞)，立即返回任务id。稍后用 background_result 查结果。用于耗时任务。",
+     "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "要后台运行的命令"}, "timeout": {"type": "number", "description": "超时秒数默认120"}}, "required": ["command"]}}},
+    {"type": "function", "function": {"name": "background_result", "description": "查询后台任务(background启动的)的结果。job_id=任务id。",
+     "parameters": {"type": "object", "properties": {"job_id": {"type": "string", "description": "后台任务id"}}, "required": ["job_id"]}}},
 ]
 
 
@@ -524,6 +538,18 @@ def is_dangerous(name, args):
             if t in p:
                 return True
     return False
+
+
+_BG = {}  # 后台任务
+
+
+def _bg_run(jid, cmd, timeout):
+    try:
+        import subprocess as _sp
+        r = _sp.run(cmd, shell=True, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
+        _BG[jid] = {"state": "done", "result": ((r.stdout or "") + (r.stderr or ""))[:2500] or "(无输出)"}
+    except Exception as e:
+        _BG[jid] = {"state": "error", "result": str(e)}
 
 
 def run_tool(name, args, force=False):
@@ -572,6 +598,62 @@ def run_tool(name, args, force=False):
             with open(p, "w", encoding="utf-8") as f:
                 f.write(c)
             return f"已写入 {p}"
+        if name == "edit_file":
+            p, o, n = args.get("path", ""), args.get("old_string", ""), args.get("new_string", "")
+            t = open(p, encoding="utf-8").read()
+            if o not in t:
+                return "未找到要替换的原文"
+            open(p, "w", encoding="utf-8").write(t.replace(o, n, 1))
+            return "已替换 %s 中第一处匹配" % p
+        if name == "search_files":
+            import glob as _g
+            p = args.get("path", "."); pat = args.get("pattern", "*")
+            r = _g.glob(os.path.join(p, pat), recursive=True)
+            return ("\n".join(r[:80]) + ("\n..." if len(r) > 80 else ""))[:2500] or "(无匹配)"
+        if name == "grep_files":
+            import re as _re
+            p = args.get("path", "."); pat = args.get("pattern", "")
+            hits = []
+            for root, ds, fs in os.walk(p):
+                ds[:] = [d for d in ds if d not in ("node_modules", ".git", "__pycache__")]
+                for f in fs[:300]:
+                    try:
+                        for i, l in enumerate(open(os.path.join(root, f), encoding="utf-8", errors="ignore"), 1):
+                            if _re.search(pat, l):
+                                hits.append("%s:%d: %s" % (os.path.join(root, f), i, l.strip()[:70]))
+                                if len(hits) >= 30:
+                                    break
+                    except Exception:
+                        pass
+                    if len(hits) >= 30:
+                        break
+                if len(hits) >= 30:
+                    break
+            return ("\n".join(hits))[:2500] or "(无匹配)"
+        if name == "fetch_url":
+            u = args.get("url", "")
+            if not u:
+                return "缺少 url"
+            import requests as _rq
+            try:
+                return _rq.get(u, timeout=20).text[:2500] or "(空)"
+            except Exception as e:
+                return "抓取失败: %s" % str(e)[:120]
+        if name == "ask_user":
+            q = args.get("question", ""); opts = args.get("options", "")
+            return "〔待选择〕" + q + ("\n选项: " + opts if opts else "")
+        if name == "background":
+            cmd = args.get("command", ""); to = int(args.get("timeout", 120))
+            jid = str(int(time.time() * 1000))
+            _BG[jid] = {"state": "running"}
+            threading.Thread(target=_bg_run, args=(jid, cmd, to), daemon=True).start()
+            return "已在后台运行，任务id: %s（用 background_result 查询）" % jid
+        if name == "background_result":
+            jid = args.get("job_id", "")
+            j = _BG.get(jid)
+            if not j:
+                return "未知任务"
+            return "%s: %s" % (j["state"], (j.get("result") or "")[:2000])
     except FileNotFoundError as e:
         return f"文件/路径不存在：{e}"
     except Exception as e:
