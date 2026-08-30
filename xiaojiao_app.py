@@ -1579,7 +1579,7 @@ def api_model_addlocal():
     yp = os.path.join(root, "llama-swap.yaml")
     ys = open(yp, encoding="utf-8").read()
     if ("  " + mid + ":") not in ys:
-        gg = gguf.replace("\", "/")
+        gg = gguf.replace("\\", "/")
         ys = ys.rstrip() + ("
   %s:
     cmd: "C:/llama/llama-server.exe --port ${PORT} --model %s -c %d --reasoning off"
