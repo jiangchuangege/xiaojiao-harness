@@ -1648,7 +1648,8 @@ HTML = r"""<!DOCTYPE html>
     <p style="color:#8b93a3;font-size:13px;margin:0 0 10px">输入场景，小焦先用大脑把它改写成电影级提示词，再用 ComfyUI+Wan2.1 本地生成真视频。</p>
     <textarea id="vq" placeholder="例如：樱花飘落的海边、一只猫在阳光下打盹…" rows="3" style="width:100%;resize:vertical"></textarea>
     <div id="vpv" class="vpv" style="display:none"></div>
-    <div class="m-actions"><button onclick="closeVideo()">取消</button><button class="primary" onclick="startVideo()">🎬 开始生成</button></div>
+    <div id="vconfirm" class="m-actions" style="display:none"><button onclick="openVideo()">重输</button><button class="primary" onclick="confirmVideo()">✅ 确认并生成</button></div>
+    <div class="m-actions"><button onclick="closeVideo()">取消</button><button class="primary" onclick="startVideo()">✨ 精炼提示词</button></div>
   </div>
 </div>
 <div id="brainBg" class="brainbg" style="display:none">
@@ -1767,13 +1768,20 @@ async function openWsFile(name){try{const d=await (await fetch("/api/ws/open",{m
   cur.innerHTML="<div class=\"modal modal-wide\"><h3>📄 "+esc(d.name)+"</h3><pre class=\"wspre\">"+esc(d.content)+"</pre><div class=\"m-actions\"><button onclick=\"closeSearch()\">关闭</button></div></div>";
 }catch(e){alert("读取失败");}}
 
-async function openVideo(){document.getElementById('videoBg').style.display='flex';const i=document.getElementById('vq');i.value='';i.focus();document.getElementById('vpv').style.display='none';}
+async function openVideo(){document.getElementById('videoBg').style.display='flex';const i=document.getElementById('vq');i.value='';i.focus();document.getElementById('vpv').style.display='none';document.getElementById('vconfirm').style.display='none';}
 function closeVideo(){document.getElementById('videoBg').style.display='none';}
 async function startVideo(){const q=document.getElementById('vq').value.trim();if(!q){return;}
-  const pv=document.getElementById('vpv');pv.style.display='block';pv.innerHTML='⏳ 小焦正在改写提示词…';
-  const m=document.createElement('div');m.className='m bot';m.innerHTML='<div class="b">🎬 正在精炼提示词…</div>';feed.appendChild(m);feed.scrollTop=feed.scrollHeight;
+  const pv=document.getElementById('vpv');pv.style.display='block';pv.innerHTML='⏳ 小焦正在精炼提示词…';document.getElementById('vconfirm').style.display='none';
+  try{const d=await (await fetch('/api/video/refine?prompt='+encodeURIComponent(q))).json();
+   pv.innerHTML='<div style="font-size:12px;color:#8b93a3;margin-bottom:4px">✅ 小焦改写后的提示词：</div><div style="font-size:13px;color:#a78bfa;line-height:1.6;background:#0e1116;border:1px solid #2a3140;border-radius:8px;padding:8px">'+esc(d.refined)+'</div><div style="font-size:12px;color:#6e7681;margin-top:6px">满意就点「确认并生成」；不满意重新输入。</div>';
+   document.getElementById('vconfirm').style.display='flex';
+   window._vq=q; window._vr=d.refined;
+  }catch(e){pv.innerHTML='⚠️ '+esc(e.message);}}
+async function confirmVideo(){const q=window._vq||'', rf=window._vr||'';
+  closeVideo();
+  const m=document.createElement('div');m.className='m bot';m.innerHTML='<div class="b">🎬 小焦已学习，正在切换视频模型…</div>';feed.appendChild(m);feed.scrollTop=feed.scrollHeight;
   const b=m.querySelector('.b');
-  try{const d=await (await fetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:q})})).json();
+  try{const d=await (await fetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:q,refined:rf})})).json();
    if(d.busy){b.innerHTML='⏳ 正在生成/切换模型中，请稍候…';return;}
    if(!d.ok){b.innerHTML='⚠️ '+esc(d.error||'启动失败');return;}
    try{localStorage.setItem('xj_video_job',d.job);}catch(e){}
@@ -1783,12 +1791,9 @@ async function startVideo(){const q=document.getElementById('vq').value.trim();i
       if(st.state==='done'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){}
         b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频</div>'+(st.refined_prompt?'<div class="vpvmini" style="margin-top:4px">📝 提示词：<span style="color:#a78bfa">'+esc(st.refined_prompt)+'</span></div>':'');feed.scrollTop=feed.scrollHeight;}
       else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
-      else if((st.refined_prompt)&&!sp){sp=true;
-        pv.innerHTML='<div style="font-size:12px;color:#8b93a3;margin-bottom:4px">✅ 已改写你的场景 → 电影级提示词：</div><div style="font-size:13px;color:#a78bfa;line-height:1.6;background:#0e1116;border:1px solid #2a3140;border-radius:8px;padding:8px">'+esc(st.refined_prompt)+'</div>';
-        setTimeout(()=>{closeVideo();},600);
-        b.innerHTML='🎬 正在生成视频…<div class="vpvmini" style="margin-top:6px">📝 小焦改写后的提示词：<span style="color:#a78bfa">'+esc(st.refined_prompt)+'</span></div>';}
-      else if(st.state==='unknown'){clearInterval(iv);b.innerHTML='⚠️ 任务状态丢失（可能已结束或服务器重启）。请重新生成，或到 8188 查看。';}
-      else if(n*5>2700){clearInterval(iv);b.innerHTML='⏱️ 已等 '+Math.round(n*5/60)+' 分钟（超时）。到 ComfyUI(8188) 看是否仍在跑/已出片，或重新生成。';}
+      else if((st.refined_prompt)&&!sp){b.innerHTML='🎬 正在生成视频…<div class="vpvmini" style="margin-top:6px">📝 用提示词：<span style="color:#a78bfa">'+esc(st.refined_prompt)+'</span></div>';sp=true;}
+      else if(st.state==='unknown'){clearInterval(iv);b.innerHTML='⚠️ 任务状态丢失。请重新生成，或到 8188 查看。';}
+      else if(n*5>2700){clearInterval(iv);b.innerHTML='⏱️ 超时，到 ComfyUI(8188) 看是否完成。';}
       else{var pr=(st.progress&&st.progress.max)?Math.round(100*st.progress.value/st.progress.max):0;var msg='🎬 '+((st.message||"生成中…")+(pr?'（第 '+st.progress.value+'/'+st.progress.max+' 步，'+pr+'%）':''))+'（已等 '+Math.round(n*5)+'s）';b.textContent=msg;if(pr>0){var bar=b.nextElementSibling;if(!bar||!bar.classList.contains("pvbar")){bar=document.createElement("div");bar.className="pvbar";b.after(bar);}bar.style.width=pr+"%";}}
      }catch(e){}
    },5000);

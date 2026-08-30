@@ -40,10 +40,30 @@ def _load_workflow(prompt, ckpt):
     return wf
 
 
-def _refine_prompt(raw):
-    """用小焦大脑把原始描述精炼成电影级提示词。绝不给用户看思考过程——只取正式答案,失败则用原样。"""
+def _kb():
+    """小脑「电影设计提示词学习库」(向量库, self_learn/vstore)。"""
+    try:
+        import sys as _sys
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _sys.path.insert(0, os.path.join(root, "self_learn"))
+        import vstore
+        return vstore
+    except Exception:
+        return None
+
+
+def _refine_prompt(raw, save=True):
+    """用小焦大脑精炼出电影级提示词。①先查小脑学习库(向量库命中=用学过的) ②大脑精炼并学进库 ③模板兜底。绝不给用户看思考过程。"""
     raw = (raw or "").strip()
     if not raw: return raw
+    V = _kb()
+    if V:
+        try:
+            r = V.search("用户: " + raw, k=1, threshold=0.35)
+            if r["hit"] and r["best"][1]:
+                return r["best"][1]
+        except Exception:
+            pass
     try:
         import json as _j, requests as _r, re as _re
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -69,17 +89,25 @@ def _refine_prompt(raw):
                     out = lines[-1] if lines else ""
             if out:
                 if len(out) > 300: out = out[-300:]
+                if save:
+                    V = _kb()
+                    if V:
+                        try:
+                            V.add("用户: %s -> 精炼: %s" % (raw, out), tag="video_prompt")
+                        except Exception:
+                            pass
                 return out
     except Exception:
         pass
-    # 模板精炼(秒出,不依赖慢大脑): 加电影级修饰词
+    # 模板兜底(秒出): 加电影级修饰词
     return raw + ", cinematic, high detail, dramatic lighting, smooth motion, film quality"
 
 
 def _worker(job_id, prompt):
+    confirmed = _jobs[job_id].get("confirmed_refined") or ""
     _jobs[job_id].update(state="switching", message="精炼提示词…")
     _persist()
-    refined = _refine_prompt(prompt)
+    refined = confirmed or _refine_prompt(prompt)
     _jobs[job_id]["prompt"] = prompt
     _jobs[job_id]["refined_prompt"] = refined
     _jobs[job_id].update(state="switching", message="卸载大脑，腾出显存…")
@@ -117,6 +145,14 @@ def _worker(job_id, prompt):
         _jobs[job_id].update(state="error", error=str(e), message="生成失败，已尽力恢复大脑")
     _persist()
 
+@bp.route("/api/video/refine")
+def api_video_refine():
+    """只精炼提示词(不学习/不切换)——供前端"确认提示词"流程用。"""
+    prompt = (request.args.get("prompt") or "").strip()[:80] or (request.get_json(silent=True) or {}).get("prompt", "")
+    refined = _refine_prompt(prompt, save=False)
+    return jsonify({"ok": True, "refined": refined})
+
+
 @bp.route("/api/video", methods=["POST"])
 def api_video():
     _sweep()
@@ -153,6 +189,24 @@ def api_video_current():
         return jsonify({"none": True})
     st = ms.get_state()
     return jsonify({"job": active, "phase": st.get("phase"), "busy": st.get("busy")})
+
+@bp.route("/api/video/promptkb")
+def api_video_promptkb():
+    """小脑「电影设计提示词学习库」统计+最近学到的(给用户看学了什么)。"""
+    V = _kb(); n = 0; recent = []
+    if V:
+        try:
+            import os as _o, json as _j
+            data = _j.load(open(_o.path.join(_o.path.dirname(_o.path.abspath(__file__)), "knowledge_vec.json"), encoding="utf-8"))
+            for e in data.get("entries", []):
+                if e.get("tag") == "video_prompt":
+                    n += 1
+                    recent.append(e.get("text", ""))
+            recent = recent[-6:][::-1]
+        except Exception:
+            pass
+    return jsonify({"count": n, "recent": recent})
+
 
 @bp.route("/api/video/state")
 def api_video_state():
