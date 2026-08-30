@@ -835,6 +835,44 @@ def api_presets_create():
     return jsonify({"ok": True, "file": fn, "name": name})
 
 
+@app.route("/api/presets/detail")
+def api_presets_detail():
+    """读取单个预设内容(供 Web 编辑)。"""
+    file = request.args.get("file", "")
+    if not file.endswith(".json"):
+        file += ".json"
+    fp = os.path.join(_PRESETS_DIR, file)
+    if not os.path.exists(fp):
+        return jsonify({"ok": False, "error": "不存在"}), 404
+    d = json.load(open(fp, encoding="utf-8-sig"))
+    return jsonify({"ok": True, "file": file, "data": d})
+
+
+@app.route("/api/presets/save", methods=["POST"])
+def api_presets_save():
+    """保存编辑后的预设(写回文件; 若为当前预设则热更新)。"""
+    d = request.get_json(force=True, silent=True) or {}
+    file = d.get("file", "")
+    if not file.endswith(".json"):
+        file += ".json"
+    fp = os.path.join(_PRESETS_DIR, file)
+    data = d.get("data", {})
+    try:
+        old = json.load(open(fp, encoding="utf-8-sig")) if os.path.exists(fp) else {}
+    except Exception:
+        old = {}
+    # 只覆盖提供的键(保留未提供的)
+    for k, v in data.items():
+        old[k] = v
+    json.dump(old, open(fp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    # 若保存的是当前预设 → 热更新
+    if old.get("name") == CONTROL.get("preset"):
+        _deep_merge(CONTROL, old)
+        json.dump(CONTROL, open("xiaojiao_control.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        reload_control()
+    return jsonify({"ok": True, "file": file})
+
+
 @app.route("/api/presets/load", methods=["POST"])
 def api_presets_load():
     """加载预设：合并到操控文件 + 热更新配置(不重启)。"""
@@ -2083,10 +2121,23 @@ function loadPresetCards(){try{fetch('/api/presets').then(r=>r.json()).then(d=>{
   el.innerHTML=(d.presets||[]).map(p=>'<div class="pcard" onclick="loadPreset(\''+esc(p.file)+'\')">'+
     '<div class="pinfo"><span class="pname">'+esc(p.name)+'</span><span class="ptag">内置</span>'+(p.file===d.current?'<span class="cur">当前使用</span>':'')+'</div>'+
     '<div class="pdesc">'+esc(p.desc||'')+'</div><div class="pfile">'+esc(p.file)+'</div>'+
-    '<div class="picons"><span title="复制" onclick="event.stopPropagation();duplicatePreset(\''+esc(p.file)+'\')">⧉</span><span title="使用" onclick="event.stopPropagation();loadPreset(\''+esc(p.file)+'\')">📂</span></div></div>').join('');
+    '<div class="picons"><span title="编辑" onclick="event.stopPropagation();editPreset(\''+esc(p.file)+'\')">✏️</span><span title="复制" onclick="event.stopPropagation();duplicatePreset(\''+esc(p.file)+'\')">⧉</span><span title="使用" onclick="event.stopPropagation();loadPreset(\''+esc(p.file)+'\')">📂</span></div></div>').join('');
  }).catch(()=>{});}catch(e){}}
 function loadPreset(file){fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})}).then(r=>r.json()).then(d=>{alert('✅ 已加载预设：'+(d.preset||''));location.reload();}).catch(e=>alert('加载失败：'+e));}
 function duplicatePreset(file){fetch('/api/presets',{method:'GET'}).then(r=>r.json()).then(async d=>{const p=(d.presets||[]).find(x=>x.file===file);const n=p?(p.name+'·副本'):'新预设';await fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,parent:file})});loadPresetCards();});}
+function editPreset(file){fetch('/api/presets/detail?file='+file).then(r=>r.json()).then(d=>{
+  const x=d.data||{};
+  document.getElementById('eName').value=x.name||'';document.getElementById('eRole').value=x.role||'';
+  document.getElementById('eEngine').value=(x.brain&&x.brain.engine)||'auto';document.getElementById('eCtx').value=(x.brain&&x.brain.llama&&x.brain.llama.ctx)||20000;
+  const cap=x.capabilities||{};document.getElementById('eSearch').checked=cap.web_search!==false;document.getElementById('eMem').checked=cap.memory!==false;document.getElementById('eTools').checked=cap.run_tools!==false;
+  document.getElementById('eTemp').value=(x.behavior&&x.behavior.temperature)||0.7;document.getElementById('eMax').value=(x.behavior&&x.behavior.max_tokens)||1024;
+  window._efile=file;document.getElementById('editBg').style.display='flex';});}
+function closeEdit(){document.getElementById('editBg').style.display='none';}
+function savePreset(){const data={name:document.getElementById('eName').value, role:document.getElementById('eRole').value,
+  brain:{engine:document.getElementById('eEngine').value, llama:{ctx:+document.getElementById('eCtx').value||20000}},
+  capabilities:{web_search:document.getElementById('eSearch').checked, memory:document.getElementById('eMem').checked, run_tools:document.getElementById('eTools').checked},
+  behavior:{temperature:+document.getElementById('eTemp').value||0.7, max_tokens:+document.getElementById('eMax').value||1024}};
+  fetch('/api/presets/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:window._efile,data:data})}).then(r=>r.json()).then(()=>{alert('✅ 预设已保存');closeEdit();loadPresetCards();});}
 function createPreset(){fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'我的预设',parent:'default.json'})}).then(r=>r.json()).then(d=>{alert('已创建自定义预设（可到 presets/ 编辑，或选它试试）');loadPresetCards();});}
 function openEnv(){document.getElementById('envBg').style.display='flex';loadEnv();}
 function closeEnv(){document.getElementById('envBg').style.display='none';}
