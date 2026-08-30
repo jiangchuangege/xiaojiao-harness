@@ -69,8 +69,7 @@ def _refine_prompt(raw, save=True):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         cfg = _j.load(open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
         base = (cfg.get("brain", {}).get("api", {}).get("base_url") or "http://127.0.0.1:8080/v1")
-        sys_p = ("你是专业电影导演。把用户的视频描述改写成详细、电影级的英文提示词：主体、场景、光线、色调、镜头运动、风格。"
-                 "只输出改写后的提示词本身，不要解释、不要思考、不要引号、不要草稿。")
+        sys_p = ("你是专业电影导演。把用户的视频描述**简洁**改写成一段英文电影提示词(主体/光线/镜头/风格)，不超过 80 字。只输出提示词，不要解释、不要引号、不要思考。")
         r = _r.post(base.rstrip("/") + "/chat/completions",
                     json={"model": "xiaojiao1.0-4B",
                           "messages": [{"role": "system", "content": sys_p}, {"role": "user", "content": raw}],
