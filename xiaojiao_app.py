@@ -309,7 +309,7 @@ def web_search(query, num=6):
             for block in re.findall(block_re, r.text, re.S):
                 h2 = re.search(r'<h2[^>]*>\s*<a[^>]*>(.*?)</a>', block, re.S)
                 url = ""
-                am = re.search(r'<a[^>]*href=["']([^"']+)["']', block, re.S)
+                am = re.search(r'href="([^"]+)"', block, re.S)
                 if am:
                     u = am.group(1)
                     if u.startswith("http") and not u.startswith("https://cn.bing.com/images"):
