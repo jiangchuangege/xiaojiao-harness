@@ -78,6 +78,8 @@ canvas{width:100%;height:96px;display:block}
 </div>
 <script>
 let hist=[];const C=document.getElementById('chart'),ctx=C.getContext('2d');
+// 预填历史点(打开即有曲线)
+for(let i=0;i<20;i++)hist.push({vram:0,mem:0});
 function op(o,t,e){fetch('/api/monitor/op',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({op:o,target:t},e||{}))});}
 function esc(x){return String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function stC(s){return {运行中:'run',温存:'warm',空闲:'idle',出错:'err'}[s]||'idle';}
@@ -106,10 +108,16 @@ function render(d){
 function tune(k,f,v){op('tune',k,{conf:{[f]:v}});}
 function draw(d){
   const w=C.width=C.clientWidth,h=C.height=96;ctx.clearRect(0,0,w,h);
-  ctx.strokeStyle='#242e44';ctx.beginPath();for(let i=0;i<=3;i++){const y=h*i/3;ctx.moveTo(0,y);ctx.lineTo(w,y);}ctx.stroke();
   const mx=Math.max(1,...hist.flatMap(p=>[p.vram,p.mem]));
-  function ln(key,c){if(hist.length<2)return;ctx.strokeStyle=c;ctx.lineWidth=2;ctx.beginPath();hist.forEach((p,i)=>{const x=w*i/(hist.length-1),y=h-p[key]/mx;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();}
-  ln('vram','#a78bfa');ln('mem','#45d483');
+  const top=Math.ceil(mx/4096)*4096||4096; // 取整上限
+  ctx.strokeStyle='#242e44';ctx.lineWidth=1;ctx.beginPath();for(let i=0;i<=3;i++){const y=h*i/3;ctx.moveTo(0,y);ctx.lineTo(w,y);}ctx.stroke();
+  function ln(key,c){if(hist.length<2)return;ctx.strokeStyle=c;ctx.lineWidth=2.5;ctx.beginPath();
+    hist.forEach((p,i)=>{const x=w*i/(hist.length-1),y=h-(p[key]/top)*h;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();}
+  ln('vram','#a78bfa');ln('mem','#ff6bcb');
+  // 轴标签 + 图例
+  ctx.fillStyle='#7a8290';ctx.font='10px sans-serif';
+  ctx.fillText((top/1024).toFixed(0)+'G',4,10);ctx.fillText('0G',4,h-2);
+  ctx.fillStyle='#a78bfa';ctx.fillText('● 显存',w-80,12);ctx.fillStyle='#ff6bcb';ctx.fillText('● 内存',w-45,12);
 }
 function openAdd(){document.getElementById('addBg').style.display='flex';}
 function closeAdd(){document.getElementById('addBg').style.display='none';}
