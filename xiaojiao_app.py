@@ -705,6 +705,14 @@ def llm_chat_tools(messages, max_rounds=6):
     headers = {"Content-Type": "application/json"}
     if LLM_KEY:
         headers["Authorization"] = "Bearer " + LLM_KEY
+    # 内存守卫: 生成前卸载另一个 llama 模型——8G 上保证单个 llama 占满显存(防龟速/OOM)
+    try:
+        if LLM_MODEL in ("coder", "xiaojiao"):
+            import video_service.model_switch as _ms
+            _other = "xiaojiao" if LLM_MODEL == "coder" else "coder"
+            _ms._llama_swap_unload(_other)
+    except Exception:
+        pass
     m = list(messages)
     tool_trace = []
     for _ in range(max_rounds):

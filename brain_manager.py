@@ -64,6 +64,14 @@ def state():
 
 
 def _start_llama(b):
+    # 先卸载其它 llama 模型(腾全部显存给当前大脑——8G 上两个 llama 不能同时占显存)
+    try:
+        import model_switch as _ms
+        mine = "coder" if str(b.get("name", "")).find("编码") >= 0 or b.get("port") != 9292 else "xiaojiao"
+        other = "coder" if mine == "xiaojiao" else "xiaojiao"
+        _ms._llama_swap_unload(other)
+    except Exception:
+        pass
     if _port_alive(b["port"]):
         return True
     try:
