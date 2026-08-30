@@ -56,7 +56,7 @@
 | `XIAOJIAO_LLAMA_SWAP` | llama-swap.exe 路径 |
 | `XIAOJIAO_COMFY_DIR` | ComfyUI 目录 |
 | `XIAOJIAO_VIDEO_ROOT` | 视频模型总目录 |
-| `XIAOJIAO_KEEP_COMFY` | `1`=视频模型常驻(不重启) |
+| `XIAOJIAO_KEEP_COMFY` | `1`=视频模型温存(默认15分钟,连续视频秒级) |
 | `XIAOJIAO_WAN_MODEL` | Wan 模型名 |
 
 > 全部路径**都可配置/环境变量覆盖**，代码里不死写死路径（找不到会提示，不会假装存在）。

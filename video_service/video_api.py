@@ -18,7 +18,7 @@ def _sweep():
             j["message"] = "生成超时(30分钟)，请重新生成"
 
 
-def _schedule_warm_idle(job_id, minutes=10):
+def _schedule_warm_idle(job_id, minutes=15):
     """视频生成完后: keep_warm=false 时, 温存 N 分钟(ComfyUI不关,连续视频秒级), 超时无新任务则冷启动释放内存。"""
     def _tick():
         import time as _t
@@ -202,7 +202,7 @@ def _worker(job_id, prompt):
         _bm2.switch_to("chat")
         _jobs[job_id].update(state="done", message="完成", url="/videos/" + os.path.basename(out))
         if not _keep_warm_flag():
-            _schedule_warm_idle(job_id)  # 温存10分钟,超时自动释放内存
+            _schedule_warm_idle(job_id)  # 温存15分钟,超时自动释放内存
     except Exception as e:
         try:
             import brain_manager as _bm3

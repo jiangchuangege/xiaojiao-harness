@@ -158,7 +158,7 @@ flowchart LR
     V -->|1 卸载大脑| STOP["llama-swap 卸载模型(9292, 秒级)"]
     V -->|2 启动| COMFY["ComfyUI(8188)<br/>+ Wan2.1-1.3B-FP8"]
     COMFY -->|3 生成 480p| OUT["videos/*.mp4"]
-    V -->|4 停止ComfyUI/恢复大脑| RESTORE["llama-swap 自动加载大脑(9292)"]
+    V -->|4 温存15分钟/闲置自动冷| RESTORE["切回聊天则释放ComfyUI, llama-swap 加载大脑(9292)"]
     A -->|5 恢复后继续对话| A
 ```
 
