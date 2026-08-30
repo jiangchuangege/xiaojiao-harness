@@ -2,7 +2,7 @@
 # llama-swap 监听 8080，按 model 名把请求路由到对应 upstream(动态端口 ${PORT})，按需加载/卸载 → 秒级切换、省显存。
 models:
   xiaojiao:
-    cmd: C:/llama/llama-server.exe --port ${PORT} --model C:/llama/xiaojiao1.0-4B.gguf -c 32768
+    cmd: C:/llama/llama-server.exe --port ${PORT} --model C:/llama/xiaojiao1.0-4B.gguf -c 20000 --reasoning off
     ttl: 0               # 不自动卸载(由小焦/视频切换时主动 unload)
     useModelName: xiaojiao1.0-4B
   coder:
