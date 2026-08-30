@@ -40,6 +40,46 @@ def _load_workflow(prompt, ckpt):
     return wf
 
 
+def _base_url():
+    """当前大脑 base_url(llama-swap)。"""
+    try:
+        import json as _j
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        d = _j.load(open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
+        return d.get("brain", {}).get("api", {}).get("base_url") or "http://127.0.0.1:9292/v1"
+    except Exception:
+        return "http://127.0.0.1:9292/v1"
+
+
+def _translate_zh(_p):
+    """把英文提示词翻译成一句简洁中文。失败则返回输入。"""
+    try:
+        import requests as _r
+        r = _r.post(_base_url().rstrip("/") + "/chat/completions",
+                    json={"model": _llm_model(),
+                          "messages": [{"role": "system", "content": "把这段英文视频提示词翻译成一句简洁中文（只说中文，不要英文、不要解释）。"},
+                                       {"role": "user", "content": _p}],
+                          "max_tokens": 60, "temperature": 0.3, "chat_template_kwargs": {"enable_thinking": False}}, timeout=15)
+        if r.status_code == 200:
+            c = (r.json()["choices"][0].get("message", {}).get("content") or "").strip()
+            if c:
+                return c
+    except Exception:
+        pass
+    return _p
+
+
+def _llm_model():
+    """小焦大脑当前模型名(与控制文件一致, llama-swap 路由用)。"""
+    try:
+        import json as _j
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        d = _j.load(open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
+        return d.get("brain", {}).get("api", {}).get("model") or "xiaojiao"
+    except Exception:
+        return "xiaojiao"
+
+
 def _kb():
     """小脑「电影设计提示词学习库」(向量库, self_learn/vstore)。"""
     try:
@@ -74,7 +114,7 @@ def _refine_prompt(raw, save=True):
         base = (cfg.get("brain", {}).get("api", {}).get("base_url") or "http://127.0.0.1:8080/v1")
         sys_p = ("你是专业电影导演。把用户的视频描述**简洁**改写成一段英文电影提示词(主体/光线/镜头/风格)，不超过 80 字。只输出提示词，不要解释、不要引号、不要思考。")
         r = _r.post(base.rstrip("/") + "/chat/completions",
-                    json={"model": "xiaojiao1.0-4B",
+                    json={"model": _llm_model(),
                           "messages": [{"role": "system", "content": sys_p}, {"role": "user", "content": raw}],
                           "max_tokens": 400, "temperature": 0.6, "chat_template_kwargs": {"enable_thinking": False}},
                     timeout=6)
@@ -157,14 +197,14 @@ def api_video_refine():
             root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             cfg = _j.load(open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
             base = (cfg.get("brain", {}).get("api", {}).get("base_url") or "http://127.0.0.1:8080/v1")
-            r = _r.post(base.rstrip("/") + "/chat/completions", json={"model":"xiaojiao1.0-4B","messages":[{"role":"system","content":"把这段英文视频提示词翻译成一句简洁中文（只说中文，不要英文、不要解释）。"},{"role":"user","content":_p}],"max_tokens":60,"temperature":0.3,"chat_template_kwargs":{"enable_thinking":False}}, timeout=8)
+            r = _r.post(base.rstrip("/") + "/chat/completions", json={"model":_llm_model(),"messages":[{"role":"system","content":"把这段英文视频提示词翻译成一句简洁中文（只说中文，不要英文、不要解释）。"},{"role":"user","content":_p}],"max_tokens":60,"temperature":0.3,"chat_template_kwargs":{"enable_thinking":False}}, timeout=10)
             if r.status_code == 200:
                 c = (r.json()["choices"][0].get("message",{}).get("content") or "").strip()
                 return c or _p
         except Exception:
             pass
         return _p
-    zh = _zh(refined) if len(refined) > 15 else prompt
+    zh = _translate_zh(refined) if len(refined) > 15 else prompt
     return jsonify({"ok": True, "refined": refined, "zh": zh})
 
 
