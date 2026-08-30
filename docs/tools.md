@@ -1,5 +1,7 @@
 # 🧰 小焦依赖 & 工具清单（需要什么 / 放哪 / 干什么）
 
+> ⚠️ **硬性必需**：秒级切换相关工具（llama.cpp、llama-swap、Wan 模型等）**缺一不可**，缺少则无法进入小焦系统。`install_all.py` / `一键安装.bat` 会自动安装必需项。
+
 > 环境检查：网页设置里「🛠️ 环境检查」可一键检测下列每一项。
 
 ## 1. Python 依赖（`pip install -r requirements.txt`）

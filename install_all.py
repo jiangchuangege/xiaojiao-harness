@@ -70,18 +70,18 @@ def main():
     server = ll.get("server") or "llama-server"
     ok_s = os.path.exists(server) or shutil.which("llama-server") is not None
     if not ok_s:
-        print("   ❌ 未找到 llama-server.exe")
-        if ask("   要自动下载 llama.cpp 便携版(约几十MB)? [y/N] "):
-            dl = os.path.join(ROOT, "llama.cpp-b.zip")
-            ok = download("https://github.com/ggml-org/llama.cpp/releases/download/b4107/llama-b4107-bin-win-cuda-cu12.2-x64.zip", dl, "llama.cpp")
-            if ok and unzip(dl, os.path.join(ROOT, "llama.cpp")):
-                exe = os.path.join(ROOT, "llama.cpp", "llama-server.exe")
-                if os.path.exists(exe):
-                    ll["server"] = exe.replace("/", "\\")
-            try:
-                os.remove(dl)
-            except Exception:
-                pass
+        print("   ❌ 未找到 llama-server.exe（必需！）")
+        print("   自动下载 llama.cpp 便携版(必需)...")
+        dl = os.path.join(ROOT, "llama.cpp-b.zip")
+        ok = download("https://github.com/ggml-org/llama.cpp/releases/download/b4107/llama-b4107-bin-win-cuda-cu12.2-x64.zip", dl, "llama.cpp")
+        if ok and unzip(dl, os.path.join(ROOT, "llama.cpp")):
+            exe = os.path.join(ROOT, "llama.cpp", "llama-server.exe")
+            if os.path.exists(exe):
+                ll["server"] = exe.replace("/", "\\")
+        try:
+            os.remove(dl)
+        except Exception:
+            pass
         missing.append("llama-server.exe")
     else:
         print("   ✅", server)
@@ -116,19 +116,19 @@ def main():
             c.setdefault("brain", {})["llama_swap_port"] = 9292
             print("   ✅ 自动找到:", sw)
         else:
-            print("   ❌ 未找到 llama-swap.exe")
-            if ask("   要自动下载 llama-swap(约23MB)? [y/N] "):
-                dl = os.path.join(ROOT, "llama-swap.zip")
-                if download("https://github.com/mostlygeek/llama-swap/releases/download/v0.251/llama-swap_0.251_windows_amd64.zip", dl, "llama-swap"):
-                    if unzip(dl, os.path.join(ROOT, "llama-swap")):
-                        for root, _, fs in os.walk(os.path.join(ROOT, "llama-swap")):
-                            for f in fs:
-                                if f == "llama-swap.exe":
-                                    sw = os.path.join(root, f)
-                try:
-                    os.remove(dl)
-                except Exception:
-                    pass
+            print("   ❌ 未找到 llama-swap.exe（必需！秒级切换核心）")
+            print("   自动下载 llama-swap(必需)...")
+            dl = os.path.join(ROOT, "llama-swap.zip")
+            if download("https://github.com/mostlygeek/llama-swap/releases/download/v0.251/llama-swap_0.251_windows_amd64.zip", dl, "llama-swap"):
+                if unzip(dl, os.path.join(ROOT, "llama-swap")):
+                    for root, _, fs in os.walk(os.path.join(ROOT, "llama-swap")):
+                        for f in fs:
+                            if f == "llama-swap.exe":
+                                sw = os.path.join(root, f)
+            try:
+                os.remove(dl)
+            except Exception:
+                pass
             if not sw:
                 missing.append("llama-swap.exe")
     if sw:
@@ -159,15 +159,14 @@ def main():
     va = os.path.join(vroot, "vae_fp8.safetensors")
     ok3 = all(os.path.exists(x) for x in (ck, tc, va))
     if not ok3:
-        print("   ❌ 缺视频模型:", [os.path.basename(x) for x in (ck, tc, va) if not os.path.exists(x)])
-        if ask("   要自动从 hf-mirror 下载 Wan2.1-1.3B 三件套(共~2.5GB)? [y/N] "):
-            os.makedirs(vroot, exist_ok=True)
-            base = HF_MIRROR + "/Wan-AI/Wan2.1-T2V-1.3B-Diffusers/resolve/main/"
-            os.makedirs(os.path.join(vroot, "ComfyUI_windows_portable_nvidia_cu126", "ComfyUI_windows_portable", "ComfyUI", "models"), exist_ok=True)
-            for f, d in [("dit_fp8.safetensors", ck), ("umt5_fp8.safetensors", tc), ("vae_fp8.safetensors", va)]:
-                if not os.path.exists(d):
-                    download(base + f, d, f)
-        else:
+        print("   ❌ 缺视频模型(必需！):", [os.path.basename(x) for x in (ck, tc, va) if not os.path.exists(x)])
+        print("   自动从 hf-mirror 下载 Wan2.1-1.3B 三件套(必需, 共~2.5GB)...")
+        os.makedirs(vroot, exist_ok=True)
+        base = HF_MIRROR + "/Wan-AI/Wan2.1-T2V-1.3B-Diffusers/resolve/main/"
+        for f, d in [("dit_fp8.safetensors", ck), ("umt5_fp8.safetensors", tc), ("vae_fp8.safetensors", va)]:
+            if not os.path.exists(d):
+                download(base + f, d, f)
+        if not all(os.path.exists(x) for x in (ck, tc, va)):
             missing.append("Wan 视频模型")
     else:
         print("   ✅ 三件套齐全")
@@ -200,13 +199,14 @@ def main():
     # 10) 报告
     print("\n[10/11] 结果报告")
     if not missing:
-        print(G("   🎉 全部就绪！运行 `python start_xiaojiao.py` 即可全功能使用。"))
+        print(G("   🎉 全部必需项就绪！运行 `python start_xiaojiao.py` 即可进入小焦（秒级切换可用）。"))
+        print("\n[11/11] 启动小焦 ...")
+        if ask("   现在启动? [Y/n] "):
+            subprocess.run([sys.executable, os.path.join(ROOT, "start_xiaojiao.py")])
     else:
-        print(R("   ⚠️ 还缺: %s（补上后即可全功能）" % ", ".join(sorted(set(missing)))))
-
-    print("\n[11/11] 启动小焦 ...")
-    if ask("   现在启动? [Y/n] "):
-        subprocess.run([sys.executable, os.path.join(ROOT, "start_xiaojiao.py")])
+        print(R("   ⛔ 缺少必需项，无法进入小焦：%s" % ", ".join(sorted(set(missing)))))
+        print(R("   秒级切换所需工具(llama-swap/llama.cpp/Wan模型等)为硬性必需，缺一不可。"))
+        print("   补上后再运行本脚本，或按上方提示配置。")
     print("完成。")
 
 
