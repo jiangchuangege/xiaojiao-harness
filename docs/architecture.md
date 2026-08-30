@@ -168,6 +168,24 @@ flowchart LR
 
 ---
 
+## 7b. Agent 预设 · 大脑监控 · DSH 桥接（最新能力）
+
+```mermaid
+flowchart LR
+    subgraph XJ["小焦 Web(5000)"]
+        P["🎭 Agent 预设 presets/<br/>人格+大脑+工具开关, 保存即应用"]
+        M["🧠 大脑仓库监控 /monitor<br/>状态/显存/切换/调优/添加"]
+    end
+    P -->|加载预设| C["xiaojiao_control.json<br/>(合并配置, 热更新不重启)"]
+    M -->|每2秒| A["/api/monitor"]
+    M -->|操作| B["brain_manager.switch_to<br/>llama-swap(9292) + ComfyUI(8188)"]
+    XJ -->|/v1| D["DSH 桥接(5001)<br/>deepseek-harness → DSH 插件生态"]
+```
+
+- **Agent 预设**：`presets/*.json`（人格+大脑+工具开关），设置页卡片管理，Web 编辑/增删，**保存即应用**（合并配置 + 热更新，不重启）。
+- **大脑仓库监控**：`/monitor` 实时看所有大脑状态/显存/内存/任务，直接切换/调优/添加大脑。
+- **DSH 桥接**：5001 端口，依赖 `deepseek-harness`（DeepSeekHarness），让 DSH 社区插件可用。
+
 ## 8. 观测层：Web 监控
 
 [`web_monitor.py`](../web_monitor.py) 用 Flask 起一个轻量面板，提供：
