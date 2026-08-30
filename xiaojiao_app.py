@@ -564,6 +564,12 @@ def run_tool(name, args, force=False):
             return f"〔待确认〕小焦想执行：{desc}。请用户确认后再执行。"
     PENDING = None
     try:
+        if name == "web_search":
+            q = args.get("query", ""); n = int(args.get("num", 5))
+            if not q:
+                return "缺少查询词"
+            res = web_search(q, num=n)
+            return "\n".join("%s：%s" % (t, c) for t, c in res[:n]) or "(无结果)"
         if name == "run_command":
             cmd = args.get("command", "")
             timeout = int(args.get("timeout", 30))
