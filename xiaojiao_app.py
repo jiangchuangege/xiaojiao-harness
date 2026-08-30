@@ -953,6 +953,18 @@ def api_env():
     missing = [i for i in items if not i["ok"]]
     return jsonify({"items": items, "missing": [i["name"] for i in missing], "ok": not missing})
 
+@app.route("/api/message", methods=["POST"])
+def api_message():
+    """保存一条消息到当前会话历史(如视频结果)，刷新后仍在。"""
+    d = request.get_json(force=True, silent=True) or {}
+    role = d.get("role") or "小焦"
+    content = (d.get("content") or "").strip()
+    if not content:
+        return jsonify({"ok": False, "error": "空消息"}), 400
+    append_msg(role, content)
+    return jsonify({"ok": True})
+
+
 @app.route("/")
 def index():
     return render_template_string(HTML, model_name=MODEL_NAME)
@@ -1871,7 +1883,8 @@ async function confirmVideo(){const q=window._vq||'', rf=window._vr||'';
    const iv=setInterval(async()=>{n++;
      try{const st=await (await fetch('/api/video/status?job='+d.job)).json();
       if(st.state==='done'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){}
-        b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频</div>'+(st.refined_prompt?'<div class="vpvmini" style="margin-top:4px">📝 提示词：<span style="color:#a78bfa">'+esc(st.refined_prompt)+'</span></div>':'');feed.scrollTop=feed.scrollHeight;}
+        b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频</div>'+(st.refined_prompt?'<div class="vpvmini" style="margin-top:4px">📝 提示词：<span style="color:#a78bfa">'+esc(st.refined_prompt)+'</span></div>':'');feed.scrollTop=feed.scrollHeight;
+        try{fetch('/api/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role:'小焦',content:'🎬 视频生成完成：\n[video]'+st.url+'[/video]'+(st.refined_prompt?'\n📝 提示词：'+st.refined_prompt:'')})});}catch(e){}}
       else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
       else if((st.refined_prompt)&&!sp){b.innerHTML='🎬 正在生成视频…<div class="vpvmini" style="margin-top:6px">📝 用提示词：<span style="color:#a78bfa">'+esc(st.refined_prompt)+'</span></div>';sp=true;}
       else if(st.state==='unknown'){clearInterval(iv);b.innerHTML='⚠️ 任务状态丢失。请重新生成，或到 8188 查看。';}
@@ -2010,7 +2023,9 @@ function renderBlocks(seg){
   return html;
 }
 function add(role,text,src){const m=document.createElement('div');m.className='m '+role;
- m.innerHTML='<div class="b">'+(role==='bot'?renderMd(text):esc(text))+'</div>';
+ let vm='';text=(''+text);
+ if(role==='bot'&&text.indexOf('[video]')>=0){const mu=text.match(/\[video\]([^\[\]]+)\[\/video\]/);if(mu){vm='<video src="'+esc(mu[1])+'" controls style="max-width:100%;border-radius:12px;margin:4px 0"></video>';text=text.replace(mu[0],'');}}
+ m.innerHTML='<div class="b">'+(role==='bot'?renderMd(text):esc(text))+'</div>'+vm;
  if(role==='bot'&&((''+text).indexOf('__pending__')>=0||text==='⏳')){m.innerHTML='<div class="b"><span class="spin"></span> 正在回答…</div>';feed.appendChild(m);return;}
    if(role==='bot'){const row=document.createElement('div');row.className='msgbot';
    row.innerHTML='<button onclick="copyMsg(this)">⧉ 复制</button>';m.appendChild(row);}
