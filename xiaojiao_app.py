@@ -778,7 +778,9 @@ def agent_run(user_input):
         desktop = os.path.join(home, "Desktop")
         path_ctx = ("\n[环境] 当前工作目录：%s；用户主目录：%s；桌面：%s。"
                     "凡是要创建文件/文件夹/读写文件，一律用绝对路径（如桌面文件用 %s\\文件名）。" % (os.getcwd(), home, desktop, desktop))
+        tool_guidance = "\n[工具用法] 写文件/建网站/代码用 write_file(路径用 Windows 绝对路径, 会自动建目录); 查信息/运行命令用 run_command(PowerShell 语法, 不能用并字连接命令要用分号; 不要用 run_command 去写文件)。\n"
         skills = "\n\n[技能插件] " + "\n\n".join(c for _, c in PLUGIN_SKILLS) if PLUGIN_SKILLS else ""
+        skills = tool_guidance + skills
         messages = [{"role": "system", "content": SYSTEM_PROMPT + path_ctx + skills}]
         for h in history[-MAX_HISTORY:]:
             messages.append({"role": "user" if h["role"] == "用户" else "assistant",
