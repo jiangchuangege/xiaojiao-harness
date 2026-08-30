@@ -806,11 +806,33 @@ def api_presets():
     for f in _list_preset_files():
         try:
             d = json.load(open(os.path.join(_PRESETS_DIR, f), encoding="utf-8-sig"))
-            res.append({"name": d.get("name", f[:-5]), "file": f, "engine": d.get("brain", {}).get("engine", "auto")})
+            res.append({"name": d.get("name", f[:-5]), "file": f, "engine": d.get("brain", {}).get("engine", "auto"),
+                        "desc": d.get("desc") or (d.get("role") or "")[:70]})
         except Exception:
             res.append({"name": f[:-5], "file": f, "engine": "?"})
     cur = CONTROL.get("preset", "")
     return jsonify({"presets": res, "current": cur})
+
+
+@app.route("/api/presets", methods=["POST"])
+def api_presets_create():
+    """新建自定义预设(复制 parent 改名)。"""
+    d = request.get_json(force=True, silent=True) or {}
+    name = (d.get("name") or "我的预设").strip()
+    parent = d.get("parent", "default.json")
+    pf = os.path.join(_PRESETS_DIR, parent)
+    base = {}
+    if os.path.exists(pf):
+        try:
+            base = json.load(open(pf, encoding="utf-8-sig"))
+        except Exception:
+            base = {}
+    base["name"] = name
+    base["desc"] = "自定义预设（可到 presets/ 编辑）"
+    import uuid
+    fn = "preset_%s.json" % uuid.uuid4().hex[:6]
+    json.dump(base, open(os.path.join(_PRESETS_DIR, fn), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    return jsonify({"ok": True, "file": fn, "name": name})
 
 
 @app.route("/api/presets/load", methods=["POST"])
@@ -1724,6 +1746,20 @@ HTML = r"""<!DOCTYPE html>
   /* 设置 左侧导航 */
   .setwrap{display:grid;grid-template-columns:190px 1fr;gap:24px;max-width:980px;margin:30px auto}
   .setnav{background:#11141c;border:1px solid #262b3a;border-radius:14px;padding:10px;height:fit-content}
+  .phead{font-size:12px;color:#7a8290;margin:16px 0 8px}
+  .pgroup{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+  .pcard{background:#0e1116;border:1px solid #262b3a;border-radius:12px;padding:14px;position:relative;cursor:pointer}
+  .pcard:hover{border-color:#405a99}
+  .pcard .pinfo .pname{font-weight:700;font-size:14px}
+  .pcard .ptag{font-size:10px;background:#1a2233;color:#7a8290;border-radius:6px;padding:1px 6px;margin-left:6px}
+  .pcard .cur{background:#1b3a2b;color:#45d483;border-radius:6px;padding:1px 6px;font-size:10px;margin-left:6px}
+  .pcard .pdesc{color:#aab2c0;font-size:12px;margin:6px 0}
+  .pcard .pfile{color:#5b5f6e;font-size:11px}
+  .pcard .picons{position:absolute;right:10px;bottom:10px;display:flex;gap:8px;font-size:15px}
+  .pcard .picons span{cursor:pointer;color:#7a8290}
+  .pcard .picons span:hover{color:#a78bfa}
+  .padd{border:1px dashed #262b3a;border-radius:12px;padding:14px;text-align:center;color:#a78bfa;cursor:pointer;font-size:14px}
+  .padd:hover{border-color:#405a99}
   .setnav-item{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;font-size:14px;color:#cbd0dc;cursor:pointer}
   .setnav-item:hover{background:#1e2430}
   .setnav-item.active{background:#2a3140;color:#fff}
@@ -1791,7 +1827,7 @@ HTML = r"""<!DOCTYPE html>
   <div id="main">
 <header>
   <button class="icon-btn sd-toggle" id="sdToggle" onclick="toggleSidebar()" title="收起/展开侧栏">⟨</button>
-  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span> <a href="/monitor" style="font-size:11px;color:#a78bfa;margin-left:6px">🧠 监控</a> <select id="presetSel" onchange="selectPreset(this.value)" style="margin-left:8px;font-size:12px;background:#1a2233;color:#e8ebf3;border:1px solid #242e44;border-radius:8px;padding:4px 8px"><option value="">🎭 预设</option></select></div>
+  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span> <a href="/monitor" style="font-size:11px;color:#a78bfa;margin-left:6px">🧠 监控</a></div>
   <div class="hdr-right">
     <button class="icon-btn" id="toolsBtn" onclick="toggleTools()">🛠️ 工具</button>
     <button class="icon-btn" onclick="openBrain()">🧠 小脑</button>
@@ -1855,9 +1891,18 @@ HTML = r"""<!DOCTYPE html>
       <div class="setnav-item active" data-sec="general" onclick="setSec(this,'general')">⚙️ 通用设置</div>
       <div class="setnav-item" data-sec="model" onclick="setSec(this,'model')">🎛️ 模型</div>
       <div class="setnav-item" data-sec="plugins" onclick="setSec(this,'plugins')">🧩 插件</div>
+      <div class="setnav-item" data-sec="presets" onclick="setSec(this,'presets')">🎭 Agent 预设</div>
     </div>
     <div class="setbody">
-      <div class="sec show" id="sec-general">
+      <div class="sec" id="sec-presets">
+      <h3>🎭 Agent 预设</h3>
+      <p style="color:#7a8290;font-size:13px;margin:4px 0 14px">预设 = 人格 + 大脑 + 工具开关。选中即切换（不重启）。</p>
+      <div class="phead">内置</div>
+      <div id="presetCards" class="pgroup"></div>
+      <div class="phead">自定义</div>
+      <div class="padd" onclick="createPreset()">＋ 用「创造模式」创作自定义预设</div>
+    </div>
+    <div class="sec show" id="sec-general">
         <div class="field"><label>模型名称</label><input id="s_name"/></div>
         <div class="field"><label>大脑（engine：auto=自动 / llama=本地大模型 / api=外接API / xiaojiao=自建模型）</label>
           <select id="s_engine"><option value="auto">auto（自动）</option><option value="llama">llama（本地大模型）</option><option value="api">api（外接 OpenAI 兼容）</option><option value="xiaojiao">xiaojiao（自建模型）</option></select>
@@ -2033,6 +2078,16 @@ function loadPresets(){try{fetch('/api/presets').then(r=>r.json()).then(d=>{
   if(d.current)sel.value=d.current;});}catch(e){}}
 function selectPreset(file){if(!file)return;fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})}).then(r=>r.json()).then(d=>{
   alert('✅ 已加载预设：'+(d.preset||'')+'\n'+((d.role||'').slice(0,60))+'…');location.reload();}).catch(e=>alert('加载失败：'+e));}
+function loadPresetCards(){try{fetch('/api/presets').then(r=>r.json()).then(d=>{
+  const el=document.getElementById('presetCards');if(!el)return;
+  el.innerHTML=(d.presets||[]).map(p=>'<div class="pcard" onclick="loadPreset(\''+esc(p.file)+'\')">'+
+    '<div class="pinfo"><span class="pname">'+esc(p.name)+'</span><span class="ptag">内置</span>'+(p.file===d.current?'<span class="cur">当前使用</span>':'')+'</div>'+
+    '<div class="pdesc">'+esc(p.desc||'')+'</div><div class="pfile">'+esc(p.file)+'</div>'+
+    '<div class="picons"><span title="复制" onclick="event.stopPropagation();duplicatePreset(\''+esc(p.file)+'\')">⧉</span><span title="使用" onclick="event.stopPropagation();loadPreset(\''+esc(p.file)+'\')">📂</span></div></div>').join('');
+ }).catch(()=>{});}catch(e){}}
+function loadPreset(file){fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})}).then(r=>r.json()).then(d=>{alert('✅ 已加载预设：'+(d.preset||''));location.reload();}).catch(e=>alert('加载失败：'+e));}
+function duplicatePreset(file){fetch('/api/presets',{method:'GET'}).then(r=>r.json()).then(async d=>{const p=(d.presets||[]).find(x=>x.file===file);const n=p?(p.name+'·副本'):'新预设';await fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,parent:file})});loadPresetCards();});}
+function createPreset(){fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'我的预设',parent:'default.json'})}).then(r=>r.json()).then(d=>{alert('已创建自定义预设（可到 presets/ 编辑，或选它试试）');loadPresetCards();});}
 function openEnv(){document.getElementById('envBg').style.display='flex';loadEnv();}
 function closeEnv(){document.getElementById('envBg').style.display='none';}
 async function loadEnv(){try{const d=await (await fetch('/api/env')).json();
@@ -2197,7 +2252,7 @@ function applyPersona(){const v=document.getElementById('s_persona').value;if(!v
   fetch('/api/persona',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role:v})}).then(r=>r.json()).then(d=>{const m=document.getElementById('personaMsg');if(m)m.textContent=d.ok?'✅ 人格已切换（下次对话生效）':'❌ '+d.error;});
 }
 
-async function openSettings(){
+async function openSettings(){try{loadPresetCards();}catch(e){}
   setSec('general');
   const r=await fetch('/api/settings');const d=await r.json();const c=d.control;
   document.getElementById('s_name').value=c.model_name||'';
