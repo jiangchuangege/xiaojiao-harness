@@ -895,6 +895,64 @@ def api_session(sid):
     return jsonify({"error": "会话不存在"}), 404
 
 
+
+
+@app.route("/api/env")
+def api_env():
+    """环境检查：检测用户电脑缺什么(安装向导)。"""
+    import os, socket, shutil, subprocess, json as _j
+    from flask import jsonify
+    def port_up(pp):
+        try:
+            socket.create_connection(("127.0.0.1", pp), 0.8).close(); return True
+        except Exception:
+            return False
+    def exe(pp): return shutil.which(pp) or (os.path.exists(pp) and pp) or None
+    def exists(pp): return os.path.exists(pp)
+    items = []
+    def add(name, ok, info, need="", dl=""):
+        items.append({"name": name, "ok": ok, "info": info, "need": need, "dl": dl})
+    # Python
+    add("Python", True, "v" + __import__("sys").version.split()[0], "已装", "")
+    # llama-server(大脑)
+    ls = "C:/llama/llama-server.exe"
+    add("llama-server(聊天大脑)", exists(ls), "本地大脑引擎" + ("，已装" if exists(ls) else "，未找到"), "安装 llama.cpp 便携版", "")
+    gf = "C:/llama/xiaojiao1.0-4B.gguf"
+    add("聊天模型 xiaojiao1.0-4B.gguf", exists(gf), ("已放" if exists(gf) else "缺模型"), "下 xiaojiao1.0-4B.gguf 放 C:/llama/", "")
+    # 大脑在线
+    add("聊天大脑(8080) 在线", port_up(8080), "现在" + ("在线" if port_up(8080) else "未启动"), "启动后自动拉起", "")
+    # ComfyUI + 视频模型
+    comfy_dirs = [
+        r"G:\模型文件\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI",
+    ]
+    comfy = None
+    for cd in comfy_dirs:
+        if exists(os.path.join(cd, "main.py")):
+            comfy = cd; break
+    add("ComfyUI(视频大脑)", bool(comfy), ("位于 " + comfy if comfy else "未找到"), "下 ComfyUI 便携版", "")
+    ck = r"G:\模型文件\视频模型\dit_fp8.safetensors"
+    tc = r"G:\模型文件\视频模型\umt5_fp8.safetensors"
+    va = r"G:\模型文件\视频模型\vae_fp8.safetensors"
+    add("视频模型三件套(Wan2.1)", exists(ck) and exists(tc) and exists(va),
+        "模型/编码器/VAE " + ("齐全" if exists(ck) and exists(tc) and exists(va) else "缺"), "下 dit_fp8/umt5/vae 放对应目录", "")
+    add("视频大脑(8188) 在线", port_up(8188), "现在" + ("在线" if port_up(8188) else "未启动"), "生成时自动起", "")
+    # llama-swap(热切换)
+    sw = r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe"
+    ok = exists(sw)
+    add("llama-swap(秒切管理)", ok, ("位于" if ok else "未找到") + (os.path.basename(sw) if ok else ""), "放 llama-swap.exe", "")
+    add("llama-swap(8080) 在线", port_up(8080), "…", "", "")
+    # GPU
+    gpu = False
+    try:
+        r2 = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=8)
+        if r2.returncode == 0:
+            gpu = r2.stdout.strip()
+    except Exception:
+        pass
+    add("NVIDIA GPU + 显存", bool(gpu), gpu or "未检测到", "需 N 卡", "")
+    missing = [i for i in items if not i["ok"]]
+    return jsonify({"items": items, "missing": [i["name"] for i in missing], "ok": not missing})
+
 @app.route("/")
 def index():
     return render_template_string(HTML, model_name=MODEL_NAME)
@@ -1576,6 +1634,20 @@ HTML = r"""<!DOCTYPE html>
   .modal input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;font-size:14px}
   .modal .m-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
   .modal button{padding:7px 14px;border-radius:8px;border:1px solid #2a3140;background:#222a3e;color:#e8ebf3;cursor:pointer}
+  .splash{position:fixed;inset:0;background:#05070c;display:flex;align-items:center;justify-content:center;z-index:9999}
+  .s-inner{text-align:center}
+  .s-logo{font-size:44px;font-weight:800;background:linear-gradient(90deg,#ff6bcb,#a78bfa);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .s-bar{width:220px;height:6px;background:#1a2030;border-radius:3px;margin:18px auto 10px;overflow:hidden}
+  .s-bar span{display:block;height:100%;width:40%;background:linear-gradient(90deg,#ff6bcb,#a78bfa);border-radius:3px;animation:sl 1.2s infinite}
+  @keyframes sl{0%{margin-left:-40%}100%{margin-left:100%}}
+  .s-msg{color:#8b93a3;font-size:13px}
+  .modal-env{width:min(560px,94vw)}
+  .envlist{max-height:55vh;overflow:auto;font-size:13px}
+  .envitem{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid #1a2030}
+  .envitem .st{width:20px;text-align:center}
+  .envitem.ok .st{color:#45d483}.envitem.no .st{color:#ff6b6b}
+  .envitem .nm{flex:1;color:#e8ebf3}
+  .envitem .inf{color:#7a8290;font-size:12px}
   .modal button.primary{background:linear-gradient(135deg,#5b5ff5,#7c5cf0);border:none;color:#fff}
   .brainbg{position:fixed;inset:0;background:rgba(5,7,12,.82);display:flex;align-items:center;justify-content:center;z-index:998;padding:24px}
   .brain{width:min(860px,96vw);max-height:92vh;overflow-y:auto;background:#11141e;border:1px solid #2a3140;border-radius:18px;padding:24px;box-shadow:0 30px 90px #000a;color:#e8ebf3}
@@ -1652,6 +1724,14 @@ HTML = r"""<!DOCTYPE html>
     <div class="m-actions"><button onclick="closeVideo()">取消</button><button class="primary" onclick="startVideo()">✨ 精炼提示词</button></div>
   </div>
 </div>
+<div id="envBg" class="modal-bg" style="display:none">
+  <div class="modal modal-env">
+    <h3>🛠️ 环境检查（安装向导）</h3>
+    <div id="envList" class="envlist"><div class="think">正在检测…</div></div>
+    <div class="m-actions"><button onclick="closeEnv()">关闭</button></div>
+  </div>
+</div>
+<div id="splash" class="splash"><div class="s-inner"><div class="s-logo">小焦</div><div class="s-bar"><span></span></div><div class="s-msg">暖机中，正在优化页面…</div></div></div>
 <div id="brainBg" class="brainbg" style="display:none">
   <div class="brain">
     <div class="brain-head"><span class="logo">🐳 小脑</span><span class="brain-sub">小焦真正自研的那颗会学习的脑</span><button class="icon-btn x" onclick="closeBrain()">✕</button></div>
@@ -1844,6 +1924,13 @@ async function resumeVideoJob(){let job='';
     }catch(e){}
   },5000);
 }
+function openEnv(){document.getElementById('envBg').style.display='flex';loadEnv();}
+function closeEnv(){document.getElementById('envBg').style.display='none';}
+async function loadEnv(){try{const d=await (await fetch('/api/env')).json();
+  const el=document.getElementById('envList');
+  el.innerHTML=d.items.map(function(i){return '<div class="envitem '+(i.ok?'ok':'no')+'"><div class="st">'+(i.ok?'✓':'✗')+'</div><div class="nm">'+esc(i.name)+'<div class="inf">'+esc(i.info)+(i.ok?'':'<div>需：'+esc(i.need)+'</div>')+'</div></div></div>';}).join('');
+  const b=document.createElement('div');b.className='envitem '+(d.ok?'ok':'no');b.innerHTML='<div class="st">'+(d.ok?'✓':'✗')+'</div><div class="nm">'+(d.ok?'✅ 环境齐全，可直接用':'⚠️ 有 '+((d.missing||[]).length)+' 项待处理')+'</div>';el.appendChild(b);
+ }catch(e){document.getElementById('envList').textContent='检测失败';}}
 function openBrain(){document.getElementById('brainBg').style.display='flex';loadBrain();}
 function closeBrain(){document.getElementById('brainBg').style.display='none';}
 async function loadBrain(){try{const d=await (await fetch('/api/brain')).json();
@@ -1986,7 +2073,8 @@ async function newChat(){await fetch('/api/session/new',{method:'POST'});clearFe
 async function openSession(id){const r=await fetch('/api/session/'+id);const d=await r.json();clearFeed();(d.messages||[]).forEach(h=>add(h.role==='用户'?'user':'bot',h.content));loadSessions();}
 function clearFeed(){document.getElementById('feed').innerHTML='<div class="think">👋 新对话，问小焦一个问题…</div>';}
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('hidden');}
-(async()=>{try{loadModels();}catch(e){}try{loadHistory();}catch(e){}try{loadSessions();}catch(e){}
+function hideSplash(){const sp=document.getElementById('splash');if(sp){sp.style.transition='opacity .5s';sp.style.opacity='0';setTimeout(function(){sp.remove();},500);}}
+  (async()=>{try{loadModels();}catch(e){}try{loadHistory();}catch(e){}try{loadSessions();}catch(e){}
  try{const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);}catch(e){}
  resumeVideoJob();resumeChat();})();
 async function confirmAction(){const r=await fetch('/api/confirm',{method:'POST'});const d=await r.json();
