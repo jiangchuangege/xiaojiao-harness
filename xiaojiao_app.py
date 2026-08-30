@@ -1587,6 +1587,9 @@ def api_settings_post():
         "capabilities": {**cur.get("capabilities", {}), **(got.get("capabilities") or {})},
         "behavior": {**cur.get("behavior", {}), **(got.get("behavior") or {})},
         "models": _get_models(),
+        "dsh": cur.get("dsh", {}),
+        "preset": cur.get("preset", ""),
+        "_engine": cur.get("_engine", ""),
     }
     try:
         json.dump(saved, open("xiaojiao_control.json", "w", encoding="utf-8"),

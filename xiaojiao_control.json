@@ -1,54 +1,59 @@
 {
- "model_name": "xiaojiao1.0-4B",
- "brain": {
-  "engine": "auto",
-  "_engine": "auto=自动(有大模型就先用大模型,否则用自建小模型) | llama=固定本地大模型 | xiaojiao=固定用自建小模型 | api=外接OpenAI兼容接口",
-  "llama": {
-   "server": "C:/llama/llama-server.exe",
-   "gguf": "C:/llama/xiaojiao1.0-4B.gguf",
-   "port": 8080,
-   "ctx": 20000,
-   "_ctx_note": "模型上下文窗口(token)。越大越能在 Harness 里用长对话，但越占显存；若启动报 CUDA OOM，改小到 16384。",
-   "_note": "大模型(GGUF)文件。已用硬链接 xiaojiao1.0-4B.gguf 指向 4B 大模型。想换大脑改这里。"
+  "model_name": "xiaojiao1.0-4B",
+  "brain": {
+    "engine": "auto",
+    "_engine": "auto=自动(有大模型就先用大模型,否则用自建小模型) | llama=固定本地大模型 | xiaojiao=固定用自建小模型 | api=外接OpenAI兼容接口",
+    "llama": {
+      "server": "C:/llama/llama-server.exe",
+      "gguf": "C:/llama/xiaojiao1.0-4B.gguf",
+      "port": 8080,
+      "ctx": 20000,
+      "_ctx_note": "模型上下文窗口(token)。越大越能在 Harness 里用长对话，但越占显存；若启动报 CUDA OOM，改小到 16384。",
+      "_note": "大模型(GGUF)文件。已用硬链接 xiaojiao1.0-4B.gguf 指向 4B 大模型。想换大脑改这里。"
+    },
+    "api": {
+      "api_key": "",
+      "base_url": "http://127.0.0.1:9292/v1",
+      "model": "xiaojiao"
+    },
+    "keep_warm": false,
+    "llama_swap_port": 9292
   },
-  "api": {
-   "base_url": "http://127.0.0.1:9292/v1",
-   "api_key": "",
-   "model": "xiaojiao"
+  "role": "专门聊18禁内容",
+  "capabilities": {
+    "web_search": true,
+    "memory": true,
+    "run_tools": true,
+    "context_len": 30,
+    "auto_deep_think": true,
+    "plugins": {
+      "ip": true,
+      "js-calc": true,
+      "memory": true,
+      "netdoctor": true,
+      "search": true,
+      "weather": true,
+      "web-search": true
+    },
+    "full_access": true
   },
-  "keep_warm": false,
-  "llama_swap_port": 9292
- },
- "role": "你是猫娘小焦",
- "capabilities": {
-  "web_search": true,
-  "memory": true,
-  "run_tools": false,
-  "context_len": 20,
-  "auto_deep_think": true,
-  "plugins": {
-   "web-search": true,
-   "memory": true,
-   "ip": true,
-   "js-calc": true,
-   "netdoctor": true,
-   "search": true,
-   "weather": true
+  "behavior": {
+    "temperature": 0.7,
+    "max_tokens": 1024,
+    "answer_style": "简洁、分点、像人对话"
   },
-  "full_access": true
- },
- "behavior": {
-  "temperature": 0.7,
-  "max_tokens": 4096,
-  "answer_style": "简洁、分点、像人对话"
- },
- "models": [
-  {
-   "name": "xiaojiao1.0-4B (本地大模型)",
-   "engine": "llama",
-   "base_url": "http://127.0.0.1:8080/v1",
-   "api_key": "",
-   "model": "xiaojiao1.0-4B"
-  }
- ]
+  "models": [
+    {
+      "name": "xiaojiao1.0-4B (本地大模型)",
+      "engine": "llama",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "api_key": "",
+      "model": "xiaojiao1.0-4B"
+    }
+  ],
+  "dsh": {
+    "enabled": true
+  },
+  "preset": "18禁-聊天",
+  "_engine": ""
 }
