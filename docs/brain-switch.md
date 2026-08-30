@@ -58,7 +58,7 @@
 
 | 大脑类型 | sleep/wake 实现 | 现状 |
 |---|---|---|
-| 视频/图像（ComfyUI+Wan） | `keep_warm` + `--lowvram`（权重放 RAM、按需加载），ComfyUI 进程常驻 | ✅ 已接入：Wan 睡眠/秒醒、进程不关 |
+| 视频/图像（ComfyUI+Wan） | `keep_warm` + `--lowvram` + **AnyDeviceOffload 节点**（权重放 RAM、按需加载），ComfyUI 进程常驻 | ✅ 已接入：Wan 睡眠/秒醒、进程不关 |
 | LLM（llama.cpp / Qwen4B） | **llama-swap(9292)**：进程常驻，切换=卸载/加载模型（秒级，不再杀进程重启） | ✅ **已接入**（聊天大脑走 llama-swap，`stop_brain` 用 unload API） |
 | 未来 DeepSeek/vLLM | vLLM sleep 模式 | ⏳ 未来扩展（框架已预留，加进 `BRAINS` 即可） |
 

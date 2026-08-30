@@ -558,11 +558,30 @@ flowchart LR
 
 **原理**：
 - **聊天大脑**：走 **llama-swap**(9292)，进程常驻，切换=**卸载/加载模型**（秒级），不再杀进程重启。
-- **视频大脑**：**keep_warm** 让 ComfyUI+Wan 常驻；**低显存(--lowvram)** 把权重放 RAM、按需加载——聊天时 Wan 自动睡眠，生成时秒醒，**ComfyUI 进程不关**。
+- **视频大脑**：**keep_warm** 让 ComfyUI+Wan 常驻；**低显存(--lowvram)** + **ComfyUI-AnyDeviceOffload** 把权重放 RAM、按需加载——聊天时 Wan 自动睡眠，生成时秒醒，**ComfyUI 进程不关**。
 - **调度中心** `brain_manager.py`：注册所有大脑、`switch_to` 休眠当前/唤醒目标，**加新大脑只需在 BRAINS 加一项**。
 - 8G 物理上放不下"两个都热"，所以**一个显存、一个内存**，但搬运是**权重级（RAM↔显存）**，不再是"杀进程重启"。
 
 > 详见 [docs/brain-switch.md](docs/brain-switch.md) 与 [docs/tools.md](docs/tools.md)。
+
+
+
+## 🙏 致谢（核心工具的作者们）
+
+小焦能"秒级切换、真生成视频"，站在这些超棒的开源项目肩膀上：
+
+| 项目 | 作者 | 贡献 |
+|---|---|---|
+| **llama-swap** | [mostlygeek](https://github.com/mostlygeek/llama-swap) | 多模型热切换(9292)，让聊天大脑**秒级卸载/加载** |
+| **ComfyUI** | [comfyanonymous](https://github.com/comfyanonymous/ComfyUI) | 视频/图像生成引擎，**进程常驻、低显存** |
+| **ComfyUI-WanVideoWrapper** | [kijai](https://github.com/kijai/ComfyUI-WanVideoWrapper) | Wan 2.1 视频工作流节点 |
+| **ComfyUI-AnyDeviceOffload** | 社区 | GPU/CPU 任意设备 offload 节点 |
+| **llama.cpp** | [ggerganov](https://github.com/ggerganov/llama.cpp) | 本地大模型推理引擎(4B 大脑) |
+| **Wan2.1** | 阿里通义实验室 | 文生视频扩散模型 |
+| **DeepSeek** | DeepSeek | 推理模型 + harness 插件生态思路 |
+
+> 也谢谢**你**——愿意花时间陪小焦长大，它才有了这些能力。🐳
+
 
 ## 💙 一份温柔的小约定
 
