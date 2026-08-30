@@ -105,16 +105,11 @@ def wake(brain_key, wait=10):
     keep_comfy = (_os.environ.get("XIAOJIAO_KEEP_COMFY") == "1")
     b = BRAINS[brain_key]
     if brain_key == "video":
-        ms.stop_brain()      # 停聊天大脑(4B)让显存
-        try:
-            ms._llama_swap_unload("coder")  # 编码大脑(8B)也让出——防双模型驻留 OOM
-        except Exception:
-            pass
+        # 视频上显存; llama 大脑由 llama.cpp 空闲自动卸到内存(温存, 单槽), 不主动杀
         ms.start_comfy()     # 起视频大脑(ComfyUI+Wan)
     elif brain_key == "chat":
-        # 聊天大脑上显卡; 视频大脑留在内存(不杀)——只有切到"第三个大脑"或闲置超时才清
+        # 聊天大脑上显卡; 其它温存大脑留在内存(切回快)
         ms.start_brain()     # 聊天大脑 -> 显卡
-        # 不 stop_comfy: 视频大脑保持内存温存(连续视频秒级)
     else:
         _start_llama(b) if b["type"] == "llama" else _start_comfy(b)
     b["state"] = "RUN"
@@ -122,18 +117,28 @@ def wake(brain_key, wait=10):
 
 
 def sleep(brain_key):
-    """让大脑睡眠(SLEEP)。llama 大脑真正 unload 腾显存(防 8G OOM/双模型驻留)。"""
+    """温存(WARM, 内存单槽驻留): 不卸载——llama进程/模型保留(llama.cpp空闲自动卸到内存),
+    视频保留ComfyUI。切回 = 内存→显存, 秒级。被新温存顶掉时才彻底卸载(_full_stop)。"""
     b = BRAINS.get(brain_key)
     if b:
-        b["state"] = "SLEEP"
-        if b["type"] == "llama":
-            # 真正卸载 llama 模型腾显存(llama-swap unload)—— 防止聊天/编码/视频同时驻留
-            try:
-                import model_switch as _ms
+        b["state"] = "WARM"
+    return True
+
+
+def _full_stop(brain_key):
+    """彻底卸载(OFF, 腾显存+内存): 新温存顶掉旧温存时调用——内存只允许一个。"""
+    b = BRAINS.get(brain_key)
+    if b:
+        try:
+            import model_switch as _ms
+            if b.get("type") == "llama":
                 _mid = "coder" if brain_key == "coder" else "xiaojiao"
                 _ms._llama_swap_unload(_mid)
-            except Exception:
-                pass
+            else:
+                _ms.stop_comfy()
+        except Exception:
+            pass
+        b["state"] = "OFF"
     return True
 
 
@@ -150,14 +155,18 @@ def _evict_ram_brains(except_key):
 
 
 def switch_to(target):
-    """秒级切换：休眠当前在跑的大脑, 唤醒目标大脑。"""
+    """秒级切换(内存单槽温存): 顶掉旧温存 -> 当前活动去温存 -> 目标上显存。可切回。"""
     with _lock:
-        _evict_ram_brains(target)  # 切第三方大脑才清内存温存
-        current = [k for k, v in BRAINS.items() if v["state"] == "RUN" and k != target]
-        for k in current:
+        # 1) 顶掉内存里旧的温存(内存只允许一个) —— 新温存进来, 旧的彻底卸载
+        for k, v in BRAINS.items():
+            if v["state"] == "WARM" and k != target:
+                _full_stop(k)
+        # 2) 当前活动大脑 -> 温存(留内存, 切回秒级)
+        for k in [k for k, v in BRAINS.items() if v["state"] == "RUN" and k != target]:
             sleep(k)
+        # 3) 目标 -> 活动(显存)
         ok = wake(target)
-        return {"switched": target, "from": current, "ok": ok}
+        return {"switched": target, "from": [k for k, v in BRAINS.items() if v["state"] == "RUN" and k != target], "ok": ok}
 
 
 if __name__ == "__main__":
