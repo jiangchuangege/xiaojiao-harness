@@ -104,9 +104,9 @@ def wake(brain_key, wait=10):
         ms.stop_brain()      # 让聊天大脑让出显存
         ms.start_comfy()     # 起视频大脑(ComfyUI+Wan)
     elif brain_key == "chat":
-        if not (_brain_keep_warm("video") or keep_comfy):
-            ms.stop_comfy()  # 视频大脑默认懒加载: 切聊天就停掉它, 省内存
-        ms.start_brain()     # 起聊天大脑
+        # 聊天大脑上显卡; 视频大脑留在内存(不杀)——只有切到"第三个大脑"或闲置超时才清
+        ms.start_brain()     # 聊天大脑 -> 显卡
+        # 不 stop_comfy: 视频大脑保持内存温存(连续视频秒级)
     else:
         _start_llama(b) if b["type"] == "llama" else _start_comfy(b)
     b["state"] = "RUN"
@@ -121,9 +121,22 @@ def sleep(brain_key):
     return True
 
 
+def _evict_ram_brains(except_key):
+    """切换到"第三个大脑"时, 把内存里温存的大脑清掉(腾内存)。chat/video 之间互不杀。"""
+    import model_switch as _ms
+    for k in list(BRAINS.keys()):
+        if k == except_key or k in ("chat", "video"):
+            continue  # 聊天/视频互相切换不清
+        try:
+            _ms.stop_comfy()  # 第三方大脑占用时, 视频大脑让位(或按类型扩展)
+        except Exception:
+            pass
+
+
 def switch_to(target):
     """秒级切换：休眠当前在跑的大脑, 唤醒目标大脑。"""
     with _lock:
+        _evict_ram_brains(target)  # 切第三方大脑才清内存温存
         current = [k for k, v in BRAINS.items() if v["state"] == "RUN" and k != target]
         for k in current:
             sleep(k)
