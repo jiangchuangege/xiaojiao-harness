@@ -2507,7 +2507,13 @@ async function openSettings(){try{loadPresetCards();}catch(e){}
 async function loadModelList(){const r=await fetch('/api/models');const d=await r.json();const el=document.getElementById('s_model_list');
   el.innerHTML=(d.models||[]).map(m=>`<div class="switch"><div><div class="n">${esc(m.name)} <small style="color:#7a8290">${esc(m.engine)}</small></div><div class="d">${esc(m.base_url||'')}</div></div><button class="btn-sec" onclick="delModel('${esc(m.name)}')">删除</button></div>`).join('')||'<div class="think">还没有模型</div>';
 }
-async function addModel(){const name=document.getElementById('s_m_name').value.trim();if(!name){document.getElementById('s_model_msg').textContent='❌ 名字必填';return;}
+async function addLocalModel(){
+  const name=prompt('模型显示名(如 数学大脑)');if(!name)return;
+  const gguf=prompt('GGUF 文件绝对路径(如 G:/模型文件/xxx.gguf)');if(!gguf)return;
+  const ctx=prompt('上下文 ctx(默认20000)','20000');
+  fetch('/api/model/addlocal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,gguf:gguf,ctx:ctx})}).then(r=>r.json()).then(d=>{alert(d.ok?('✅ 已添加: '+d.name+'\n'+d.note):('失败: '+d.error));setTimeout(()=>location.reload(),12000);});
+}
+function addModel(){const name=document.getElementById('s_m_name').value.trim();if(!name){document.getElementById('s_model_msg').textContent='❌ 名字必填';return;}
   const entry={name:name,engine:document.getElementById('s_m_engine').value,base_url:document.getElementById('s_m_base').value.trim(),api_key:document.getElementById('s_m_key').value.trim(),model:document.getElementById('s_m_model').value.trim()};
   const r=await fetch('/api/model/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)});const d=await r.json();
   if(d.ok){document.getElementById('s_model_msg').textContent='✅ 已添加：'+name;loadModelList();loadModels();}else{document.getElementById('s_model_msg').textContent='❌ '+(d.error||'失败');}}
