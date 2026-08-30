@@ -19,7 +19,15 @@
 | **llama-server.exe**（llama.cpp） | `C:/llama/llama-server.exe`，或 `XIAOJIAO_LLAMA_SERVER` / 控制文件 `brain.llama.server` | 推理引擎 |
 | **xiaojiao1.0-4B.gguf**（4B 模型） | `C:/llama/xiaojiao1.0-4B.gguf`，或 `XIAOJIAO_LLAMA_GGUF` | 小焦本尊大脑 |
 
-## 3. llama-swap（多大脑秒级切换）
+## 3. 秒级切换必需工具（缺一不可）
+| 工具 | 作用 | 安装 |
+|---|---|---|
+| **llama-swap** | LLM 秒级切换(9292, 聊天大脑) | `install_all` 自动下载 |
+| **ComfyUI-AnyDeviceOffload** | 视频大脑 offload 节点(Offload Anything GPU/CPU) | `install_all` 自动装进 ComfyUI custom_nodes |
+| **ComfyUI-WanVideoWrapper** | Wan 视频工作流节点(必需) | `install_all` 校验/提示 |
+| keep_warm / --lowvram | 视频模型常驻/权重放内存(秒醒) | 小焦内置配置 |
+
+### llama-swap（LLM 秒级切换）
 | 项 | 位置 | 说明 |
 |---|---|---|
 | **llama-swap.exe** | `G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\`，或 `XIAOJIAO_LLAMA_SWAP` | 热切换管理器（9292），启动时自动拉起 |

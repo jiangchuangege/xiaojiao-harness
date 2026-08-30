@@ -151,6 +151,32 @@ def main():
     if comfy:
         print("   ✅ ComfyUI:", comfy)
 
+    # 5b) 视频秒级切换必需节点: AnyDeviceOffload + WanVideoWrapper(装进 ComfyUI custom_nodes)
+    print("\n[5b/11] 视频秒级切换节点(必需) ...")
+    cn_dir = os.path.join(comfy, "custom_nodes") if comfy else ""
+    node_missing = []
+    for node in ("ComfyUI-AnyDeviceOffload", "ComfyUI-WanVideoWrapper"):
+        ok_node = os.path.isdir(os.path.join(cn_dir, node)) if cn_dir else False
+        if ok_node:
+            print("   ✅", node, "已在 custom_nodes")
+        else:
+            print("   ❌", node, "未安装(必需)")
+            # 尝试从 大脑秒计切换 目录/zip 复制
+            src_dir = os.path.join(r"G:\模型文件\大脑秒计切换", node) if node == "ComfyUI-AnyDeviceOffload" else ""
+            got = False
+            if cn_dir and src_dir and os.path.isdir(src_dir):
+                try:
+                    import shutil as _sh
+                    _sh.copytree(src_dir, os.path.join(cn_dir, node), dirs_exist_ok=True)
+                    got = os.path.isdir(os.path.join(cn_dir, node))
+                    print("   ✅ 已从 大脑秒计切换 复制:", node)
+                except Exception as e:
+                    print("   ✗ 复制失败:", e)
+            if not got:
+                node_missing.append(node)
+    if node_missing:
+        missing.append("视频节点:" + ",".join(node_missing))
+
     # 6) Wan 视频模型三件套
     print("\n[6/11] Wan2.1 视频模型三件套 ...")
     vroot = os.environ.get("XIAOJIAO_VIDEO_ROOT") or r"G:\模型文件\视频模型"
