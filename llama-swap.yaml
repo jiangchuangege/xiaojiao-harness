@@ -6,7 +6,7 @@ models:
     ttl: 0               # 不自动卸载(由小焦/视频切换时主动 unload)
     useModelName: xiaojiao1.0-4B
   coder:
-    cmd: C:/llama/llama-server.exe --port ${PORT} --model C:/llama/Qwen3-Coder-7B-Instruct-Q4_K_M.gguf -c 20000
+    cmd: "C:/llama/llama-server.exe --port ${PORT} --model G:/模型文件/工具调用模型/Qwen3-8B-Q4_K_M.gguf -c 20000 --reasoning off"
     ttl: 0
     useModelName: qwen3-8b
   # 未来可加更多大脑(填进 models 即可被调度):
