@@ -912,15 +912,31 @@ def api_env():
     items = []
     def add(name, ok, info, need="", dl=""):
         items.append({"name": name, "ok": ok, "info": info, "need": need, "dl": dl})
+    # 读取配置(不死写路径)
+    import json as _j
+    _cfg = {}
+    try:
+        _cfg = _j.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), encoding="utf-8"))
+    except Exception:
+        pass
+    _ll = _cfg.get("brain", {}).get("llama", {}) or {}
+    _ap = _cfg.get("brain", {}).get("api", {}) or {}
     # Python
     add("Python", True, "v" + __import__("sys").version.split()[0], "已装", "")
-    # llama-server(大脑)
-    ls = "C:/llama/llama-server.exe"
-    add("llama-server(聊天大脑)", exists(ls), "本地大脑引擎" + ("，已装" if exists(ls) else "，未找到"), "安装 llama.cpp 便携版", "")
-    gf = "C:/llama/xiaojiao1.0-4B.gguf"
-    add("聊天模型 xiaojiao1.0-4B.gguf", exists(gf), ("已放" if exists(gf) else "缺模型"), "下 xiaojiao1.0-4B.gguf 放 C:/llama/", "")
-    # 大脑在线
-    add("聊天大脑(8080) 在线", port_up(8080), "现在" + ("在线" if port_up(8080) else "未启动"), "启动后自动拉起", "")
+    # llama-server(大脑, 路径走配置/环境变量)
+    ls = os.environ.get("XIAOJIAO_LLAMA_SERVER") or _ll.get("server") or "llama-server"
+    ls_ok = os.path.exists(ls) or shutil.which(ls) is not None
+    add("llama-server(聊天大脑)", ls_ok, "本地大脑引擎" + ("，已装" if ls_ok else "，未找到"), "安装 llama.cpp 便携版或设 XIAOJIAO_LLAMA_SERVER", "")
+    gf = os.environ.get("XIAOJIAO_LLAMA_GGUF") or _ll.get("gguf") or ""
+    add("聊天模型(xiaojiao1.0-4B)", bool(gf) and exists(gf), ("已放" if gf and exists(gf) else "缺模型: %s" % (gf or "未配置")), "下 gguf 并在配置/环境变量指定", "")
+    # 大脑在线(llama-swap 端口, 从配置读)
+    _bp = 9292
+    try:
+        import urllib.parse as _up
+        _bp = _up.urlparse(_ap.get("base_url") or "http://127.0.0.1:9292/v1").port or 9292
+    except Exception:
+        _bp = 9292
+    add("聊天大脑(llama-swap:%d) 在线" % _bp, port_up(_bp), "现在" + ("在线" if port_up(_bp) else "未启动"), "启动后自动拉起", "")
     # ComfyUI + 视频模型
     comfy_dirs = [
         r"G:\模型文件\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI",
@@ -940,7 +956,9 @@ def api_env():
     sw = r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe"
     ok = exists(sw)
     add("llama-swap(秒切管理)", ok, ("位于" if ok else "未找到") + (os.path.basename(sw) if ok else ""), "放 llama-swap.exe", "")
-    add("llama-swap(8080) 在线", port_up(8080), "…", "", "")
+    add("llama-swap(9292) 在线", port_up(9292), "多大脑秒切管理" + ("在线" if port_up(9292) else "未启动"), "start_xiaojiao 会自动拉起", "")
+    # Node.js(.js 插件)
+    add("Node.js(js插件)", shutil.which("node") is not None, "运行 .js 插件用" + ("，已装" if shutil.which("node") else "，未装"), "装 Node.js 或不用 .js 插件", "")
     # GPU
     gpu = False
     try:

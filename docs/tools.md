@@ -1,33 +1,52 @@
-# 工具说明
+# 🧰 小焦依赖 & 工具清单（需要什么 / 放哪 / 干什么）
 
-小焦能"动手干活"，靠的是一套工具。模型会自己决定用哪个、参数是什么，框架负责执行。
+> 环境检查：网页设置里「🛠️ 环境检查」可一键检测下列每一项。
 
-## 内置工具
+## 1. Python 依赖（`pip install -r requirements.txt`）
+| 包 | 用途 |
+|---|---|
+| `torch>=2.0` | 自研 MiniGPT 训练/推理（小脑） |
+| `flask>=2.0` | Web 服务（端口 5000） |
+| `requests>=2.28` | HTTP / 调 llama-server / 联网搜索 |
+| `numpy>=1.24` | 通用数组 |
+| `jieba>=0.42` | 分词（记忆/检索/自学习） |
 
-| 工具 | 干嘛的 | 参数 |
-| --- | --- | --- |
-| `run_command` | 跑一条 PowerShell 命令 | `command` |
-| `write_file` | 写一个文件（自动建目录） | `path`,`content` |
-| `read_file` | 读一个文件（默认取前 2500 字） | `path`,`max_chars` |
-| `list_files` | 列目录 | `path` |
-| `open_app` | 打开应用/文件 | `path` |
+## 2. 本地大模型（聊天大脑，GGUF）
+| 项 | 位置（可配置/环境变量） | 说明 |
+|---|---|---|
+| **llama-server.exe**（llama.cpp） | `C:/llama/llama-server.exe`，或 `XIAOJIAO_LLAMA_SERVER` / 控制文件 `brain.llama.server` | 推理引擎 |
+| **xiaojiao1.0-4B.gguf**（4B 模型） | `C:/llama/xiaojiao1.0-4B.gguf`，或 `XIAOJIAO_LLAMA_GGUF` | 小焦本尊大脑 |
 
-## 危险命令
+## 3. llama-swap（多大脑秒级切换）
+| 项 | 位置 | 说明 |
+|---|---|---|
+| **llama-swap.exe** | `G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\`，或 `XIAOJIAO_LLAMA_SWAP` | 热切换管理器（9292），启动时自动拉起 |
+| 配置 `llama-swap.yaml` | 项目根 | 定义 xiaojiao 模型路由 |
 
-遇到 `rm / del / format / shutdown / reg delete / taskkill /f` 这类，或往系统目录写文件，小焦**不会直接执行**，会先挂起来，等你在网页点「✅ 确认执行」。
+## 4. 视频大脑（ComfyUI + Wan2.1）
+| 项 | 位置 | 说明 |
+|---|---|---|
+| **ComfyUI 便携版** | `G:\模型文件\视频模型\ComfyUI_windows_portable_nvidia_cu126\...`，或 `XIAOJIAO_COMFY_DIR` | 视频生成引擎（8188），keep_warm 常驻 |
+| **dit_fp8.safetensors**（Wan2.1-1.3B-FP8） | ComfyUI `models/checkpoints/` | 生成本体 |
+| **umt5_fp8.safetensors**（文本编码器） | ComfyUI `models/text_encoders/` | 理解提示词 |
+| **vae_fp8.safetensors**（VAE） | ComfyUI `models/vae/` | 解码画面 |
 
-## 多步执行
+## 5. 其它
+| 项 | 说明 |
+|---|---|
+| **Node.js** | 跑 `.js` 插件（`plugins/plugin_runner.js`） |
+| **NVIDIA 显卡** | 建议 8GB+ 显存（4060 可跑 4B 大脑 + Wan 480p 视频） |
+| **python_embeded**（ComfyUI 自带） | 视频模型专用 Python（与主环境隔离） |
 
-模型会自行推理"建目录 → 写文件 → 打开"这几步，逐个调工具，最后给你一句总结。比如"在桌面建 tests1 文件夹写个 index.html 并打开"，它会：
-1. `run_command`（建文件夹）
-2. `write_file`（写 index.html）
-3. `run_command`（打开页面）
+## 6. 环境变量总表（可覆盖硬路径，推荐配置化）
+| 变量 | 作用 |
+|---|---|
+| `XIAOJIAO_LLAMA_SERVER` | llama-server.exe 路径 |
+| `XIAOJIAO_LLAMA_GGUF` | 4B 模型路径 |
+| `XIAOJIAO_LLAMA_SWAP` | llama-swap.exe 路径 |
+| `XIAOJIAO_COMFY_DIR` | ComfyUI 目录 |
+| `XIAOJIAO_VIDEO_ROOT` | 视频模型总目录 |
+| `XIAOJIAO_KEEP_COMFY` | `1`=视频模型常驻(不重启) |
+| `XIAOJIAO_WAN_MODEL` | Wan 模型名 |
 
-## 工具的入口
-
-- **网页**：小焦自己在对话里决定调不调。
-- **直接调**：`python xiaojiao_tools.py` 起在 `http://127.0.0.1:5003`，`POST /api/run` 传 `{"name":"write_file","command/path/content":...}`。
-
-## 插件也算工具
-
-`plugins/` 里的插件会自动注册成工具，模型同样能调。见 [PLUGINS.md](PLUGINS.md)。
+> 全部路径**都可配置/环境变量覆盖**，代码里不死写死路径（找不到会提示，不会假装存在）。

@@ -3,15 +3,14 @@
 
 # ---------- 核心深度学习（自研 MiniGPT 训练/推理） ----------
 torch>=2.0
+numpy>=1.24
 
 # ---------- Web / 接口（Flask，端口 5000） ----------
 flask>=2.0
-
-# ---------- HTTP / 本地 LLM 调用 / 联网搜索 ----------
 requests>=2.28
 
-# ---------- 通用数组 ----------
-numpy>=1.24
+# ---------- 分词/检索（小脑向量库、记忆、jieba 分词） ----------
+jieba>=0.42
 
 # ---------- 可选：8-bit 量化优化器（约省一半显存，加速接力训练） ----------
 # 安装失败时训练脚本会自动回退为 torch.optim.AdamW，故列为可选。
@@ -21,3 +20,6 @@ numpy>=1.24
 # · 本地模块（不入库）无需 pip 安装：vstore / xiaojiao_app / xiaojiao_harness 等。
 # · 底座大模型(GGUF, 如 xiaojiao1.0-4B.gguf) 不属于 Python 依赖，单独下载。
 # · DeepSeek Harness / DSH 插件：走小焦 /v1，无需额外 Python 包。
+# · 视频大脑（ComfyUI + Wan2.1）用 ComfyUI 自带 python_embeded，与本文独立。
+# · llama-swap（多大脑秒级切换）是独立 exe，非 Python 包。
+# · Node.js 用于 .js 插件（plugin_runner.js）。

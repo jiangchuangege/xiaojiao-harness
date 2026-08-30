@@ -104,7 +104,7 @@ def start_dsh_bridge():
 
 def start_llama_swap():
     """自动启动 llama-swap(多大脑热切换管理器)。独立端口9292, 不冲突直接大脑8080。"""
-    exe = r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe"
+    exe = os.environ.get("XIAOJIAO_LLAMA_SWAP") or r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe"
     cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama-swap.yaml")
     if not (os.path.exists(exe) and os.path.exists(cfg)):
         print("  [llama-swap] 未找到(exe或配置)，跳过")

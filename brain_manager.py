@@ -63,15 +63,23 @@ def _start_llama(b):
     if _port_alive(b["port"]):
         return True
     try:
-        subprocess.Popen(["C:/llama/llama-server.exe", "-m", "C:/llama/xiaojiao1.0-4B.gguf", "--port", str(b["port"]), "-c", "32768"],
-                         cwd="C:/llama", creationflags=subprocess.CREATE_NO_WINDOW)
+        server, gguf = _llama_cfg()
+        if not os.path.exists(server):
+            server = "llama-server"  # 走 PATH
+        if not (gguf and os.path.exists(gguf)):
+            return False  # 缺模型: 提示配置, 不死写
+        cwd = os.path.dirname(gguf) if os.path.dirname(gguf) else "."
+        subprocess.Popen([server, "-m", gguf, "--port", str(b["port"]), "-c", "32768"],
+                         cwd=cwd, creationflags=subprocess.CREATE_NO_WINDOW)
         return True
     except Exception:
         return False
 
 
 def _start_comfy(b):
-    root = os.environ.get("XIAOJIAO_COMFY_DIR", r"G:\模型文件\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI")
+    root = os.environ.get("XIAOJIAO_COMFY_DIR") or _comfy_dir()
+    if not root or not os.path.exists(os.path.join(root, "main.py")):
+        return False  # 未配置 ComfyUI, 不死写
     py = os.path.join(os.path.dirname(root), "python_embeded", "python.exe")
     try:
         args = [py, "main.py", "--port", str(b["port"])]
