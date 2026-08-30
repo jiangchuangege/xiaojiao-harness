@@ -24,7 +24,7 @@ python start_xiaojiao.py
 ```
 
 它自动：
-1. 起本地大模型（8080）
+1. 起聊天大脑（llama-swap:9292，start_xiaojiao 自动）
 2. 起网页（5000）
 3. 开浏览器
 
