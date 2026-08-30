@@ -105,7 +105,11 @@ def wake(brain_key, wait=10):
     keep_comfy = (_os.environ.get("XIAOJIAO_KEEP_COMFY") == "1")
     b = BRAINS[brain_key]
     if brain_key == "video":
-        ms.stop_brain()      # 让聊天大脑让出显存
+        ms.stop_brain()      # 停聊天大脑(4B)让显存
+        try:
+            ms._llama_swap_unload("coder")  # 编码大脑(8B)也让出——防双模型驻留 OOM
+        except Exception:
+            pass
         ms.start_comfy()     # 起视频大脑(ComfyUI+Wan)
     elif brain_key == "chat":
         # 聊天大脑上显卡; 视频大脑留在内存(不杀)——只有切到"第三个大脑"或闲置超时才清
@@ -118,10 +122,18 @@ def wake(brain_key, wait=10):
 
 
 def sleep(brain_key):
-    """让大脑睡眠(SLEEP, 权重/工作流不占显存, 进程常驻)。"""
+    """让大脑睡眠(SLEEP)。llama 大脑真正 unload 腾显存(防 8G OOM/双模型驻留)。"""
     b = BRAINS.get(brain_key)
     if b:
-        b["state"] = "SLEEP"  # 进程保留, 标记为可休眠; 具体显存释放由各服务/后续vLLM接管
+        b["state"] = "SLEEP"
+        if b["type"] == "llama":
+            # 真正卸载 llama 模型腾显存(llama-swap unload)—— 防止聊天/编码/视频同时驻留
+            try:
+                import model_switch as _ms
+                _mid = "coder" if brain_key == "coder" else "xiaojiao"
+                _ms._llama_swap_unload(_mid)
+            except Exception:
+                pass
     return True
 
 
