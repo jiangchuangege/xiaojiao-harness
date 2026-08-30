@@ -1580,23 +1580,14 @@ def api_model_addlocal():
     ys = open(yp, encoding="utf-8").read()
     if ("  " + mid + ":") not in ys:
         gg = gguf.replace("\\", "/")
-        ys = ys.rstrip() + ("
-  %s:
-    cmd: "C:/llama/llama-server.exe --port ${PORT} --model %s -c %d --reasoning off"
-    ttl: 0
-    useModelName: %s
-" % (mid, gg, ctx, mid))
+        ys = ys.rstrip() + ("\n  %s:\n    cmd: \"C:/llama/llama-server.exe --port ${PORT} --model %s -c %d --reasoning off\"\n    ttl: 0\n    useModelName: %s\n" % (mid, gg, ctx, mid))
         open(yp, "w", encoding="utf-8").write(ys)
     # ② brain_manager BRAINS 加
     bp = os.path.join(root, "brain_manager.py")
     bs = open(bp, encoding="utf-8").read()
     if '"%s"' % mid not in bs:
         bs = bs.replace("    # 未来扩展(示例, 加进 BRAINS 即可被调度):",
-                        '    "%s": {  # 新增: %s
-        "name": "%s", "port": 9292,
-        "type": "llama", "vram_gb": 5.0, "state": "OFF",
-    },
-    # 未来扩展(示例, 加进 BRAINS 即可被调度):' % (mid, name, name), 1)
+                        '    "%s": {  # 新增: %s\n        "name": "%s", "port": 9292,\n        "type": "llama", "vram_gb": 5.0, "state": "OFF",\n    },\n    # 未来扩展(示例, 加进 BRAINS 即可被调度):' % (mid, name, name), 1)
         open(bp, "w", encoding="utf-8").write(bs)
     # ③ 下拉模型加
     CONTROL.setdefault("models", [])
@@ -1608,7 +1599,7 @@ def api_model_addlocal():
     try:
         _sp.Popen(["powershell", "-NoProfile", "-Command",
                    "Get-Process llama-swap -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1; "
-                   "Start-Process 'G:/模型文件/大脑秒计切换/llama-swap_251_windows_amd64/llama-swap.exe' -ArgumentList '-config "%s" -listen 127.0.0.1:9292' -WindowStyle Hidden" % yp])
+                   "Start-Process 'G:/模型文件/大脑秒计切换/llama-swap_251_windows_amd64/llama-swap.exe' -ArgumentList '-config \\\"%s\\\" -listen 127.0.0.1:9292' -WindowStyle Hidden" % yp])
     except Exception:
         pass
     return jsonify({"ok": True, "model_id": mid, "name": name, "note": "llama-swap 正在重启, 约10秒后可用"})
