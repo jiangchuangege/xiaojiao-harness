@@ -784,7 +784,72 @@ def agent_run(user_input):
     return fallback, False, [], False, []
 
 
+
+
 app = Flask(__name__)
+
+
+# ================== Agent 预设切换（presets/） ==================
+_PRESETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
+
+
+def _list_preset_files():
+    if not os.path.isdir(_PRESETS_DIR):
+        return []
+    return sorted([f for f in os.listdir(_PRESETS_DIR) if f.endswith(".json")])
+
+
+@app.route("/api/presets")
+def api_presets():
+    """列出所有预设。"""
+    res = []
+    for f in _list_preset_files():
+        try:
+            d = json.load(open(os.path.join(_PRESETS_DIR, f), encoding="utf-8-sig"))
+            res.append({"name": d.get("name", f[:-5]), "file": f, "engine": d.get("brain", {}).get("engine", "auto")})
+        except Exception:
+            res.append({"name": f[:-5], "file": f, "engine": "?"})
+    cur = CONTROL.get("preset", "")
+    return jsonify({"presets": res, "current": cur})
+
+
+@app.route("/api/presets/load", methods=["POST"])
+def api_presets_load():
+    """加载预设：合并到操控文件 + 热更新配置(不重启)。"""
+    d = request.get_json(force=True, silent=True) or {}
+    file = (d.get("file") or d.get("name") or "").strip()
+    if not file.endswith(".json"):
+        file += ".json"
+    fp = os.path.join(_PRESETS_DIR, file)
+    if not os.path.exists(fp):
+        return jsonify({"ok": False, "error": "预设不存在: %s" % file}), 404
+    try:
+        preset = json.load(open(fp, encoding="utf-8-sig"))
+    except Exception as e:
+        return jsonify({"ok": False, "error": "预设解析失败: %s" % e}), 400
+    # 合并到 CONTROL(深合并, 保留未在预设里的配置)
+    _deep_merge(CONTROL, preset)
+    CONTROL["preset"] = preset.get("name", file[:-5])
+    json.dump(CONTROL, open("xiaojiao_control.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    reload_control()  # 热更新内存配置, 无需重启
+    return jsonify({"ok": True, "preset": CONTROL.get("preset"), "role": (CONTROL.get("role") or "")[:60]})
+
+
+@app.route("/api/presets/current")
+def api_presets_current():
+    """当前预设状态。"""
+    return jsonify({"current": CONTROL.get("preset", ""), "engine": BRAIN_ENGINE,
+                    "web_search": CAP.get("web_search", True), "memory": CAP.get("memory", True),
+                    "run_tools": CAP.get("run_tools", True)})
+
+
+def _deep_merge(base_dict, override):
+    """递归合并 override 到 base_dict(不回退未提到的键)。"""
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(base_dict.get(k), dict):
+            _deep_merge(base_dict[k], v)
+        else:
+            base_dict[k] = v
 
 
 # ===== 扩展：真·文生视频（video_service / ComfyUI + Wan，按需切换模型）=====
@@ -1726,7 +1791,7 @@ HTML = r"""<!DOCTYPE html>
   <div id="main">
 <header>
   <button class="icon-btn sd-toggle" id="sdToggle" onclick="toggleSidebar()" title="收起/展开侧栏">⟨</button>
-  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span> <a href="/monitor" style="font-size:11px;color:#a78bfa;margin-left:6px">🧠 监控</a></div>
+  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span> <a href="/monitor" style="font-size:11px;color:#a78bfa;margin-left:6px">🧠 监控</a> <select id="presetSel" onchange="selectPreset(this.value)" style="margin-left:8px;font-size:12px;background:#1a2233;color:#e8ebf3;border:1px solid #242e44;border-radius:8px;padding:4px 8px"><option value="">🎭 预设</option></select></div>
   <div class="hdr-right">
     <button class="icon-btn" id="toolsBtn" onclick="toggleTools()">🛠️ 工具</button>
     <button class="icon-btn" onclick="openBrain()">🧠 小脑</button>
@@ -1963,6 +2028,11 @@ async function resumeVideoJob(){let job='';
     }catch(e){}
   },5000);
 }
+function loadPresets(){try{fetch('/api/presets').then(r=>r.json()).then(d=>{
+  const sel=document.getElementById('presetSel');if(sel&&sel.options.length<=1){sel.innerHTML='<option value="">🎭 预设</option>'+ (d.presets||[]).map(p=>'<option value="'+esc(p.file)+'"'+(p.file===d.current?' selected':'')+'>'+esc(p.name)+'</option>').join('');}
+  if(d.current)sel.value=d.current;});}catch(e){}}
+function selectPreset(file){if(!file)return;fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})}).then(r=>r.json()).then(d=>{
+  alert('✅ 已加载预设：'+(d.preset||'')+'\n'+((d.role||'').slice(0,60))+'…');location.reload();}).catch(e=>alert('加载失败：'+e));}
 function openEnv(){document.getElementById('envBg').style.display='flex';loadEnv();}
 function closeEnv(){document.getElementById('envBg').style.display='none';}
 async function loadEnv(){try{const d=await (await fetch('/api/env')).json();
@@ -2115,7 +2185,7 @@ async function openSession(id){const r=await fetch('/api/session/'+id);const d=a
 function clearFeed(){document.getElementById('feed').innerHTML='<div class="think">👋 新对话，问小焦一个问题…</div>';}
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('hidden');}
 function hideSplash(){const sp=document.getElementById('splash');if(sp){sp.style.transition='opacity .5s';sp.style.opacity='0';setTimeout(function(){sp.remove();},500);}}
-  (async()=>{try{loadModels();}catch(e){}try{loadHistory();}catch(e){}try{loadSessions();}catch(e){}
+  (async()=>{try{loadModels();}catch(e){}try{loadHistory();}catch(e){}try{loadSessions();}catch(e){}try{loadPresets();}catch(e){}
  try{const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);}catch(e){}
  resumeVideoJob();resumeChat();})();
 async function confirmAction(){const r=await fetch('/api/confirm',{method:'POST'});const d=await r.json();
