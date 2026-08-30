@@ -1658,7 +1658,8 @@ HTML = r"""<!DOCTYPE html>
     <div class="brain-stats" id="brainStats">读取中…</div>
     <div class="brain-cols">
       <div class="brain-col"><h4>🧠 学到的功能用法</h4><div id="brainLessons" class="brain-list">…</div></div>
-      <div class="brain-col"><h4>🧭 说明</h4><div class="brain-note">
+      <div class="brain-col"><h4>🧭 说明</h4><div id="brainPrompt" class="brain-list" style="margin-bottom:10px"></div>
+  <div class="brain-note">
         「别人靠算力，小脑靠文本。」每次你点👍/被更正，大脑的好答案就写进小脑知识库，越长越强；小脑检索命中即可复用。<br><br>
         <button class="btn-sec" onclick="window.open('/growth')">📄 生成成长报告（可分享）</button>
       </div></div>
@@ -1856,6 +1857,12 @@ async function loadBrain(){try{const d=await (await fetch('/api/brain')).json();
   const ls=document.getElementById('brainLessons');
   const arr=d.lessons||[];
   ls.innerHTML=arr.length?arr.slice(-12).reverse().map(x=>'<div class="bli">'+esc(x)+'</div>').join(''):'<div class="think">还没学到东西，多聊几轮、点几个👍吧</div>';
+  // 电影设计提示词学习库(视频精炼, 小脑越用越准)
+  try{const pk=await (await fetch('/api/video/promptkb')).json();
+    const el=document.getElementById('brainPrompt');
+    if(el){el.innerHTML='<div class="bli think">🎬 电影设计提示词学习库：<b style="color:#a78bfa">已学 '+pk.count+' 条</b></div>'+
+      (pk.recent||[]).map(x=>'<div class="bli">📝 '+esc(String(x).slice(0,120))+'</div>').join('');}
+  }catch(e){}
  }catch(e){document.getElementById('brainStats').textContent='读取失败';}}
 
 function openSearch(){document.getElementById('modalBg').style.display='flex';const i=document.getElementById('msq');i.value='';i.focus();}
