@@ -15,6 +15,7 @@ jieba>=0.42
 # ---------- 可选：8-bit 量化优化器（约省一半显存，加速接力训练） ----------
 # 安装失败时训练脚本会自动回退为 torch.optim.AdamW，故列为可选。
 # bitsandbytes>=0.41
+deepseek-harness>=0.3.0   # DSH 桥接(DSH 深度功能)
 
 # ---------- 说明 ----------
 # · 本地模块（不入库）无需 pip 安装：vstore / xiaojiao_app / xiaojiao_harness 等。
