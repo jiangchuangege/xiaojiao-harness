@@ -798,6 +798,13 @@ try:
 except Exception as _e:
     print("⚠️ 视频服务未挂载:", _e)
 
+# 🧠 大脑仓库监控面板(app_monitor.py)：/monitor + /api/monitor
+try:
+    import app_monitor as _mon
+    app.register_blueprint(_mon.bp)
+except Exception as _me:
+    print("⚠️ 监控面板未加载:", _me)
+
 
 
 def _hist_json():
@@ -1719,7 +1726,7 @@ HTML = r"""<!DOCTYPE html>
   <div id="main">
 <header>
   <button class="icon-btn sd-toggle" id="sdToggle" onclick="toggleSidebar()" title="收起/展开侧栏">⟨</button>
-  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span></div>
+  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span> <a href="/monitor" style="font-size:11px;color:#a78bfa;margin-left:6px">🧠 监控</a></div>
   <div class="hdr-right">
     <button class="icon-btn" id="toolsBtn" onclick="toggleTools()">🛠️ 工具</button>
     <button class="icon-btn" onclick="openBrain()">🧠 小脑</button>
