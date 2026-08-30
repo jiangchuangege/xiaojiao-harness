@@ -7,7 +7,7 @@
    "server": "C:/llama/llama-server.exe",
    "gguf": "C:/llama/xiaojiao1.0-4B.gguf",
    "port": 8080,
-   "ctx": 32768,
+   "ctx": 20000,
    "_ctx_note": "模型上下文窗口(token)。越大越能在 Harness 里用长对话，但越占显存；若启动报 CUDA OOM，改小到 16384。",
    "_note": "大模型(GGUF)文件。已用硬链接 xiaojiao1.0-4B.gguf 指向 4B 大模型。想换大脑改这里。"
   },
