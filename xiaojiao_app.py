@@ -2166,7 +2166,7 @@ function savePreset(){const data={name:document.getElementById('eName').value, r
   brain:{engine:document.getElementById('eEngine').value, llama:{ctx:+document.getElementById('eCtx').value||20000}},
   capabilities:{web_search:document.getElementById('eSearch').checked, memory:document.getElementById('eMem').checked, run_tools:document.getElementById('eTools').checked},
   behavior:{temperature:+document.getElementById('eTemp').value||0.7, max_tokens:+document.getElementById('eMax').value||1024}};
-  fetch('/api/presets/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:window._efile,data:data})}).then(r=>r.json()).then(()=>{alert('✅ 预设已保存');closeEdit();loadPresetCards();});}
+  fetch('/api/presets/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:window._efile,data:data})}).then(r=>r.json()).then(()=>{fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:window._efile})}).then(()=>{alert('✅ 已保存并应用此预设(人格已切换)');closeEdit();location.reload();});});}
 function delPreset(file){if(!confirm('确定删除预设 '+file+' 吗？'))return;fetch('/api/presets/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})}).then(r=>r.json()).then(()=>{alert('✅ 已删除');loadPresetCards();}).catch(e=>alert('删除失败：'+e));}
 function createPreset(){fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'我的预设',parent:'default.json'})}).then(r=>r.json()).then(d=>{alert('已创建自定义预设（可到 presets/ 编辑，或选它试试）');loadPresetCards();});}
 function openEnv(){document.getElementById('envBg').style.display='flex';loadEnv();}
