@@ -41,28 +41,39 @@ def _load_workflow(prompt, ckpt):
 
 
 def _refine_prompt(raw):
-    """用小焦大脑把原始描述精炼成电影级英文提示词(主体/场景/光线/镜头/风格)->更快更好。失败则用原样。"""
+    """用小焦大脑把原始描述精炼成电影级提示词。绝不给用户看思考过程——只取正式答案,失败则用原样。"""
     raw = (raw or "").strip()
     if not raw: return raw
     try:
-        import json as _j, requests as _r
+        import json as _j, requests as _r, re as _re
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         cfg = _j.load(open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
         base = (cfg.get("brain", {}).get("api", {}).get("base_url") or "http://127.0.0.1:8080/v1")
         sys_p = ("你是专业电影导演。把用户的视频描述改写成详细、电影级的英文提示词：主体、场景、光线、色调、镜头运动、风格。"
-                 "只输出提示词本身，不要解释、不要负面提示词、不要引号。若用户描述已是英文且详细，直接优化润色。")
+                 "只输出改写后的提示词本身，不要解释、不要思考、不要引号、不要草稿。")
         r = _r.post(base.rstrip("/") + "/chat/completions",
                     json={"model": "xiaojiao1.0-4B",
                           "messages": [{"role": "system", "content": sys_p}, {"role": "user", "content": raw}],
-                          "max_tokens": 600, "temperature": 0.7}, timeout=90)
+                          "max_tokens": 400, "temperature": 0.6, "chat_template_kwargs": {"enable_thinking": False}},
+                    timeout=6)
         if r.status_code == 200:
-            msg = r.json()["choices"][0].get("message", {}); out = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+            msg = r.json()["choices"][0].get("message", {})
+            out = (msg.get("content") or "").strip()
+            if not out:
+                rc = (msg.get("reasoning_content") or "")
+                drafts = _re.findall(r"(?:Draft|Final Prompt|最终提示词|结果|Final)[^\\n]*?[:：]\\s*([^\\n]{8,})", rc)
+                if drafts:
+                    out = drafts[-1].strip()
+                else:
+                    lines = [l.strip() for l in rc.split("\\n") if l.strip() and len(l.strip()) > 8]
+                    out = lines[-1] if lines else ""
             if out:
                 if len(out) > 300: out = out[-300:]
                 return out
     except Exception:
         pass
-    return raw
+    # 模板精炼(秒出,不依赖慢大脑): 加电影级修饰词
+    return raw + ", cinematic, high detail, dramatic lighting, smooth motion, film quality"
 
 
 def _worker(job_id, prompt):
