@@ -74,7 +74,10 @@ def _start_comfy(b):
     root = os.environ.get("XIAOJIAO_COMFY_DIR", r"G:\模型文件\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI")
     py = os.path.join(os.path.dirname(root), "python_embeded", "python.exe")
     try:
-        subprocess.Popen([py, "main.py", "--port", str(b["port"])], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW)
+        args = [py, "main.py", "--port", str(b["port"])]
+        if os.environ.get("XIAOJIAO_KEEP_COMFY") == "1":
+            args.append("--lowvram")
+        subprocess.Popen(args, cwd=root, creationflags=subprocess.CREATE_NO_WINDOW)
         return True
     except Exception:
         return False

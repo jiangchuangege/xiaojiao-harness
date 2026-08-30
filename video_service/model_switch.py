@@ -166,8 +166,10 @@ def start_comfy():
         if os.path.exists(cp):
             py = cp
             break
+    # keep_warm/lowvram: 让 ComfyUI 自动把模型权重放内存, 聊天时自动睡眠(Wan), ComfyUI 进程常驻
+    lowvram = ["--lowvram"] if (_keep_warm() or os.environ.get("XIAOJIAO_KEEP_COMFY")=="1") else []
     _comfy_proc = subprocess.Popen(
-        [py, main_py],
+        [py, main_py, "--port", str(config.COMFY_PORT)] + lowvram,
         cwd=config.COMFY_DIR,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(240):  # 最多等 4 分钟加载
