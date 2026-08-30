@@ -866,7 +866,8 @@ def agent_run(user_input):
                     "凡是要创建文件/文件夹/读写文件，一律用绝对路径（如桌面文件用 %s\\文件名）。" % (os.getcwd(), home, desktop, desktop))
         tool_guidance = "\n[工具用法] 写文件/建网站/代码用 write_file(路径用 Windows 绝对路径, 会自动建目录); 查信息/运行命令用 run_command(PowerShell 语法, 不能用并字连接命令要用分号; 不要用 run_command 去写文件)。\n"
         skills = "\n\n[技能插件] " + "\n\n".join(c for _, c in PLUGIN_SKILLS) if PLUGIN_SKILLS else ""
-        skills = tool_guidance + "\n[铁律] 凡是要帮我做实事(写文件/建网页/运行命令/查资料/列文件/读取/打开)，你必须先调用对应工具，不能只把结果或代码直接打在聊天里。\n" + skills
+        skills = tool_guidance + "\n[铁律] 凡是要帮我做实事(写文件/建网页/运行命令/查资料/列文件/读取/打开)，你必须先调用对应工具，不能只把结果或代码直接打在聊天里。" \
+                 + "\n[代码工作流] 写/改代码请这样：① 先 read_file 看相关文件再动手；② 新增用 write_file，修改用 edit_file 精准替换；③ 改完用 run_command 验证（Python 用 python -c 语法检查、JS 用 node --check、或直接运行看结果）；④ 有报错就读出来修复。不要凭空猜测文件内容。" + skills
         messages = [{"role": "system", "content": SYSTEM_PROMPT + path_ctx + skills}]
         for h in history[-MAX_HISTORY:]:
             messages.append({"role": "user" if h["role"] == "用户" else "assistant",
