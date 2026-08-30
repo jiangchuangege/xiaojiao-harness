@@ -15,7 +15,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import random
 
-LLAMA_API = os.environ.get("LLAMA_API", "http://127.0.0.1:8080/completion")
+LLAMA_API = os.environ.get("LLAMA_API", "http://127.0.0.1:9292/completion")
 TRAIN_POOL_FILE = "training_data_pool.txt"
 MODEL_FILE = "mini_gpt_model.pth"
 VOCAB_FILE = "vocab.pkl"

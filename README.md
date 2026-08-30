@@ -63,7 +63,7 @@ pip install -r requirements.txt
 python start_xiaojiao.py
 ```
 
-自动起大模型(8080) + 网页(5000)，然后打开 `http://127.0.0.1:5000`。
+自动起聊天大脑(llama-swap:9292) + 网页(5000)，然后打开 `http://127.0.0.1:5000`。
 
 > 手把手上手看 [docs/quickstart.md](docs/quickstart.md)。
 
@@ -106,7 +106,7 @@ flowchart TD
         P["插件注册表<br/>设置模块随插件动态出现"]
     end
     subgraph BRAIN["大脑（可插拔）"]
-        B1["本地大模型 (8080)"]
+        B1["聊天大脑 llama-swap (9292)"]
         B2["外接 API"]
     end
     subgraph TOOLS["工具 / 插件生态"]
@@ -447,7 +447,7 @@ flowchart TD
 小焦暴露一个 **OpenAI 兼容接口**（`/v1`），DeepSeek Harness（DSH）可直接把它当**模型**接入，从而用上小焦的人格 + 工具 + 记忆，并在 DSH 里跑它的社区插件。
 
 ### 步骤
-1. **启动小焦**：`python start_xiaojiao.py`（大模型 8080 + Web 5000 + DSH 桥接 5001 一起启动）。
+1. **启动小焦**：`python start_xiaojiao.py`（llama-swap:9292 接管大脑 + Web 5000 + DSH 桥接 5001 一起启动）。
 2. 在 DSH 的 **设置 → 模型** → 添加一个模型提供方：
    - Base URL：`http://127.0.0.1:5000/v1`
    - API Key：留空（本地免鉴权）
@@ -489,7 +489,7 @@ flowchart TD
     A --> M["记忆 recall<br/>xiaojiao_knowledge_memory.json"]
     A --> S["联网 search"]
     A --> C{"选大脑"}
-    C -->|auto/llama| BIG["本地大模型 8080<br/>llama-server / xiaojiao1.0-4B.gguf"]
+    C -->|auto/llama| BIG["聊天大脑 llama-swap:9292<br/>llama-server / xiaojiao1.0-4B.gguf"]
     C -->|xiaojiao| SMALL["自研小模型(小脑)<br/>xiaojiao_harness.py → mini_gpt_model.pth<br/>检索用向量库"]
     BIG --> TOOLS["工具: run_command/write_file/open_app<br/>+ 插件(py/js/api/skill)"]
     A --> TOOLS

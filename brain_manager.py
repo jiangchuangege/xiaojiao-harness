@@ -9,7 +9,7 @@ import os, json, threading, time, subprocess
 # 新增大脑只需在 BRAINS 加一项 + 实现它的 _sleep/_wake(或默认 keep-alive)
 BRAINS = {
     "chat": {   # 聊天大脑：llama.cpp (llama-server)
-        "name": "聊天大脑 (Qwen 4B)", "port": 8080,
+        "name": "聊天大脑 (Qwen 4B, llama-swap)", "port": 9292,
         "type": "llama", "vram_gb": 3.5, "state": "SLEEP", "proc": "/".join(["C:/llama/llama-server.exe"]),
     },
     "video": {  # 视频大脑：ComfyUI + Wan2.1
