@@ -21,6 +21,8 @@ import torch
 # ================== 配置（读取「操控文件」xiaojiao_control.json） ==================
 # 你想让小焦成为什么类型的模型、用什么大脑、开哪些工具，全部由这个文件决定。
 def _load_control():
+    import os as _os
+    _CFG = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "xiaojiao_control.json")
     c = {"model_name": "xiaojiao1.0-4B", "web_port": 5000,
          "brain": {"engine": "auto",
                    "api": {"base_url": os.environ.get("LLM_BASE_URL", "http://127.0.0.1:8080/v1"),
@@ -882,7 +884,7 @@ def api_presets_save():
     # 若保存的是当前预设 → 热更新
     if old.get("name") == CONTROL.get("preset"):
         _deep_merge(CONTROL, old)
-        json.dump(CONTROL, open("xiaojiao_control.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        json.dump(CONTROL, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         reload_control()
     return jsonify({"ok": True, "file": file})
 
@@ -904,7 +906,7 @@ def api_presets_load():
     # 合并到 CONTROL(深合并, 保留未在预设里的配置)
     _deep_merge(CONTROL, preset)
     CONTROL["preset"] = preset.get("name", file[:-5])
-    json.dump(CONTROL, open("xiaojiao_control.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    json.dump(CONTROL, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     reload_control()  # 热更新内存配置, 无需重启
     return jsonify({"ok": True, "preset": CONTROL.get("preset"), "role": (CONTROL.get("role") or "")[:60]})
 
@@ -1317,9 +1319,9 @@ def api_persona():
     if not role:
         return jsonify({"ok": False, "error": "人格不能为空"}), 400
     try:
-        c = json.loads(open("xiaojiao_control.json", encoding="utf-8").read())
+        c = json.loads(open(_CFG, encoding="utf-8").read())
         c["role"] = role
-        json.dump(c, open("xiaojiao_control.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        json.dump(c, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
         reload_control()
         return jsonify({"ok": True})
     except Exception as e:
@@ -1340,7 +1342,7 @@ def api_access():
         cap = dict(CONTROL.get("capabilities", {})); cap["full_access"] = FULL_ACCESS
         control = json.loads(open("xiaojiao_control.json", encoding="utf-8").read())
         control["capabilities"] = cap
-        json.dump(control, open("xiaojiao_control.json", "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        json.dump(control, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     except Exception:
         pass
     return jsonify({"ok": True, "full_access": FULL_ACCESS})
@@ -1357,7 +1359,7 @@ def api_tools_toggle():
             saved = {"model_name": MODEL_NAME, "brain": CONTROL.get("brain", {}),
                      "role": SYSTEM_PROMPT, "capabilities": cap, "behavior": BEH,
                      "models": _get_models()}
-            json.dump(saved, open("xiaojiao_control.json", "w", encoding="utf-8"),
+            json.dump(saved, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"),
                       ensure_ascii=False, indent=2)
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
@@ -1376,7 +1378,7 @@ def _save_control(brain=None, models=None):
              "brain": brain if brain else CONTROL.get("brain", {}),
              "role": SYSTEM_PROMPT, "capabilities": CAP, "behavior": BEH,
              "models": models if models is not None else _get_models(), "dsh": CONTROL.get("dsh", {})}
-    json.dump(saved, open("xiaojiao_control.json", "w", encoding="utf-8"),
+    json.dump(saved, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=2)
     reload_control()
 
@@ -1592,7 +1594,7 @@ def api_settings_post():
         "_engine": cur.get("_engine", ""),
     }
     try:
-        json.dump(saved, open("xiaojiao_control.json", "w", encoding="utf-8"),
+        json.dump(saved, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"),
                   ensure_ascii=False, indent=2)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
