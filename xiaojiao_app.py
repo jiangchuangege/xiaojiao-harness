@@ -888,7 +888,7 @@ def agent_run(user_input):
         tool_guidance = "\n[工具用法] 写文件/建网站/代码用 write_file(路径用 Windows 绝对路径, 会自动建目录); 查信息/运行命令用 run_command(PowerShell 语法, 不能用并字连接命令要用分号; 不要用 run_command 去写文件)。\n"
         skills = "\n\n[技能插件] " + "\n\n".join(c for _, c in PLUGIN_SKILLS) if PLUGIN_SKILLS else ""
         skills = tool_guidance + "\n[铁律] 凡是要帮我做实事(写文件/建网页/运行命令/查资料/列文件/读取/打开)，你必须先调用对应工具，不能只把结果或代码直接打在聊天里。" \
-                 + "\n[简洁原则] 回答要极简：只给结果/代码/结论，不要寒暄、不要"好的我来帮你"、不要复述问题、不要多余解释。写代码只输出代码块。" \
+                 + "\n[简洁原则] 回答要极简：只给结果/代码/结论，不要寒暄、不要说【好的我来帮你】、不要复述问题、不要多余解释。写代码只输出代码块。" \
                  + "\n[代码工作流] 写/改代码请这样：① 先 read_file 看相关文件再动手；② 新增用 write_file，修改用 edit_file 精准替换；③ 改完用 run_command 验证（Python 用 python -c 语法检查、JS 用 node --check、或直接运行看结果）；④ 有报错就读出来修复。不要凭空猜测文件内容。" + skills
         messages = [{"role": "system", "content": SYSTEM_PROMPT + path_ctx + skills}]
         for h in history[-MAX_HISTORY:]:
