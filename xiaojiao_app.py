@@ -1905,6 +1905,21 @@ HTML = r"""<!DOCTYPE html>
     <div class="m-actions"><button onclick="closeSearch()">取消</button><button class="primary" onclick="doSearch()">确定</button></div>
   </div>
 </div>
+<div id="editBg" class="modal-bg" style="display:none">
+  <div class="modal modal-env">
+    <h3>✏️ 编辑预设</h3>
+    <label style="font-size:12px;color:#8b93a3">名称</label><input id="eName" style="width:100%;padding:8px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;margin:4px 0 8px">
+    <label style="font-size:12px;color:#8b93a3">人格 / 人设(role)</label><textarea id="eRole" rows="3" style="width:100%;padding:8px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;resize:vertical;margin:4px 0 8px"></textarea>
+    <label style="font-size:12px;color:#8b93a3">大脑引擎</label>
+    <select id="eEngine" style="width:100%;padding:8px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;margin:4px 0 8px"><option value="auto">auto(自动)</option><option value="llama">llama(本地)</option><option value="api">api(外接)</option><option value="xiaojiao">xiaojiao(自建)</option></select>
+    <label style="font-size:12px;color:#8b93a3">上下文 ctx</label><input id="eCtx" type="number" style="width:100%;padding:8px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;margin:4px 0 8px">
+    <label style="font-size:12px;color:#8b93a3">工具开关</label>
+    <div style="display:flex;gap:16px;font-size:13px;margin:6px 0"><label><input type="checkbox" id="eSearch"> 联网搜索</label><label><input type="checkbox" id="eMem"> 记忆</label><label><input type="checkbox" id="eTools"> 工具/代码执行</label></div>
+    <label style="font-size:12px;color:#8b93a3">温度 temperature</label><input id="eTemp" type="number" step="0.1" style="width:100%;padding:8px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;margin:4px 0 8px">
+    <label style="font-size:12px;color:#8b93a3">max_tokens</label><input id="eMax" type="number" style="width:100%;padding:8px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;margin:4px 0 8px">
+    <div class="m-actions"><button onclick="closeEdit()">取消</button><button class="primary" onclick="savePreset()">💾 保存预设</button></div>
+  </div>
+</div>
 <div id="videoBg" class="modal-bg" style="display:none">
   <div class="modal modal-video">
     <h3>🎬 生成视频</h3>
