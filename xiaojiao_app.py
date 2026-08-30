@@ -455,6 +455,9 @@ def llm_online():
     host = raw.split("//")[-1].split("/")[0]  # host:port
     if not host:
         return False
+    # 外部 API(engine=api)已配置 -> 直接视为在线(调用端处理真实错误, 不误判未连接)
+    if BRAIN_ENGINE == "api":
+        return True
     # 1) /health
     try:
         if requests.get("http://" + host + "/health", timeout=3).status_code == 200:
