@@ -8,7 +8,7 @@ models:
   coder:
     cmd: C:/llama/llama-server.exe --port ${PORT} --model C:/llama/Qwen3-Coder-7B-Instruct-Q4_K_M.gguf -c 20000
     ttl: 0
-    useModelName: qwen3-coder-7b
+    useModelName: qwen3-coder-8b
   # 未来可加更多大脑(填进 models 即可被调度):
   # deepseek:
   #   cmd: ... --port ${PORT} --model <deepseek.gguf>
