@@ -54,13 +54,13 @@
 - **新增大脑**：在 `BRAINS` 加一项即可被调度（图像/推理/任意模型都兼容）。
 
 ## 真正达到「秒级」需要各服务支持权重 offload/onload
-框架本身已就绪，实际的速度取决于每个服务的 sleep/wake 能力：
+框架 + 各大脑的睡眠/唤醒**都已实现**：
 
 | 大脑类型 | sleep/wake 实现 | 现状 |
 |---|---|---|
-| 图像/视频（torch：SD3/Wan） | `model.to('cuda'/'cpu')` + `torch.cuda.empty_cache()` | ✅ 可实现 ~1-2s |
-| LLM（llama.cpp） | 需 **llama-swap**（多个 llama 进程常驻、秒切）或 vLLM sleep 模式 | ⏳ 下一步接入 |
-| 未来 DeepSeek/vLLM | vLLM sleep 模式 | ⏳ 可复用同一框架 |
+| 视频/图像（ComfyUI+Wan） | `keep_warm` + `--lowvram`（权重放 RAM、按需加载），ComfyUI 进程常驻 | ✅ 已接入：Wan 睡眠/秒醒、进程不关 |
+| LLM（llama.cpp / Qwen4B） | **llama-swap(9292)**：进程常驻，切换=卸载/加载模型（秒级，不再杀进程重启） | ✅ **已接入**（聊天大脑走 llama-swap，`stop_brain` 用 unload API） |
+| 未来 DeepSeek/vLLM | vLLM sleep 模式 | ⏳ 未来扩展（框架已预留，加进 `BRAINS` 即可） |
 
 **当前视频流程已改为用 `brain_manager` 调度**（`video_service` 切换走 `switch_to`）。
 
