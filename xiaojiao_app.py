@@ -918,7 +918,7 @@ def agent_run(user_input):
     # —— 注意：已停用自建小模型的语言生成（只会胡诌），绝不用于说话 ——
 
     # 4. 记忆自学习沉淀
-    learned = [c for _, c in info[:3]]
+    learned = [c for _, _, c in info[:3]]
     if learned and CAP.get("memory", True):
         remember(user_input, learned)
 
@@ -1316,7 +1316,7 @@ def api_chat():
         "tools_on": bool(CAP.get("run_tools", True)),
         "session_id": get_current_session()[0].get("id"),
         "log_id": log_id,
-        "sources": [{"title": t, "content": c} for t, c in info],
+        "sources": [{"title": t, "content": c, "url": u} for t, u, c in info],
         "history": _hist_json(),
     })
 
