@@ -1560,6 +1560,60 @@ def api_model_select():
     return jsonify({"ok": False, "error": "模型不存在"}), 404
 
 
+@app.route("/api/model/addlocal", methods=["POST"])
+def api_model_addlocal():
+    """一键添加本地模型(GGUF)：自动写 llama-swap.yaml + brain_manager + 下拉, 重启llama-swap。
+    参数: name=显示名, gguf=模型文件绝对路径, ctx=上下文(默认20000)。"""
+    import subprocess as _sp
+    d = request.get_json(force=True, silent=True) or {}
+    name = (d.get("name") or "").strip()
+    gguf = (d.get("gguf") or "").strip()
+    if not name or not gguf:
+        return jsonify({"ok": False, "error": "需要 name 和 gguf 路径"}), 400
+    if not os.path.exists(gguf):
+        return jsonify({"ok": False, "error": "模型文件不存在: " + gguf}), 400
+    ctx = int(d.get("ctx", 20000))
+    mid = name.lower().replace(" ", "-")
+    root = os.path.dirname(os.path.abspath(__file__))
+    # ① llama-swap.yaml 加模型
+    yp = os.path.join(root, "llama-swap.yaml")
+    ys = open(yp, encoding="utf-8").read()
+    if ("  " + mid + ":") not in ys:
+        gg = gguf.replace("\", "/")
+        ys = ys.rstrip() + ("
+  %s:
+    cmd: "C:/llama/llama-server.exe --port ${PORT} --model %s -c %d --reasoning off"
+    ttl: 0
+    useModelName: %s
+" % (mid, gg, ctx, mid))
+        open(yp, "w", encoding="utf-8").write(ys)
+    # ② brain_manager BRAINS 加
+    bp = os.path.join(root, "brain_manager.py")
+    bs = open(bp, encoding="utf-8").read()
+    if '"%s"' % mid not in bs:
+        bs = bs.replace("    # 未来扩展(示例, 加进 BRAINS 即可被调度):",
+                        '    "%s": {  # 新增: %s
+        "name": "%s", "port": 9292,
+        "type": "llama", "vram_gb": 5.0, "state": "OFF",
+    },
+    # 未来扩展(示例, 加进 BRAINS 即可被调度):' % (mid, name, name), 1)
+        open(bp, "w", encoding="utf-8").write(bs)
+    # ③ 下拉模型加
+    CONTROL.setdefault("models", [])
+    if not any(m.get("model") == mid for m in CONTROL["models"]):
+        CONTROL["models"].append({"name": name, "engine": "llama",
+                                  "base_url": "http://127.0.0.1:9292/v1", "api_key": "", "model": mid})
+        json.dump(CONTROL, open(os.path.join(root, "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    # ④ 重启 llama-swap
+    try:
+        _sp.Popen(["powershell", "-NoProfile", "-Command",
+                   "Get-Process llama-swap -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1; "
+                   "Start-Process 'G:/模型文件/大脑秒计切换/llama-swap_251_windows_amd64/llama-swap.exe' -ArgumentList '-config "%s" -listen 127.0.0.1:9292' -WindowStyle Hidden" % yp])
+    except Exception:
+        pass
+    return jsonify({"ok": True, "model_id": mid, "name": name, "note": "llama-swap 正在重启, 约10秒后可用"})
+
+
 @app.route("/api/model/add", methods=["POST"])
 def api_model_add():
     """添加一个模型（对接本地模型/外接 API）。同名的覆盖。"""
