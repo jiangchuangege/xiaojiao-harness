@@ -14,7 +14,7 @@
   "api": {
    "base_url": "http://127.0.0.1:9292/v1",
    "api_key": "",
-   "model": "coder"
+   "model": "xiaojiao"
   },
   "keep_warm": false,
   "llama_swap_port": 9292
@@ -48,9 +48,9 @@
   {
    "name": "xiaojiao1.0-4B (本地大模型)",
    "engine": "llama",
-   "base_url": "http://127.0.0.1:8080/v1",
+   "base_url": "http://127.0.0.1:9292/v1",
    "api_key": "",
-   "model": "xiaojiao1.0-4B"
+   "model": "xiaojiao"
   },
   {
    "name": "deepseek",
