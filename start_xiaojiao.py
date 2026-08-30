@@ -102,6 +102,31 @@ def start_dsh_bridge():
     print("ℹ️ DSH 桥接已在后台启动（若稍后未就绪，检查 deepseek-harness-sdk 是否安装）。")
     return proc
 
+def start_llama_swap():
+    """自动启动 llama-swap(多大脑热切换管理器)。独立端口9292, 不冲突直接大脑8080。"""
+    exe = r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe"
+    cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama-swap.yaml")
+    if not (os.path.exists(exe) and os.path.exists(cfg)):
+        print("  [llama-swap] 未找到(exe或配置)，跳过")
+        return None
+    try:
+        import socket
+        s = socket.socket(); s.settimeout(0.8)
+        try:
+            s.connect(("127.0.0.1", 9292)); s.close()
+            print("  [llama-swap] 已在运行(9292)"); return None
+        except Exception:
+            pass
+        finally:
+            s.close()
+        proc = subprocess.Popen([exe, "--config", cfg, "--listen", "127.0.0.1:9292"],
+                                cwd=os.path.dirname(exe), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("  [llama-swap] 已启动(9292) —— 多大脑秒级切换管理")
+        return proc
+    except Exception as e:
+        print("  [llama-swap] 启动失败: %s" % e); return None
+
+
 def main():
     print("=" * 50)
     print("  小焦 · XiaoJiao (含 DSH 插件生态)")
@@ -116,6 +141,9 @@ def main():
     llama_proc = None
     if ENGINE in ("auto", "llama"):
         llama_proc = start_llama_brain()
+
+    # 2b. 自动拉起 llama-swap(多大脑秒级切换, 独立9292端口)
+    llama_swap_proc = start_llama_swap()
 
     # 3. 确定 Web 端口
     port = 5000
