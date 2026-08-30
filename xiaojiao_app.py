@@ -543,6 +543,9 @@ def run_tool(name, args, force=False):
             timeout = int(args.get("timeout", 30))
             if os.name == "nt":
                 # PowerShell 才能运行 New-Item 等 cmdlet；强制 UTF-8 输出避免中文乱码
+                # 模型常用 bash 语法(&& / ||) -> 转成 PowerShell 顺序执行 ;
+                import re as _re
+                cmd = _re.sub(r"&&", ";", cmd); cmd = _re.sub(r"\|\|", ";", cmd)
                 cmd = '[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8;' + cmd
                 res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd],
                                      capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
@@ -658,7 +661,9 @@ def llm_chat_tools(messages, max_rounds=6):
             m.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
     # 循环到上限但已执行工具 -> 用工具结果生成总结(不让用户看到空/报错)
     if tool_trace:
-        last = tool_trace[-1]
+        # 挑一个"成功"的结果最后展示(跳过 路径不存在/失败/Error)
+        ok = [t for t in tool_trace if not any(k in (t.get("result") or "") for k in ("路径不存在", "失败", "Error", "error", "不（可用", "not found", "不存在"))]
+        last = ok[-1] if ok else tool_trace[-1]
         res = (last.get("result") or "")[:160]
         return ("✅ 已完成「%s」%s" % (last.get("tool"), ("：" + res) if res else "")), tool_trace
     return None, tool_trace
