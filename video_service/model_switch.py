@@ -21,6 +21,44 @@ def _keep_warm():
         return False
 
 
+def _llama_swap_url():
+    """llama-swap 管理接口地址(多大脑秒级切换)。"""
+    import os as _o
+    try:
+        root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+        import json as _j
+        d = _j.load(open(_o.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
+        p_ = d.get("brain", {}).get("llama_swap_port", 9292)
+        return "http://127.0.0.1:%d" % p_
+    except Exception:
+        return "http://127.0.0.1:9292"
+
+
+def _pid_on_port(port):
+    try:
+        import subprocess as _sp
+        out = _sp.run(["netstat", "-ano"], capture_output=True, text=True, timeout=10).stdout
+        for line in out.splitlines():
+            if ":%d " % port in line and "LISTENING" in line:
+                try:
+                    return int(line.strip().split()[-1])
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return None
+
+
+def _llama_swap_unload(model_id="xiaojiao"):
+    """让 llama-swap 卸载一个模型(释放显存,进程常驻)。"""
+    import requests as _r
+    try:
+        r = _r.post(_llama_swap_url() + "/api/models/unload/" + model_id, timeout=15)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def get_state():
     # 无锁快照：直接读 dict 副本，绝不等模型切换锁(避免状态读取被长阻塞操作堵住)
     return dict(_state)
@@ -60,12 +98,19 @@ def _kill_pid(pid):
 
 
 def stop_brain():
-    """卸载大脑(8080 llama-server)，释放显存。"""
+    """卸载大脑(腾显存)。优先走 llama-swap unload(秒级,进程常驻)；否则兜底杀进程。"""
     _set("stop_brain", "正在卸载大脑，腾出显存…")
+    # ① 用 llama-swap 卸载(常驻进程,秒级)
+    if _llama_swap_unload("xiaojiao"):
+        # 等上游端口释放
+        for _ in range(8):
+            time.sleep(0.5)
+        _set("idle", "大脑已卸载(llama-swap)")
+        return
+    # ② 兜底：直接杀 8080 llama-server
     pid = _pid_on_port(config.BRAIN_PORT)
     if pid:
         _kill_pid(pid)
-    # 兜底：再等 3 秒确认端口释放
     for _ in range(6):
         if _pid_on_port(config.BRAIN_PORT) is None:
             break
@@ -73,12 +118,24 @@ def stop_brain():
 
 
 def start_brain():
-    """重新加载大脑(llama-server)，等就绪。失败不阻断（会给出提示）。"""
+    """恢复聊天大脑。走 llama-swap(常驻,自动加载)；llama-swap 不在则直接起 llama-server 兜底。"""
     _set("start_brain", "正在恢复大脑…")
+    import requests as _r
+    swap = _llama_swap_url()
+    try:
+        if _r.get(swap + "/health", timeout=5).status_code == 200:
+            # llama-swap 在 -> 触发一次请求让 xiaojiao 模型自动加载(首个请求会加载)
+            server, gguf, port, ctx = config.brain_llama()
+            _r.get(swap + "/api/profiles", timeout=10)
+            _set("idle", "大脑已恢复(llama-swap)")
+            return
+    except Exception:
+        pass
+    # 兜底：直接起 llama-server
     try:
         server, gguf, port, ctx = config.brain_llama()
         if not (server and gguf and os.path.exists(server) and os.path.exists(gguf)):
-            _set("idle", "大脑恢复：模型路径不存在，请检查配置", error="brain_path")
+            _set("idle", "大脑恢复：模型路径不存在", error="brain_path")
             return
         subprocess.Popen([server, "-m", gguf, "--port", str(port), "-c", str(ctx)],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -86,7 +143,7 @@ def start_brain():
             if _pid_on_port(port):
                 break
             time.sleep(1)
-        _set("idle", "大脑已恢复")
+        _set("idle", "大脑已恢复(直接启动)")
     except Exception as e:
         _set("idle", "大脑恢复失败: %s" % e, error=str(e))
 
