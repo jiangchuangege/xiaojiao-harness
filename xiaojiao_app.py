@@ -2135,6 +2135,16 @@ HTML = r"""<!DOCTYPE html>
     <div class="m-actions"><button onclick="closeVideo()">取消</button><button class="primary" onclick="startVideo()">✨ 精炼提示词</button></div>
   </div>
 </div>
+<div id="addLocalBg" class="modal-bg" style="display:none">
+  <div class="modal modal-env">
+    <h3>🗄️ 一键添加本地模型</h3>
+    <label>模型显示名</label><input id="lm_name" placeholder="如 数学大脑">
+    <label>GGUF 文件绝对路径</label><input id="lm_gguf" placeholder="如 G:/模型文件/xxx.gguf">
+    <label>上下文 ctx（默认 20000）</label><input id="lm_ctx" type="number" value="20000">
+    <div class="m-actions"><button onclick="closeAddLocal()">取消</button><button class="primary" onclick="saveAddLocal()">🚀 一键添加</button></div>
+    <div class="think" id="lm_msg" style="margin-top:12px"></div>
+  </div>
+</div>
 <div id="envBg" class="modal-bg" style="display:none">
   <div class="modal modal-env">
     <h3>🛠️ 环境检查（安装向导）</h3>
