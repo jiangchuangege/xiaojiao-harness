@@ -298,7 +298,8 @@ def web_search(query, num=6):
     """免密钥 Bing/Sogou 中文搜索，返回 [(标题, 内容)]。"""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     engines = [("https://cn.bing.com/search?q=", r'<li class="b_algo"[^>]*>(.*?)</li>'),
-               ("https://www.sogou.com/web?query=", r'<div class="vrwrap"[^>]*>(.*?)</div>')]
+               ("https://www.sogou.com/web?query=", r'<div class="vrwrap"[^>]*>(.*?)</div>'),
+               ("https://html.duckduckgo.com/html/?q=", r'<div class="result[^"]*"[^>]*>(.*?)</div>')]
     out, seen = [], set()
     for base, block_re in engines:
         try:
@@ -307,6 +308,12 @@ def web_search(query, num=6):
                 continue
             for block in re.findall(block_re, r.text, re.S):
                 h2 = re.search(r'<h2[^>]*>\s*<a[^>]*>(.*?)</a>', block, re.S)
+                url = ""
+                am = re.search(r'<a[^>]*href=["']([^"']+)["']', block, re.S)
+                if am:
+                    u = am.group(1)
+                    if u.startswith("http") and not u.startswith("https://cn.bing.com/images"):
+                        url = u
                 if not h2:
                     h2 = re.search(r'<a[^>]*>(.*?)</a>', block, re.S)
                 title = _clean_html(h2.group(1)) if h2 else ""
@@ -318,7 +325,7 @@ def web_search(query, num=6):
                 title = title or content[:24]
                 if len(content) > 30 and content[:40] not in seen:
                     seen.add(content[:40])
-                    out.append((title, content))
+                    out.append((title, url, content))
                 if len(out) >= num:
                     break
         except Exception:
@@ -569,7 +576,7 @@ def run_tool(name, args, force=False):
             if not q:
                 return "缺少查询词"
             res = web_search(q, num=n)
-            return "\n".join("%s：%s" % (t, c) for t, c in res[:n]) or "(无结果)"
+            return "\n".join("%s%s：%s" % (t, (" [%s]" % u) if u else "", c) for t, u, c in res[:n]) or "(无结果)"
         if name == "run_command":
             cmd = args.get("command", "")
             timeout = int(args.get("timeout", 30))
@@ -856,7 +863,7 @@ def agent_run(user_input):
     info = []
     if CAP.get("web_search", True):
         info = web_search(user_input, num=5)
-    web_text = "\n".join(f"{t}：{c}" for t, c in info[:4]) if info else ""
+    web_text = "\n".join((f"{t}：{c}" if len(t)==3 else f"{t}：{c}") for t, c in [ (x[0],x[2]) for x in info[:4] ]) if info else ""
 
     # 3. 大脑回答：遵循操控文件的 brain.engine
     answer = None
