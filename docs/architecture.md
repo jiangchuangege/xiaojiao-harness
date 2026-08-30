@@ -158,11 +158,11 @@ flowchart LR
     V -->|1 卸载大脑| STOP["llama-swap 卸载模型(9292, 秒级)"]
     V -->|2 启动| COMFY["ComfyUI(8188)<br/>+ Wan2.1-1.3B-FP8"]
     COMFY -->|3 生成 480p| OUT["videos/*.mp4"]
-    V -->|4 温存15分钟/闲置自动冷| RESTORE["切回聊天则释放ComfyUI, llama-swap 加载大脑(9292)"]
+    V -->|4 温存留内存/切第三脑或闲置超时清| RESTORE["聊天上显卡, 视频留内存(llama-swap 加载大脑9292)"]
     A -->|5 恢复后继续对话| A
 ```
 
-**关键**：大脑(LLM) 与 视频(扩散) 不同时占显存——`video_service/model_switch.py` 负责：卸大脑→起 ComfyUI→生成→停 ComfyUI→恢复大脑。前端显示进度条（后端轮询 ComfyUI `/progress`），状态无锁读取、刷新/多标签不丢进度。
+**关键**：大脑(LLM) 与 视频(扩散) 不同时占显存——`video_service/model_switch.py` 负责：卸大脑→起 ComfyUI→生成→**温存留内存**（聊天上显卡时不杀它）→切第三个大脑或闲置超15分钟才清。前端显示进度条（后端轮询 ComfyUI `/progress`），状态无锁读取、刷新/多标签不丢进度。
 
 > 详见 [video.md](video.md)。
 
