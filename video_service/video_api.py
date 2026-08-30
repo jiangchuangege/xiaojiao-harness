@@ -61,7 +61,10 @@ def _refine_prompt(raw, save=True):
         try:
             r = V.search("用户: " + raw, k=1, threshold=0.35)
             if r["hit"] and r["best"][1]:
-                return r["best"][1]
+                best = r["best"][1]
+                if "-> 精炼: " in best:
+                    best = best.split("-> 精炼: ", 1)[1]
+                return best
         except Exception:
             pass
     try:
