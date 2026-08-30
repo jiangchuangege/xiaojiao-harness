@@ -26,6 +26,29 @@ def _log(action, target, note=""):
         del _LOGS[60:]
 
 
+def _gpu_procs():
+    """nvidia-smi 读每个 GPU 进程的真实显存, 按进程名归属(chat=llama, video=python/ComfyUI)。"""
+    import re
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory,process_name", "--format=csv,noheader,nounits"],
+                           capture_output=True, text=True, timeout=6)
+        if r.returncode != 0:
+            return {}
+        procs = {}
+        for line in r.stdout.strip().splitlines():
+            parts = [x.strip() for x in line.split(",")]
+            if len(parts) < 3:
+                continue
+            name = parts[2].lower(); mb = int(parts[1] or 0)
+            if "llama" in name or "server" in name:
+                procs["chat"] = procs.get("chat", 0) + mb
+            elif "python" in name or "comfy" in name:
+                procs["video"] = procs.get("video", 0) + mb
+        return procs
+    except Exception:
+        return {}
+
+
 def _nvidia():
     try:
         r = subprocess.run(["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=6)
@@ -99,8 +122,16 @@ def _card(key, b):
         C = _comfy(); status = C["state"]; task = "ComfyUI 队列 %s" % C["running"]; extra = "已挂内存" if status == "温存" else "未加载"
     if status == "RUN":
         status = "运行中"
+    est = b.get("vram_gb", 0)
+    # 视频温存/空闲=泡内存, 不占显存 -> 显示 ~0; 运行中才占
+    if key == "video" and status in ("温存", "空闲"):
+        est = 0.0
+    # 聊天大脑真实占用(Qwen 4B + 上下文) ~6G, 不是 3.5G
+    if key == "chat" and est < 6.0:
+        est = 6.0
     return {"key": key, "name": b.get("name", key), "type": b.get("type", ""), "port": b.get("port", ""),
-            "state": status, "task": task, "extra": extra, "vram_gb": b.get("vram_gb", 0),
+            "state": status, "task": task, "extra": extra,
+            "vram_gb": est, "vram_est": b.get("vram_gb", 0),
             "conf": conf, "log": _LOGS[:8]}
 
 

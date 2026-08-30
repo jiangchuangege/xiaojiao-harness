@@ -95,7 +95,7 @@ function render(d){
       `<div class="card"><div class="n">${(d.vram_used/1024).toFixed(1)}G</div><div class="t">显存占用</div></div>`;
     document.getElementById('brains').innerHTML=(d.brains||[]).map(b=>
       `<div class="brain"><div class="top"><div><div class="nm">${esc(b.name)}</div><div class="ty">${esc(b.type)} · 端口${b.port||'-'} · ${esc(b.extra||'')}</div></div><span class="st ${stC(b.state)}">${esc(b.state)}</span></div>
-       <div class="meta"><span>显存 <b>${b.vram_gb}G</b></span><span>任务 <b>${esc(b.task||'—')}</b></span></div>
+       <div class="meta"><span>显存 <b>${b.vram_real>0?b.vram_gb+'G(实际)':b.vram_est+'G(估)'}</b></span><span>任务 <b>${esc(b.task||'—')}</b></span></div>
        <div class="conf"><div class="c"><span>keep_warm(常驻)</span><span class="sw ${b.conf.keep_warm?'on':''}" onclick="tune('${b.key}','keep_warm',!${b.conf.keep_warm})"></span></div>
          <div class="c"><span>卸载优先级</span><input type="range" min="1" max="10" value="${b.conf.priority||5}" onchange="tune('${b.key}','priority',this.value)"><span>${b.conf.priority||5}</span></div>
          <div class="c"><span>挂载内存</span><span class="sw ${b.conf.mem_pinned?'on':''}" onclick="tune('${b.key}','mem_pinned',!${b.conf.mem_pinned})"></span></div></div>
