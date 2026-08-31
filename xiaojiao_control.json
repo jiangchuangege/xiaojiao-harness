@@ -67,5 +67,7 @@
    "model": "coder"
   }
  ],
- "dsh": {}
+ "dsh": {
+  "enabled": true
+ }
 }

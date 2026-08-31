@@ -42,6 +42,8 @@ def _load_control():
     return c
 
 CONTROL = _load_control()
+if isinstance(CONTROL, dict):
+    CONTROL.setdefault("dsh", {}).setdefault("enabled", True)  # DSH 桥接永远默认开(防静默翻false)
 
 MODEL_NAME = CONTROL.get("model_name", "xiaojiao1.0-4B")
 BRAIN = CONTROL.get("brain", {})
@@ -67,6 +69,7 @@ def reload_control():
     global CONTROL, MODEL_NAME, BRAIN_ENGINE, LLM_BASE, LLM_KEY, LLM_MODEL
     global SYSTEM_PROMPT, CAP, BEH, MAX_HISTORY, TEMPERATURE, MAX_TOKENS
     CONTROL = _load_control()
+    CONTROL.setdefault("dsh", {}).setdefault("enabled", True)
     MODEL_NAME = CONTROL.get("model_name", "xiaojiao1.0-4B")
     BRAIN = CONTROL.get("brain", {})
     BRAIN_ENGINE = BRAIN.get("engine", "auto")
