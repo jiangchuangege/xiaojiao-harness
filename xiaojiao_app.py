@@ -233,6 +233,39 @@ def run_plugin(name, params):
 _TOOL2PLUGIN = {}   # 工具名 -> 插件模块名
 
 
+_COST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cost_daily.json")
+_CLOUD_BASELINE = 0.000008  # 全云端基线: 按 deepseek-chat 入0.002/出0.008 每token约合
+_CLOUD_IN, _CLOUD_OUT = 0.002, 0.008  # 元/1K token (deepseek-chat 参考价)
+
+
+def _record_usage(usage, model=""):
+    """记录一次调用的 token 用量(本地=免费, 云端=计费)。写入当日成本文件。"""
+    try:
+        u = usage or {}
+        pt = int(u.get("prompt_tokens") or 0)
+        ct = int(u.get("completion_tokens") or 0)
+        if not pt and not ct:
+            return
+        today = datetime.now().strftime("%Y-%m-%d")
+        is_cloud = ("api." in LLM_BASE or "deepseek" in LLM_BASE.lower() or "openai" in LLM_BASE.lower())
+        d = {}
+        if os.path.exists(_COST_FILE):
+            try:
+                d = json.load(open(_COST_FILE, encoding="utf-8"))
+            except Exception:
+                d = {}
+        day = d.setdefault(today, {"calls": 0, "local_tokens": 0, "cloud_tokens": 0, "cost": 0.0})
+        day["calls"] += 1
+        if is_cloud:
+            day["cloud_tokens"] += pt + ct
+            day["cost"] += (pt / 1000.0) * _CLOUD_IN + (ct / 1000.0) * _CLOUD_OUT
+        else:
+            day["local_tokens"] += pt + ct
+        json.dump(d, open(_COST_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
 def _build_tools():
     """把内置工具 + 已启用的插件工具合并成给模型的功能列表。"""
     global _TOOL2PLUGIN
@@ -731,6 +764,10 @@ def llm_chat_tools(messages, max_rounds=6):
                 if r.status_code != 200:
                     return None, tool_trace
             msg = r.json()["choices"][0]["message"]
+            try:
+                _record_usage(r.json().get("usage"), LLM_MODEL)
+            except Exception:
+                pass
         except Exception:
             return None, tool_trace
         tool_calls = msg.get("tool_calls")
@@ -965,6 +1002,81 @@ def _list_preset_files():
     if not os.path.isdir(_PRESETS_DIR):
         return []
     return sorted([f for f in os.listdir(_PRESETS_DIR) if f.endswith(".json")])
+
+
+@app.route("/pet")
+def api_pet():
+    """桌面贾维斯宠物页(MVP): J.A.R.V.I.S. 全息核心 + 语音气泡 + 与小焦对话。"""
+    return render_template_string(PET_HTML)
+
+
+PET_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
+<title>⚡ J.A.R.V.I.S. · 小焦</title><style>
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% 85%, #0a1a33 0%, transparent 60%);font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none;color:#7fd4ff}
+#stage{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);text-align:center;cursor:pointer;z-index:9}
+.bubble{position:relative;background:rgba(8,20,40,.9);border:1px solid #2a6f9c;border-radius:12px;padding:10px 14px;color:#cfeaff;font-size:13px;max-width:300px;margin:0 auto 10px;box-shadow:0 0 24px #2a6f9c66,inset 0 0 18px #0a2a4a55;min-height:20px;white-space:pre-wrap;backdrop-filter:blur(4px)}
+.bubble:after{content:'';position:absolute;bottom:-8px;left:50%;transform:translateX(-50%) rotate(45deg);width:14px;height:14px;background:#0a1830;border-right:1px solid #2a6f9c;border-bottom:1px solid #2a6f9c}
+.core{position:relative;width:130px;height:130px;margin:0 auto}
+.core .halo{position:absolute;inset:0;border-radius:50%;border:2px solid #2a6f9c88;animation:spin 6s linear infinite}
+.core .halo2{position:absolute;inset:8px;border-radius:50%;border:1px dashed #2a6f9c66;animation:spin 4s linear infinite reverse}
+.core .ring{position:absolute;inset:20px;border-radius:50%;border:3px solid transparent;border-top-color:#37b6ff;border-right-color:#37b6ff88;animation:spin 2.2s linear infinite}
+.core .core-in{position:absolute;inset:34px;border-radius:50%;background:radial-gradient(circle,#7fd4ff,#2a6f9c 60%,#0a1a33);box-shadow:0 0 30px #37b6ff88,0 0 60px #37b6ff44;animation:pulse 2s ease-in-out infinite}
+.core .scan{position:absolute;inset:0;border-radius:50%;overflow:hidden;opacity:.35}
+.core .scan:after{content:'';position:absolute;left:0;right:0;height:40%;background:linear-gradient(180deg,transparent,#37b6ff55,transparent);animation:scan 3s linear infinite}
+.core .dot{position:absolute;width:5px;height:5px;border-radius:50%;background:#7fd4ff;box-shadow:0 0 8px #7fd4ff}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+@keyframes scan{0%{top:-40%}100%{top:140%}}
+.core.talk .core-in{animation:pulse .5s ease-in-out infinite}
+#inp{position:fixed;bottom:8px;right:8px;width:240px;padding:10px 14px;border-radius:22px;border:1px solid #2a6f9c;background:rgba(8,20,40,.9);color:#cfeaff;font-size:13px;outline:none;z-index:99;backdrop-filter:blur(4px)}
+#inp:focus{border-color:#37b6ff;box-shadow:0 0 12px #37b6ff44}
+.tip{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#7fd4ff;font-size:12px;background:rgba(8,20,40,.85);padding:6px 16px;border-radius:20px;border:1px solid #2a6f9c}
+.status{position:fixed;top:44px;left:50%;transform:translateX(-50%);color:#37b6ff88;font-size:11px;letter-spacing:2px;text-transform:uppercase}
+</style></head><body>
+<div class="tip">⚡ J.A.R.V.I.S. · 小焦核心 — 点核心说话 / 右下输入框打字</div>
+<div class="status" id="status">SYSTEM ONLINE · LOCAL</div>
+<div id="stage" onclick="focusInp()">
+  <div class="bubble" id="bub">Sir, 小焦核心已就绪。我可以查天气、整理文件、陪你聊天。</div>
+  <div class="core" id="core">
+    <div class="halo"></div><div class="halo2"></div><div class="ring"></div>
+    <div class="scan"></div><div class="core-in"></div>
+    <div class="dot" style="top:8px;left:50%"></div>
+    <div class="dot" style="top:50%;left:6px"></div>
+    <div class="dot" style="top:80%;left:30%"></div>
+  </div>
+</div>
+<input id="inp" placeholder="对小焦说…（Enter）" onkeydown="if(event.key==='Enter')ask()">
+<script>
+const bub=document.getElementById('bub'),core=document.getElementById('core'),inp=document.getElementById('inp'),st=document.getElementById('status');
+function focusInp(){inp.focus();}
+function speak(t){bub.textContent=t;core.classList.add('talk');st.textContent='PROCESSING · '+(t.length)+' chars';setTimeout(()=>{core.classList.remove('talk');st.textContent='SYSTEM ONLINE · LOCAL';},Math.min(3000,t.length*120));}
+async function ask(){const t=inp.value.trim();if(!t)return;inp.value='';speak('…');st.textContent='THINKING…';
+  try{
+    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:t})});
+    const d=await r.json();speak((d.answer||'（信号干扰，请再说一遍）').slice(0,220));
+  }catch(e){speak('核心连接异常…');}
+  st.textContent='SYSTEM ONLINE · LOCAL';}
+</script></body></html>"""
+
+
+@app.route("/api/cost")
+def api_cost():
+    """当日成本看板: 调用数/本地token/云端token/花费/相比全云端节省。"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    d = {}
+    if os.path.exists(_COST_FILE):
+        try:
+            d = json.load(open(_COST_FILE, encoding="utf-8"))
+        except Exception:
+            d = {}
+    day = d.get(today, {"calls": 0, "local_tokens": 0, "cloud_tokens": 0, "cost": 0.0})
+    # 节省 = 若全部走云端(基线价) - 实际花费
+    all_tokens = day.get("local_tokens", 0) + day.get("cloud_tokens", 0)
+    saved = (all_tokens / 1000.0) * (_CLOUD_IN + _CLOUD_OUT) / 2.0 - day.get("cost", 0.0)
+    return jsonify({"date": today, "calls": day.get("calls", 0),
+                    "local_tokens": day.get("local_tokens", 0), "cloud_tokens": day.get("cloud_tokens", 0),
+                    "cost": round(day.get("cost", 0.0), 4), "saved": round(max(saved, 0.0), 4),
+                    "days": d})
 
 
 @app.route("/api/presets")
@@ -2096,7 +2208,7 @@ HTML = r"""<!DOCTYPE html>
   <div id="main">
 <header>
   <button class="icon-btn sd-toggle" id="sdToggle" onclick="toggleSidebar()" title="收起/展开侧栏">⟨</button>
-  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span> <a href="/monitor" style="font-size:11px;color:#a78bfa;margin-left:6px">🧠 监控</a></div>
+  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span> <a href="/monitor" style="font-size:11px;color:#a78bfa;margin-left:6px">🧠 监控</a> <a href="/pet" style="font-size:11px;color:#45d483;margin-left:6px">⚡ J.A.R.V.I.S.</a> <span id="costBadge" style="font-size:11px;color:#8b93a3;margin-left:8px"></span></div>
   <div class="hdr-right">
     <button class="icon-btn" id="toolsBtn" onclick="toggleTools()">🛠️ 工具</button>
     <button class="icon-btn" onclick="openBrain()">🧠 小脑</button>
@@ -2367,6 +2479,9 @@ async function resumeVideoJob(){let job='';
     }catch(e){}
   },5000);
 }
+function loadCost(){try{fetch('/api/cost').then(r=>r.json()).then(d=>{
+  const el=document.getElementById('costBadge');if(el)el.textContent='💸 今日节省 ¥'+d.saved+' · '+d.calls+'次';
+});}catch(e){}}
 function loadPresets(){try{fetch('/api/presets').then(r=>r.json()).then(d=>{
   const sel=document.getElementById('presetSel');if(sel&&sel.options.length<=1){sel.innerHTML='<option value="">🎭 预设</option>'+ (d.presets||[]).map(p=>'<option value="'+esc(p.file)+'"'+(p.file===d.current?' selected':'')+'>'+esc(p.name)+'</option>').join('');}
   if(d.current)sel.value=d.current;});}catch(e){}}
@@ -2549,7 +2664,7 @@ async function openSession(id){const r=await fetch('/api/session/'+id);const d=a
 function clearFeed(){document.getElementById('feed').innerHTML='<div class="think">👋 新对话，问小焦一个问题…</div>';}
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('hidden');}
 function hideSplash(){const sp=document.getElementById('splash');if(sp){sp.style.transition='opacity .5s';sp.style.opacity='0';setTimeout(function(){sp.remove();},500);}}
-  (async()=>{try{loadModels();}catch(e){}try{loadHistory();}catch(e){}try{loadSessions();}catch(e){}try{loadPresets();}catch(e){}
+  (async()=>{try{loadModels();}catch(e){}try{loadHistory();}catch(e){}try{loadSessions();}catch(e){}try{loadPresets();}catch(e){}try{loadCost();}catch(e){}
  try{const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);}catch(e){}
  resumeVideoJob();resumeChat();})();
 async function confirmAction(){const r=await fetch('/api/confirm',{method:'POST'});const d=await r.json();
