@@ -2575,11 +2575,18 @@ async function openSettings(){try{loadPresetCards();}catch(e){}
 async function loadModelList(){const r=await fetch('/api/models');const d=await r.json();const el=document.getElementById('s_model_list');
   el.innerHTML=(d.models||[]).map(m=>`<div class="switch"><div><div class="n">${esc(m.name)} <small style="color:#7a8290">${esc(m.engine)}</small></div><div class="d">${esc(m.base_url||'')}</div></div><button class="btn-sec" onclick="delModel('${esc(m.name)}')">删除</button></div>`).join('')||'<div class="think">还没有模型</div>';
 }
-async function addLocalModel(){
-  const name=prompt('模型显示名(如 数学大脑)');if(!name)return;
-  const gguf=prompt('GGUF 文件绝对路径(如 G:/模型文件/xxx.gguf)');if(!gguf)return;
-  const ctx=prompt('上下文 ctx(默认20000)','20000');
-  fetch('/api/model/addlocal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,gguf:gguf,ctx:ctx})}).then(r=>r.json()).then(d=>{alert(d.ok?('✅ 已添加: '+d.name+'\n'+d.note):('失败: '+d.error));setTimeout(()=>location.reload(),12000);});
+async function addLocalModel(){document.getElementById('addLocalBg').style.display='flex';}
+function closeAddLocal(){document.getElementById('addLocalBg').style.display='none';}
+function saveAddLocal(){
+  const name=document.getElementById('lm_name').value.trim();
+  const gguf=document.getElementById('lm_gguf').value.trim();
+  const ctx=document.getElementById('lm_ctx').value;
+  if(!name||!gguf){alert('请填模型名和 GGUF 路径');return;}
+  document.getElementById('lm_msg').textContent='⏳ 正在配置并重启 llama-swap…';
+  fetch('/api/model/addlocal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,gguf:gguf,ctx:parseInt(ctx)||20000})}).then(r=>r.json()).then(d=>{
+    document.getElementById('lm_msg').textContent=d.ok?('✅ 已添加：'+d.name+'，llama-swap 重启中，约10秒后可用'):('❌ '+d.error);
+    if(d.ok)setTimeout(()=>location.reload(),12000);
+  });
 }
 async function addModel(){const name=document.getElementById('s_m_name').value.trim();if(!name){document.getElementById('s_model_msg').textContent='❌ 名字必填';return;}
   const entry={name:name,engine:document.getElementById('s_m_engine').value,base_url:document.getElementById('s_m_base').value.trim(),api_key:document.getElementById('s_m_key').value.trim(),model:document.getElementById('s_m_model').value.trim()};
