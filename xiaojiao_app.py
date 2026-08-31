@@ -2224,7 +2224,7 @@ HTML = r"""<!DOCTYPE html>
           </div>
           <div class="row">
             <div class="field"><label>模型名</label><input id="s_m_model" placeholder="如 deepseek-chat"/></div>
-            <div class="field" style="display:flex;align-items:flex-end"><button class="btn-sec" onclick="addModel()">＋ 添加模型(API/外接)</button> <button class="btn-sec" onclick="addLocalModel()">🗄️ 一键加本地GGUF</button></div>
+            <div class="field" style="display:flex;align-items:flex-end;gap:10px"><button class="btn-sec" onclick="addModel()">＋ 添加模型(API/外接)</button><button class="btn-sec" style="margin-left:8px" onclick="addLocalModel()">🗄️ 一键加本地GGUF</button></div>
           </div>
           <div class="think" id="s_model_msg"></div>
         </div>
