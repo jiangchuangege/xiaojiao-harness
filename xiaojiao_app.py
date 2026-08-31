@@ -1012,9 +1012,9 @@ def api_pet():
 
 PET_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <title>⚡ J.A.R.V.I.S. · 小焦</title><style>
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 50% 85%, #0a1a33 0%, transparent 60%);font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none;color:#7fd4ff}
+*{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none;color:#7fd4ff}
 #stage{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);text-align:center;cursor:pointer;z-index:9}
-.bubble{position:relative;background:rgba(8,20,40,.9);border:1px solid #2a6f9c;border-radius:12px;padding:10px 14px;color:#cfeaff;font-size:13px;max-width:300px;margin:0 auto 10px;box-shadow:0 0 24px #2a6f9c66,inset 0 0 18px #0a2a4a55;min-height:20px;white-space:pre-wrap;backdrop-filter:blur(4px)}
+.bubble{position:relative;background:rgba(8,20,40,.92);border:1px solid #2a6f9c;border-radius:12px;padding:8px 12px;color:#cfeaff;font-size:12px;max-width:230px;max-height:96px;overflow:hidden;margin:0 auto 8px;box-shadow:0 0 20px #2a6f9c55,inset 0 0 14px #0a2a4a55;white-space:pre-wrap;word-break:break-word;text-overflow:ellipsis;backdrop-filter:blur(4px)}
 .bubble:after{content:'';position:absolute;bottom:-8px;left:50%;transform:translateX(-50%) rotate(45deg);width:14px;height:14px;background:#0a1830;border-right:1px solid #2a6f9c;border-bottom:1px solid #2a6f9c}
 .core{position:relative;width:130px;height:130px;margin:0 auto}
 .core .halo{position:absolute;inset:0;border-radius:50%;border:2px solid #2a6f9c88;animation:spin 6s linear infinite}
