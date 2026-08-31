@@ -565,6 +565,9 @@ flowchart LR
 - 8G 物理上放不下"两个都热"，所以**一个显存、一个内存**，但搬运是**权重级（RAM↔显存）**，不再是"杀进程重启"。
 
 > 详见 [docs/brain-switch.md](docs/brain-switch.md) 与 [docs/tools.md](docs/tools.md)。
+>
+> 🚀 [docs/upgrade-plan.md](docs/upgrade-plan.md) · 对标 Harness 升级路线图（零门槛安装 / 智能调度省钱 / 插件万能桥）
+> 🐳 [docs/jarvis-desktop.md](docs/jarvis-desktop.md) · 桌面贾维斯宠物 MVP
 
 
 
