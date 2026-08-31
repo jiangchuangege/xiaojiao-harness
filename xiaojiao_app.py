@@ -1015,7 +1015,7 @@ PET_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 *{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none;color:#7fd4ff}
 #stage{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);text-align:center;cursor:pointer;z-index:9;-webkit-app-region:drag}
 #stage *{-webkit-app-region:drag}
-.bubble{position:relative;background:rgba(8,20,40,.92);border:1px solid #2a6f9c;border-radius:12px;padding:8px 12px;color:#cfeaff;font-size:12px;max-width:230px;max-height:96px;overflow:hidden;margin:0 auto 8px;box-shadow:0 0 20px #2a6f9c55,inset 0 0 14px #0a2a4a55;white-space:pre-wrap;word-break:break-word;text-overflow:ellipsis;backdrop-filter:blur(4px)}
+.bubble{position:relative;background:rgba(8,20,40,.92);border:1px solid #2a6f9c;border-radius:12px;padding:8px 12px;color:#cfeaff;font-size:12px;max-width:230px;max-height:96px;overflow:hidden;margin:0 auto 8px;box-shadow:0 0 20px #2a6f9c55,inset 0 0 14px #0a2a4a55;white-space:pre-wrap;word-break:break-word;text-overflow:ellipsis;backdrop-filter:blur(4px);-webkit-app-region:no-drag;cursor:pointer}
 .bubble:after{content:'';position:absolute;bottom:-8px;left:50%;transform:translateX(-50%) rotate(45deg);width:14px;height:14px;background:#0a1830;border-right:1px solid #2a6f9c;border-bottom:1px solid #2a6f9c}
 .core{position:relative;width:130px;height:130px;margin:0 auto}
 .core .halo{position:absolute;inset:0;border-radius:50%;border:2px solid #2a6f9c88;animation:spin 6s linear infinite}
@@ -1049,6 +1049,7 @@ PET_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <input id="inp" placeholder="对小焦说…（Enter）" onkeydown="if(event.key==='Enter')ask()">
 <script>
 const bub=document.getElementById('bub'),core=document.getElementById('core'),inp=document.getElementById('inp'),st=document.getElementById('status');
+bub.addEventListener('click',()=>{inp.focus();});
 function focusInp(){inp.focus();}
 function speak(t){bub.textContent=t;core.classList.add('talk');st.textContent='PROCESSING · '+(t.length)+' chars';setTimeout(()=>{core.classList.remove('talk');st.textContent='SYSTEM ONLINE · LOCAL';},Math.min(3000,t.length*120));}
 async function ask(){const t=inp.value.trim();if(!t)return;inp.value='';speak('…');st.textContent='THINKING…';
