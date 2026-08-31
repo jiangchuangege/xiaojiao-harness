@@ -949,6 +949,14 @@ def agent_run(user_input):
 app = Flask(__name__)
 
 
+@app.after_request
+def _no_cache(resp):
+    """禁用浏览器缓存: 改了前端代码, 刷新即拿到最新(不用Ctrl+F5清缓存)。"""
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
 # ================== Agent 预设切换（presets/） ==================
 _PRESETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
 
