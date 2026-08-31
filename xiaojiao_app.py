@@ -1013,7 +1013,8 @@ def api_pet():
 PET_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <title>⚡ J.A.R.V.I.S. · 小焦</title><style>
 *{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none;color:#7fd4ff}
-#stage{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);text-align:center;cursor:pointer;z-index:9}
+#stage{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);text-align:center;cursor:pointer;z-index:9;-webkit-app-region:drag}
+#stage *{-webkit-app-region:drag}
 .bubble{position:relative;background:rgba(8,20,40,.92);border:1px solid #2a6f9c;border-radius:12px;padding:8px 12px;color:#cfeaff;font-size:12px;max-width:230px;max-height:96px;overflow:hidden;margin:0 auto 8px;box-shadow:0 0 20px #2a6f9c55,inset 0 0 14px #0a2a4a55;white-space:pre-wrap;word-break:break-word;text-overflow:ellipsis;backdrop-filter:blur(4px)}
 .bubble:after{content:'';position:absolute;bottom:-8px;left:50%;transform:translateX(-50%) rotate(45deg);width:14px;height:14px;background:#0a1830;border-right:1px solid #2a6f9c;border-bottom:1px solid #2a6f9c}
 .core{position:relative;width:130px;height:130px;margin:0 auto}
@@ -1028,7 +1029,7 @@ PET_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
 @keyframes scan{0%{top:-40%}100%{top:140%}}
 .core.talk .core-in{animation:pulse .5s ease-in-out infinite}
-#inp{position:fixed;bottom:8px;right:8px;width:240px;padding:10px 14px;border-radius:22px;border:1px solid #2a6f9c;background:rgba(8,20,40,.9);color:#cfeaff;font-size:13px;outline:none;z-index:99;backdrop-filter:blur(4px)}
+#inp{position:fixed;bottom:8px;right:8px;width:240px;padding:10px 14px;border-radius:22px;border:1px solid #2a6f9c;background:rgba(8,20,40,.9);color:#cfeaff;font-size:13px;outline:none;z-index:99;backdrop-filter:blur(4px)};-webkit-app-region:no-drag
 #inp:focus{border-color:#37b6ff;box-shadow:0 0 12px #37b6ff44}
 .tip{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#7fd4ff;font-size:12px;background:rgba(8,20,40,.85);padding:6px 16px;border-radius:20px;border:1px solid #2a6f9c}
 .status{position:fixed;top:44px;left:50%;transform:translateX(-50%);color:#37b6ff88;font-size:11px;letter-spacing:2px;text-transform:uppercase}
