@@ -2036,10 +2036,11 @@ HTML = r"""<!DOCTYPE html>
   .sec.show{display:block}
   .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:999}
   .modal{background:#151a26;border:1px solid #2a3140;border-radius:14px;padding:20px;width:min(420px,90vw);box-shadow:0 20px 60px #000a;color:#e8ebf3}
-  .modal h3{font-size:15px;margin:0 0 12px;font-weight:600}
-  .modal input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;font-size:14px}
-  .modal .m-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}
-  .modal button{padding:7px 14px;border-radius:8px;border:1px solid #2a3140;background:#222a3e;color:#e8ebf3;cursor:pointer}
+  .modal h3{font-size:15px;margin:0 0 18px;font-weight:600}
+  .modal label{font-size:12px;color:#8b93a3;display:block;margin:18px 0 8px;font-weight:600}
+  .modal input{width:100%;padding:11px 12px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3;font-size:14px;margin-bottom:4px}
+  .modal .m-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:26px;padding-top:16px;border-top:1px solid #2a3140}
+  .modal button{padding:8px 16px;border-radius:8px;border:1px solid #2a3140;background:#222a3e;color:#e8ebf3;cursor:pointer}
   .splash{position:fixed;inset:0;background:#05070c;display:flex;align-items:center;justify-content:center;z-index:9999;animation:spaout .6s ease 1.6s forwards}
   @keyframes spaout{to{opacity:0;visibility:hidden;pointer-events:none}}
   .s-inner{text-align:center}
