@@ -125,6 +125,56 @@ def _api_execute(manifest, tool_name, params):
         return f"API 插件执行失败：{e}"
 
 
+def _make_tools_plugin(man):
+    """把 OpenAI/Claude/DSH 风格的 tools 清单转成小焦插件实例(适配器)。
+    OpenAI: {"tools":[{"type":"function","function":{"name","description","parameters"}}]}
+    Claude: {"tools":[{"name","description","input_schema"}]}  (input_schema 转 parameters)
+    DSH:    {"tools":[{"name","description","parameters","url"}]}  (url 为直接调用的 API)
+    """
+    tools = man.get("tools") or []
+    descs = []
+    for t in tools:
+        fn = t.get("function") if isinstance(t, dict) and "function" in t else t
+        if not isinstance(fn, dict):
+            continue
+        name = fn.get("name") or ""
+        if not name:
+            continue
+        params = fn.get("parameters") or fn.get("input_schema") or {"type": "object", "properties": {}}
+        if not isinstance(params, dict) or params.get("type") is None:
+            params = dict(params or {}); params.setdefault("type", "object"); params.setdefault("properties", params.get("properties") or {})
+        descs.append({"name": name, "description": fn.get("description", ""),
+                      "url": fn.get("url", t.get("url", "")), "manifest": man})
+    if not descs:
+        return None
+    return _ToolsPlugin(descs)
+
+
+class _ToolsPlugin:
+    """从 OpenAI/Claude/DSH 工具清单生成的插件(可调用外部API或提示运行时)。"""
+    def __init__(self, descs):
+        self._descs = descs
+        self._tp = {}
+        for d in descs:
+            self._tp[d["name"]] = d
+    def get_tool_descriptions(self):
+        return [{"name": d["name"], "description": d["description"],
+                 "parameters": {"type": "object", "properties": {}}} for d in self._descs]
+    def execute(self, tool_name, params):
+        d = self._tp.get(tool_name)
+        if not d:
+            return "未知工具"
+        url = d.get("url") or (d.get("manifest") or {}).get("url", "")
+        if url:
+            try:
+                import requests as _rq
+                rr = _rq.post(url, json=params, timeout=20)
+                return rr.text[:800]
+            except Exception as e:
+                return "调用失败: " + str(e)[:80]
+        return "该工具「%s」来自外部清单(OpenAI/Claude/DSH)，已在本地注册；实际执行需对应运行时或填写 url。" % tool_name
+
+
 def _make_api_plugin(manifest):
     """把一个 API 插件 manifest 变成可用插件实例（get_tool_descriptions/execute）。"""
     class _ApiPlugin:
@@ -172,6 +222,16 @@ def load_plugins():
                 man = json.load(open(p, encoding="utf-8"))
                 if man.get("type") == "skin":
                     plugins[base] = {"instance": None, "desc": [], "builtin": False, "type": "skin", "path": p, "manifest": man}
+                elif man.get("tools"):
+                    inst = _make_tools_plugin(man)
+                    desc = inst.get_tool_descriptions() if inst else []
+                    if desc:
+                        plugins[base] = {"instance": inst, "desc": desc, "builtin": False, "type": "tools", "path": p, "manifest": man}
+                elif man.get("tools"):
+                    inst = _make_tools_plugin(man)
+                    desc = inst.get_tool_descriptions() if inst else []
+                    if desc:
+                        plugins[base] = {"instance": inst, "desc": desc, "builtin": False, "type": "tools", "path": p, "manifest": man}
                 else:
                     inst = _make_api_plugin(man)
                     desc = inst.get_tool_descriptions()
@@ -236,6 +296,31 @@ _TOOL2PLUGIN = {}   # 工具名 -> 插件模块名
 _COST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cost_daily.json")
 _CLOUD_BASELINE = 0.000008  # 全云端基线: 按 deepseek-chat 入0.002/出0.008 每token约合
 _CLOUD_IN, _CLOUD_OUT = 0.002, 0.008  # 元/1K token (deepseek-chat 参考价)
+
+
+_TTS_FILES = ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"]
+
+
+def _find_tts_model_dir():
+    """自动识别 Chatterbox 模型目录(不写死): 环境变量/配置/扫描常见位置, 找到含全部文件的目录。"""
+    import glob as _g
+    # ① 环境变量
+    env_dir = os.environ.get("XIAOJIAO_TTS_MODEL", "")
+    if env_dir and os.path.isdir(env_dir) and all(os.path.exists(os.path.join(env_dir, f)) for f in _TTS_FILES):
+        return env_dir
+    # ② 控制文件配置
+    _cfg_dir = CONTROL.get("brain", {}).get("tts_model_dir", "")
+    if _cfg_dir and os.path.isdir(_cfg_dir) and all(os.path.exists(os.path.join(_cfg_dir, f)) for f in _TTS_FILES):
+        return _cfg_dir
+    # ③ 扫描常见位置
+    cands = [r"G:\模型文件\语音模型", r"C:\xiaojiao\xiaojiao harness", r"C:\llama",
+             r"G:\模型文件", os.path.expanduser("~")]
+    for c in cands:
+        if os.path.isdir(c):
+            for d in [c] + [os.path.join(c, x) for x in os.listdir(c) if os.path.isdir(os.path.join(c, x))]:
+                if all(os.path.exists(os.path.join(d, f)) for f in _TTS_FILES):
+                    return d
+    return None
 
 
 def _record_usage(usage, model=""):
@@ -533,6 +618,10 @@ def llm_online():
 import subprocess
 
 TOOLS = [
+    {"type": "function", "function": {"name": "check_env", "description": "检测电脑环境装没装东西(只读): 检查 python/git/node/ffmpeg 等是否安装及版本。用于'帮我装环境/配置'场景, 只给建议不执行。",
+     "parameters": {"type": "object", "properties": {"items": {"type": "string", "description": "要检测的工具, 逗号分隔"}}, "required": []}}},
+    {"type": "function", "function": {"name": "suggest_organize", "description": "整理文件建议(只读): 扫描一个目录, 按类型/日期给出整理到哪里的建议。用于'整理桌面/文件夹'。只给建议清单, 确认才移动。",
+     "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "要整理的目录"}}, "required": ["path"]}}},
     {"type": "function", "function": {"name": "run_command", "description": "运行一条系统命令并返回输出",
      "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"},
                     "timeout": {"type": "number", "description": "超时秒数，默认30"}}, "required": ["command"]}}},
@@ -613,6 +702,74 @@ def run_tool(name, args, force=False):
                 return "缺少查询词"
             res = web_search(q, num=n)
             return "\n".join("%s%s：%s" % (t, (" [%s]" % u) if u else "", c) for t, u, c in res[:n]) or "(无结果)"
+        if name == "check_env":
+            items = (args.get("items") or "python,git,node,ffmpeg")
+            out = []
+            for it in items.split(","):
+                it = it.strip()
+                if not it:
+                    continue
+                try:
+                    # Windows: where 工具 或 --version
+                    r = subprocess.run(["where", it], capture_output=True, text=True, timeout=5)
+                    ver = ""
+                    for vf in ["--version", "-v", "-V"]:
+                        try:
+                            vr = subprocess.run([it, vf], capture_output=True, text=True, timeout=5)
+                            if vr.stdout.strip():
+                                ver = vr.stdout.strip().split("\n")[0][:40]; break
+                        except Exception:
+                            pass
+                    if r.returncode == 0:
+                        out.append("✅ %s 已安装%s" % (it, ("，版本: " + ver) if ver else ""))
+                    else:
+                        out.append("❌ %s 未安装" % it)
+                except Exception:
+                    out.append("❌ %s 未安装(需下载)" % it)
+            return "\n".join(out) + "\n（只做了检测，需要装哪个告诉我，我给下载方案，你确认后执行。）"
+        if name == "suggest_organize":
+            d = args.get("path", ".")
+            if not os.path.isdir(d):
+                return "目录不存在: " + d
+            by = {}
+            for f in os.listdir(d):
+                fp = os.path.join(d, f)
+                if os.path.isfile(fp):
+                    ext = os.path.splitext(f)[1].lower().lstrip(".") or "无后缀"
+                    by.setdefault(ext, []).append(f)
+            if not by:
+                return "该目录没有文件"
+            lines = ["📁 建议整理到以下文件夹（只建议，移动前我会先问你确认）："]
+            for ext, fs in sorted(by.items(), key=lambda x: -len(x[1]))[:8]:
+                lines.append("  - 「%s」→ 放 %s 文件夹（%d 个）" % (ext, ("图片" if ext in ("png","jpg","jpeg","gif","bmp") else "文档" if ext in ("txt","md","doc","docx","pdf") else "视频" if ext in ("mp4","mov","mkv") else ext + "_文件"), len(fs)))
+            return "\n".join(lines) + ("\n（只给建议，你确认我才移动文件）")
+        if name == "capture_screen":
+            try:
+                from PIL import ImageGrab
+                out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "media", "screen")
+                os.makedirs(out_dir, exist_ok=True)
+                fp = os.path.join(out_dir, datetime.now().strftime("%Y%m%d%H%M%S") + ".png")
+                img = ImageGrab.grab()
+                img.save(fp)
+                rel = "/media/screen/" + os.path.basename(fp)
+                return "已截屏: " + rel + "（分析可看这张图；我无法直接「看图」，你可以描述或让我用OCR读文字）"
+            except Exception as e:
+                return "截屏失败: " + str(e)[:80]
+        if name == "screen_text":
+            try:
+                from PIL import ImageGrab
+                out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "media", "screen")
+                os.makedirs(out_dir, exist_ok=True)
+                fp = os.path.join(out_dir, datetime.now().strftime("%Y%m%d%H%M%S") + ".png")
+                ImageGrab.grab().save(fp)
+                try:
+                    import pytesseract
+                    txt = pytesseract.image_to_string(fp, lang="chi_sim+eng")
+                    return "屏幕文字: " + (txt.strip()[:1500] or "(未识别到)")
+                except Exception:
+                    return "已截屏(OCR需另装tesseract): " + fp
+            except Exception as e:
+                return "截图失败: " + str(e)[:80]
         if name == "run_command":
             cmd = args.get("command", "")
             timeout = int(args.get("timeout", 30))
@@ -732,7 +889,7 @@ def _map_tool(name, args):
     return name, args
 
 
-def llm_chat_tools(messages, max_rounds=6):
+def llm_chat_tools(messages, max_rounds=6, lean=False):
     """带 function calling 的大脑调用：模型自己“想”并调用工具（优先），循环直到给出最终回答。
 
     返回 (answer, tool_trace)。兼容 OpenAI tool_calls 与 Qwen <tool_call> XML。
@@ -753,7 +910,8 @@ def llm_chat_tools(messages, max_rounds=6):
     tool_trace = []
     for _ in range(max_rounds):
         payload = {"model": LLM_MODEL, "messages": m, "temperature": TEMPERATURE,
-                   "max_tokens": MAX_TOKENS, "tools": _build_tools()}
+                   "max_tokens": (200 if lean else MAX_TOKENS),
+                   "tools": ([] if lean else _build_tools())}
         try:
             r = requests.post(url, headers=headers, json=payload, timeout=120)
             if r.status_code != 200:
@@ -892,7 +1050,7 @@ def _summarize_tool(user_input, result, tool):
 
 
 # ================== 智能体 ==================
-def agent_run(user_input):
+def agent_run(user_input, lean=False):
     """全部问题统一走这条流程：记忆 → 联网检索 → 大脑(小焦模型/外接LLM) → 记忆自学习。
     
     注：不再代理给 DSH 桥接（那会造成 小焦→桥接→小焦 的死循环）。
@@ -930,7 +1088,11 @@ def agent_run(user_input):
         skills = tool_guidance + "\n[铁律] 凡是要帮我做实事(写文件/建网页/运行命令/查资料/列文件/读取/打开)，你必须先调用对应工具，不能只把结果或代码直接打在聊天里。" \
                  + "\n[简洁原则] 回答要极简：只给结果/代码/结论，不要寒暄、不要说【好的我来帮你】、不要复述问题、不要多余解释。写代码只输出代码块。" \
                  + "\n[代码工作流] 写/改代码请这样：① 先 read_file 看相关文件再动手；② 新增用 write_file，修改用 edit_file 精准替换；③ 改完用 run_command 验证（Python 用 python -c 语法检查、JS 用 node --check、或直接运行看结果）；④ 有报错就读出来修复。不要凭空猜测文件内容。" + skills
-        messages = [{"role": "system", "content": SYSTEM_PROMPT + path_ctx + skills}]
+        if lean:
+            # 语音精简模式: 短提示, 不背工具/技能, 生成快
+            messages = [{"role": "system", "content": (SYSTEM_PROMPT[:240] + "\n[语音对话] 请简短、口语化、直接回答，一两句话；不要调用工具、不要长篇大论、不要列表。")}]
+        else:
+            messages = [{"role": "system", "content": SYSTEM_PROMPT + path_ctx + skills}]
         for h in history[-MAX_HISTORY:]:
             messages.append({"role": "user" if h["role"] == "用户" else "assistant",
                              "content": h["content"]})
@@ -941,7 +1103,7 @@ def agent_run(user_input):
             context += "（联网检索到的资料）\n" + web_text + "\n\n"
         messages.append({"role": "user", "content": (context + "用户：" + user_input) if context else user_input})
         if CAP.get("run_tools", True):
-            answer, tool_trace = llm_chat_tools(messages)   # 模型推理并调用工具
+            answer, tool_trace = llm_chat_tools(messages, lean=lean)   # 模型推理并调用工具
         else:
             answer = llm_chat(messages)
 
@@ -1011,54 +1173,252 @@ def api_pet():
 
 
 PET_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
-<title>⚡ J.A.R.V.I.S. · 小焦</title><style>
-*{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none;color:#7fd4ff}
-#stage{position:fixed;bottom:8px;left:50%;transform:translateX(-50%);text-align:center;cursor:pointer;z-index:9;-webkit-app-region:drag}
-#stage *{-webkit-app-region:drag}
-.bubble{position:relative;background:rgba(8,20,40,.92);border:1px solid #2a6f9c;border-radius:12px;padding:8px 12px;color:#cfeaff;font-size:12px;max-width:230px;max-height:96px;overflow:hidden;margin:0 auto 8px;box-shadow:0 0 20px #2a6f9c55,inset 0 0 14px #0a2a4a55;white-space:pre-wrap;word-break:break-word;text-overflow:ellipsis;backdrop-filter:blur(4px);-webkit-app-region:no-drag;cursor:pointer}
-.bubble:after{content:'';position:absolute;bottom:-8px;left:50%;transform:translateX(-50%) rotate(45deg);width:14px;height:14px;background:#0a1830;border-right:1px solid #2a6f9c;border-bottom:1px solid #2a6f9c}
-.core{position:relative;width:130px;height:130px;margin:0 auto}
-.core .halo{position:absolute;inset:0;border-radius:50%;border:2px solid #2a6f9c88;animation:spin 6s linear infinite}
-.core .halo2{position:absolute;inset:8px;border-radius:50%;border:1px dashed #2a6f9c66;animation:spin 4s linear infinite reverse}
-.core .ring{position:absolute;inset:20px;border-radius:50%;border:3px solid transparent;border-top-color:#37b6ff;border-right-color:#37b6ff88;animation:spin 2.2s linear infinite}
-.core .core-in{position:absolute;inset:34px;border-radius:50%;background:radial-gradient(circle,#7fd4ff,#2a6f9c 60%,#0a1a33);box-shadow:0 0 30px #37b6ff88,0 0 60px #37b6ff44;animation:pulse 2s ease-in-out infinite}
-.core .scan{position:absolute;inset:0;border-radius:50%;overflow:hidden;opacity:.35}
-.core .scan:after{content:'';position:absolute;left:0;right:0;height:40%;background:linear-gradient(180deg,transparent,#37b6ff55,transparent);animation:scan 3s linear infinite}
-.core .dot{position:absolute;width:5px;height:5px;border-radius:50%;background:#7fd4ff;box-shadow:0 0 8px #7fd4ff}
+<title>⚡ J.A.R.V.I.S.</title><style>
+*{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none;color:#7fd4ff;-webkit-app-region:drag}
+#api{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;z-index:9}
+.bubble{position:relative;background:rgba(8,20,40,.95);border:1px solid #2a6f9c;border-radius:12px;padding:8px 12px;color:#cfeaff;font-size:13px;max-width:94vw;margin:0 0 10px;white-space:pre-wrap;word-break:break-word;-webkit-app-region:no-drag}
+.bubble:after{content:'';position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);border:7px solid transparent;border-top-color:#2a6f9c88}
+.core{position:relative;width:92px;height:92px;-webkit-app-region:drag}
+.core .halo{position:absolute;inset:0;border-radius:50%;border:2px solid #2a6f9c88;animation:spin 9s linear infinite}
+.core .halo2{position:absolute;inset:7px;border-radius:50%;border:1px dashed #2a6f9c66;animation:spin 5s linear infinite reverse}
+.core .ring{position:absolute;inset:15px;border-radius:50%;border:2px solid transparent;border-top-color:#37b6ff;animation:spin 2.5s linear infinite}
+.core .core-in{position:absolute;inset:26px;border-radius:50%;background:radial-gradient(circle,#7fd4ff,#2a6f9c 60%,#0a1a33);box-shadow:0 0 24px #37b6ff88,0 0 46px #37b6ff44;animation:pulse 2.4s ease-in-out infinite;-webkit-app-region:no-drag;cursor:pointer}
 @keyframes spin{to{transform:rotate(360deg)}}
-@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
-@keyframes scan{0%{top:-40%}100%{top:140%}}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
 .core.talk .core-in{animation:pulse .5s ease-in-out infinite}
-#inp{position:fixed;bottom:8px;right:8px;width:240px;padding:10px 14px;border-radius:22px;border:1px solid #2a6f9c;background:rgba(8,20,40,.9);color:#cfeaff;font-size:13px;outline:none;z-index:99;backdrop-filter:blur(4px)};-webkit-app-region:no-drag
-#inp:focus{border-color:#37b6ff;box-shadow:0 0 12px #37b6ff44}
-.tip{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#7fd4ff;font-size:12px;background:rgba(8,20,40,.85);padding:6px 16px;border-radius:20px;border:1px solid #2a6f9c}
-.status{position:fixed;top:44px;left:50%;transform:translateX(-50%);color:#37b6ff88;font-size:11px;letter-spacing:2px;text-transform:uppercase}
+.menu{position:relative;background:#0a1830ee;border:1px solid #2a6f9c;border-radius:12px;padding:8px;display:none;grid-template-columns:1fr 1fr;gap:8px;-webkit-app-region:no-drag;box-shadow:0 8px 30px #000a;width:230px;margin-top:12px}
+.menu.show{display:grid}
+.menu button{padding:7px 13px;border-radius:8px;border:1px solid #2a6f9c;background:#0e2233;color:#cfeaff;font-size:13px;cursor:pointer;-webkit-app-region:no-drag;white-space:nowrap}
+.menu button:hover{background:#16324a}
+#row{display:none;gap:8px;margin-top:12px;-webkit-app-region:no-drag;align-items:center}
+#row.show{display:flex}
+#inp{padding:9px 14px;border-radius:20px;border:1px solid #2a6f9c;background:#0a1830ee;color:#cfeaff;font-size:13px;outline:none;-webkit-app-region:no-drag;width:180px}
+#inp:focus{border-color:#37b6ff}
+#send{padding:9px 16px;border-radius:16px;border:1px solid #2a6f9c;background:#16324a;color:#cfeaff;font-size:13px;cursor:pointer;-webkit-app-region:no-drag}
+#send:hover{background:#1e3f5e}
+#voicebox{display:none;flex-direction:column;align-items:center;gap:8px;margin-top:12px;-webkit-app-region:no-drag}
+#voicebox.show{display:flex}
+.vst{color:#7fd4ff;font-size:13px;text-align:center;-webkit-app-region:no-drag}
+#stopvoice{padding:8px 15px;border-radius:16px;border:1px solid #2a6f9c;background:#5a2020;color:#ffb4b4;font-size:13px;cursor:pointer;-webkit-app-region:no-drag}
+.st{color:#37b6ff;font-size:11px;letter-spacing:1px;margin-top:8px;-webkit-app-region:no-drag}
 </style></head><body>
-<div class="tip">⚡ J.A.R.V.I.S. · 小焦核心 — 点核心说话 / 右下输入框打字</div>
-<div class="status" id="status">SYSTEM ONLINE · LOCAL</div>
-<div id="stage" onclick="focusInp()">
-  <div class="bubble" id="bub">Sir, 小焦核心已就绪。我可以查天气、整理文件、陪你聊天。</div>
+<div id="api">
+  <div class="bubble" id="bub" style="display:none"></div>
   <div class="core" id="core">
-    <div class="halo"></div><div class="halo2"></div><div class="ring"></div>
-    <div class="scan"></div><div class="core-in"></div>
-    <div class="dot" style="top:8px;left:50%"></div>
-    <div class="dot" style="top:50%;left:6px"></div>
-    <div class="dot" style="top:80%;left:30%"></div>
+    <div class="halo"></div><div class="halo2"></div><div class="ring"></div><div class="core-in" id="corebtn"></div>
   </div>
+  <div class="menu" id="menu">
+    <button onclick="setupHelp()">🛠 装小焦</button>
+    <button onclick="voiceMode()">🎤 语音通话</button>
+    <button onclick="chatMode()">💬 聊天</button>
+    <button onclick="hideMenu()">✖ 收起</button>
+  </div>
+  <div id="voicebox"><div class="vst" id="vst">🎤 通话中…</div><button id="stopvoice" onclick="stopVoice()">✖ 结束通话</button></div>
+  <div id="row"><button id="screenshot" onclick="snap()">📷</button><input id="inp" placeholder="对小焦说…" onkeydown="if(event.key==='Enter')ask()"><button id="send" onclick="ask()">发送</button></div>
+  <img id="shotPreview" style="display:none;max-width:94vw;max-height:48vh;border-radius:10px;border:1px solid #2a6f9c;margin-top:8px">
+  <div class="st" id="st">系统在线</div>
 </div>
-<input id="inp" placeholder="对小焦说…（Enter）" onkeydown="if(event.key==='Enter')ask()">
 <script>
-const bub=document.getElementById('bub'),core=document.getElementById('core'),inp=document.getElementById('inp'),st=document.getElementById('status');
-bub.addEventListener('click',()=>{inp.focus();});
-function focusInp(){inp.focus();}
-function speak(t){bub.textContent=t;core.classList.add('talk');st.textContent='PROCESSING · '+(t.length)+' chars';setTimeout(()=>{core.classList.remove('talk');st.textContent='SYSTEM ONLINE · LOCAL';},Math.min(3000,t.length*120));}
-async function ask(){const t=inp.value.trim();if(!t)return;inp.value='';speak('…');st.textContent='THINKING…';
-  try{
-    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:t})});
-    const d=await r.json();speak((d.answer||'（信号干扰，请再说一遍）').slice(0,220));
-  }catch(e){speak('核心连接异常…');}
-  st.textContent='SYSTEM ONLINE · LOCAL';}
+function $(id){return document.getElementById(id)}
+var bub=$('bub'),core=$('core'),menu=$('menu'),st=$('st'),inp=$('inp'),row=$('row'),voicebox=$('voicebox'),vst=$('vst');
+var voiceModeOn=false,mediaRec=null,busy=false,bubHide=null;
+$('corebtn').onclick=function(){menu.classList.contains('show')?menu.classList.remove('show'):menu.classList.add('show');};
+function hideMenu(){menu.classList.remove('show');}
+function speak(t){bub.style.display='block';bub.textContent=t;core.classList.add('talk');st.textContent='正在说话…';clearTimeout(bubHide);bubHide=setTimeout(function(){if(!voiceModeOn){bub.style.display='none';st.textContent='系统在线';}},Math.max(4000,t.length*90));setTimeout(function(){core.classList.remove('talk');},2500);}
+function ask(t){var txt=(t===undefined?inp.value:t).trim();if(!txt){return;}inp.value='';if(voiceModeOn&&mediaRec&&mediaRec.state!=='inactive'){mediaRec.stop();}busy=true;st.textContent='✅ 已发送 · 思考中…';bub.style.display='block';bub.textContent='…';var ac=new AbortController(),tm=setTimeout(function(){ac.abort();},90000);
+  fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:txt,lean:voiceModeOn}),signal:ac.signal}).then(function(r){return r.json();}).then(function(d){clearTimeout(tm);var ans=(d.answer||'没听清').slice(0,220);speak(ans);if(ans&&ans.indexOf('模型调用出错')<0){speakTTS(ans);}if(voiceModeOn){busy=false;mediaRec.start(4000);vst.textContent='🎤 通话中…请说话';}}).catch(function(){clearTimeout(tm);speak('回复太慢或超时，请再点发送');if(voiceModeOn){busy=false;mediaRec.start(4000);}});}
+function speakTTS(t){fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t.slice(0,300)})}).then(function(r){return r.json();}).then(function(d){if(d.ok&&audioSrc){audio.src=d.url;audio.play();}}).catch(function(){});}
+var audioSrc=true,audio=new Audio();
+function chatMode(){hideMenu();voicebox.classList.remove('show');voiceModeOn=false;row.classList.add('show');inp.focus();st.textContent='聊天模式 · 打字点发送';}
+var ms=null;
+function startMedia(){if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){vst.textContent='此环境不支持麦克风';return;}vst.textContent='开启麦克风…';navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){if(!window._stream){window._stream=stream;}var rec=new MediaRecorder(stream);mediaRec=rec;rec.ondataavailable=function(e){if(voiceModeOn&&!busy&&e.data&&e.data.size>800){busy=true;rec.stop();var fd=new FormData();fd.append('audio',new Blob([e.data],{type:'audio/webm'}),'a.webm');vst.textContent='识别中…';fetch('/api/asr',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(d){if(d.ok&&d.text){ask(d.text);}else{vst.textContent='🎤 请说话';busy=false;rec.start(4000);}}).catch(function(){vst.textContent='🎤 请说话';busy=false;rec.start(4000);});}};rec.onstop=function(){if(voiceModeOn&&!busy){rec.start(4000);}};rec.start(4000);vst.textContent='🎤 通话中… 直接说话';}).catch(function(){vst.textContent='无法访问麦克风，请检查权限';});}
+function voiceMode(){hideMenu();row.classList.remove('show');voicebox.classList.add('show');voiceModeOn=true;busy=false;vst.textContent='🔄 准备语音中…';speak('正在准备语音通话');fetch('/api/voice/warm',{method:'POST'}).then(function(){vst.textContent='🎤 通话中… 直接说话';startMedia();}).catch(function(){vst.textContent='🎤 通话中… 直接说话';startMedia();});}
+function snap(){st.textContent='📷 正在看你屏幕…';fetch('/api/vision').then(function(r){return r.json();}).then(function(d){if(d.ok){var img=document.getElementById('shotPreview');img.src=d.url;img.style.display='block';speak(d.desc||'我看到你的屏幕了');}else{speak('截图失败：'+(d.error||''));}}).catch(function(){speak('截图失败');});}
+function setupHelp(){st.textContent='🛠 正在检查小焦环境…';bub.style.display='block';bub.textContent='稍等，我正在检查你的环境…';fetch('/api/env').then(function(r){return r.json();}).then(function(d){var ok=[],miss=[];(d.items||[]).forEach(function(it){if(it.ok){ok.push(it.name);}else{miss.push(it);}});var t='✅ 已装：\\n';ok.forEach(function(n){t+='✅ '+n+'\\n';});if(miss.length){t+='\\n❌ 还需要装/启动：\\n';miss.forEach(function(it){t+='❌ '+it.name+' → '+((it.need||'生成时自动起').slice(0,28))+'\\n';});t+='\\n把你缺的告诉我，我带你逐步装好。';}else{t+='\\n🎉 全部就绪，小焦现在就能用！';}speak(t);st.textContent='系统在线';}).catch(function(){speak('检查失败');});}
+function stopVoice(){voiceModeOn=false;if(mediaRec&&mediaRec.state!=='inactive'){mediaRec.stop();}voicebox.classList.remove('show');st.textContent='系统在线';}
 </script></body></html>"""
+
+
+@app.route("/api/voice/warm", methods=["POST"])
+def api_voice_warm():
+    """语音通话预热: 启动即加载 聊天脑(4B) + 识别(whisper) + 发声(chatterbox) 到内存, 保证首次交互快。
+    用户主要用语音, 所以语音优先; 切到别的才换。"""
+    import os as _os
+    warm = {"chat": False, "asr": False, "tts": False, "err": ""}
+    # ① 聊天脑 4B 加载(llama-swap 预热, 保持加载不卸载)
+    try:
+        import requests as _r
+        _r.post(LLM_BASE.rstrip("/") + "/chat/completions",
+                json={"model": LLM_MODEL, "messages": [{"role": "user", "content": "你好"}], "max_tokens": 1}, timeout=60)
+        warm["chat"] = True
+    except Exception as e:
+        warm["err"] = "chat:" + str(e)[:40]
+    # ② 识别 whisper 加载
+    try:
+        _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+        from faster_whisper import WhisperModel
+        if "_asr_model" not in globals() or _asr_model is None:
+            _asr_model = WhisperModel("base", device="cpu", compute_type="int8")
+        warm["asr"] = True
+    except Exception as e:
+        warm["err"] += " asr:" + str(e)[:40]
+    # ③ 发声 chatterbox 加载(若已装)
+    try:
+        import perth as _perth
+        if getattr(_perth, "PerthImplicitWatermarker", None) is None:
+            _perth.PerthImplicitWatermarker = _perth.DummyWatermarker
+        from chatterbox import ChatterboxTTS
+        from pathlib import Path
+        _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+        if "_tts_model" not in globals() or _tts_model is None:
+            _mdir = _find_tts_model_dir()
+            _tts_model = ChatterboxTTS.from_local(Path(_mdir), device="cuda") if _mdir else ChatterboxTTS.from_pretrained(device="cuda")
+        warm["tts"] = True
+    except Exception as e:
+        warm["err"] += " tts:" + str(e)[:40]
+    return jsonify({"ok": warm["chat"] or warm["asr"], "warm": warm})
+
+
+@app.route("/api/asr", methods=["POST"])
+def api_asr():
+    """离线语音识别(听): faster-whisper, 接收音频, 返回文字。本地离线, 国内可用。"""
+    import tempfile
+    global _asr_model
+    f = request.files.get("audio")
+    if not f:
+        return jsonify({"ok": False, "error": "缺少 audio"}), 400
+    try:
+        import os as _osenv
+        _osenv.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")  # 国内镜像, 下模型不走外网
+        from faster_whisper import WhisperModel
+        if "_asr_model" not in globals() or _asr_model is None:
+            _asr_model = WhisperModel("base", device="cpu", compute_type="int8")  # CPU避开cuBLAS12缺失; 短句够快
+        tmp = tempfile.NamedTemporaryFile(suffix=".webm", delete=False)
+        f.save(tmp.name)
+        segments, _info = _asr_model.transcribe(tmp.name, language="zh", beam_size=5)
+        text = "".join(seg.text for seg in segments).strip()
+        try:
+            os.remove(tmp.name)
+        except Exception:
+            pass
+        return jsonify({"ok": True, "text": text})
+    except Exception as e:
+        return jsonify({"ok": False, "error": "识别失败: " + str(e)[:120]}), 500
+
+
+@app.route("/api/tts", methods=["POST"])
+def api_tts():
+    """文字转语音(自然): 用 Chatterbox(顶级开源) 生成 wav, 返回音频URL。缺库则提示安装。"""
+    import os as _os, datetime as _dt
+    d = request.get_json(force=True, silent=True) or {}
+    text = (d.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "缺少 text"}), 400
+    try:
+        import chatterbox
+    except ImportError:
+        return jsonify({"ok": False, "error": "需 pip install chatterbox-tts torchaudio", "need_install": True})
+    try:
+        global _tts_model
+        if "_tts_model" not in globals() or _tts_model is None:
+            import perth as _perth
+            if getattr(_perth, "PerthImplicitWatermarker", None) is None:
+                _perth.PerthImplicitWatermarker = _perth.DummyWatermarker  # 用水印占位, 跳过模型, 照常出音
+            from chatterbox import ChatterboxTTS
+            from pathlib import Path
+            _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+            _mdir = _find_tts_model_dir()
+            if _mdir:
+                _tts_model = ChatterboxTTS.from_local(Path(_mdir), device="cuda")
+            else:
+                _tts_model = ChatterboxTTS.from_pretrained(device="cuda")
+        wav = _tts_model.generate(text)
+        out_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "media", "tts")
+        _os.makedirs(out_dir, exist_ok=True)
+        out = _os.path.join(out_dir, _dt.datetime.now().strftime("%Y%m%d%H%M%S") + ".wav")
+        import torchaudio
+        torchaudio.save(out, wav.cpu(), _tts_model.sr)
+        rel = "/media/tts/" + _os.path.basename(out)
+        return jsonify({"ok": True, "url": rel, "text": text})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:160]}), 500
+
+
+@app.route("/cost")
+def api_cost_page():
+    """成本看板页: 今日调用/花费/节省 + 历史表。"""
+    _c = api_cost().get_json()
+    days = _c.get("days", {})
+    rows = ""
+    for d, v in sorted(days.items(), reverse=True)[:7]:
+        rows += "<tr><td>" + str(d) + "</td><td>" + str(v.get("calls", 0)) + "</td><td>" + str(v.get("local_tokens", 0)) + "</td><td>" + str(v.get("cloud_tokens", 0)) + "</td><td>¥" + "%.4f" % v.get("cost", 0.0) + "</td><td>¥" + "%.4f" % v.get("saved", 0.0) + "</td></tr>"
+    if not rows:
+        rows = "<tr><td colspan='6' class='think'>还没有记录，聊几句就有了</td></tr>"
+    css = "<style>*{box-sizing:border-box}body{margin:0;font-family:Segoe UI,sans-serif;background:#0e1116;color:#e8ebf3;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}.w{max-width:720px;width:100%}h1{color:#e8ebf3;margin:0 0 6px}.sub{color:#8b93a3;font-size:14px;margin-bottom:18px}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}.card{background:#151a26;border:1px solid #2a3140;border-radius:14px;padding:18px;text-align:center}.card .n{font-size:30px;font-weight:800;color:#45d483}.card .t{font-size:12px;color:#8b93a3;margin-top:6px}.card.cloud .n{color:#a78bfa}.card.calls .n{color:#5b5ff5}table{width:100%;border-collapse:collapse;background:#151a26;border:1px solid #2a3140;border-radius:14px;overflow:hidden}th,td{padding:10px 12px;border-bottom:1px solid #1a2030;font-size:13px;text-align:center;color:#cbd0dc}th{background:#1a2233;color:#8b93a3}.think{color:#6e7681;text-align:center;padding:20px}a{color:#a78bfa;text-decoration:none}.back{display:inline-block;margin-top:16px;font-size:13px}</style>"
+    html = ('<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>成本看板</title>' + css + '</head><body><div class="w">'
+            + '<h1>小焦成本看板</h1><div class="sub">本地免费 · 云端按量 · 智能调度省钱</div>'
+            + '<div class="cards"><div class="card calls"><div class="n">' + str(_c.get("calls", 0)) + '</div><div class="t">今日调用</div></div>'
+            + '<div class="card"><div class="n">¥' + ("%.4f" % _c.get("cost", 0.0)) + '</div><div class="t">今日花费</div></div>'
+            + '<div class="card cloud"><div class="n">¥' + ("%.4f" % _c.get("saved", 0.0)) + '</div><div class="t">今日节省</div></div></div>'
+            + '<table><tr><th>日期</th><th>调用数</th><th>本地token</th><th>云端token</th><th>花费</th><th>节省</th></tr>' + rows + '</table>'
+            + '<a class="back" href="/">回到小焦</a></div></body></html>')
+    return html
+
+@app.route("/api/screen")
+def api_screen():
+    """一键截屏: 返回截图URL(宠物/网页可显示)。用于看屏幕/看报错。"""
+    import os as _o
+    from PIL import ImageGrab
+    try:
+        out_dir = _o.path.join(_o.path.dirname(_o.path.abspath(__file__)), "media", "screen")
+        _o.makedirs(out_dir, exist_ok=True)
+        fp = _o.path.join(out_dir, datetime.now().strftime("%Y%m%d%H%M%S") + ".png")
+        ImageGrab.grab().save(fp)
+        rel = "/media/screen/" + _o.path.basename(fp)
+        return jsonify({"ok": True, "url": rel})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:100]}), 500
+
+
+@app.route("/api/vision")
+def api_vision():
+    """截图并让视觉模型「看懂」屏幕(用于看报错/界面)。视觉模型走配置(env XIAOJIAO_VISION_URL/MODEL), 未配则OCR兜底。"""
+    import os as _o, subprocess as _sp
+    from PIL import ImageGrab
+    try:
+        root = _o.path.dirname(_o.path.abspath(__file__))
+        out_dir = _o.path.join(root, "media", "screen")
+        _o.makedirs(out_dir, exist_ok=True)
+        fp = _o.path.join(out_dir, datetime.now().strftime("%Y%m%d%H%M%S") + ".png")
+        ImageGrab.grab().save(fp)
+        rel = "/media/screen/" + _o.path.basename(fp)
+    except Exception as e:
+        return jsonify({"ok": False, "error": "截屏失败: " + str(e)[:80]}), 500
+    q = (request.args.get("q") or "描述一下这个屏幕画面，重点看有没有报错/错误信息/安装界面")
+    vurl = _o.environ.get("XIAOJIAO_VISION_URL", "")
+    vmodel = _o.environ.get("XIAOJIAO_VISION_MODEL", "")
+    if vurl:
+        # 有视觉模型: 截图base64发给它
+        try:
+            import base64
+            b64 = base64.b64encode(open(fp, "rb").read()).decode()
+            import requests as _rq
+            rr = _rq.post(vurl + "/chat/completions", json={
+                "model": vmodel or "qwen2.5-vl",
+                "messages": [{"role": "user", "content": [{"type": "text", "text": q},
+                                                          {"type": "image_url", "image_url": {"url": "data:image/png;base64," + b64}}]}],
+                "max_tokens": 600}, timeout=120)
+            ans = rr.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            return jsonify({"ok": True, "url": rel, "desc": (ans or "").strip()[:900], "engine": "vlm"})
+        except Exception as e:
+            return jsonify({"ok": True, "url": rel, "desc": "视觉模型分析失败: " + str(e)[:100], "engine": "vlm-fail"})
+    # OCR 兜底
+    try:
+        import pytesseract
+        txt = pytesseract.image_to_string(fp, lang="chi_sim+eng").strip()
+        return jsonify({"ok": True, "url": rel, "desc": ("屏幕文字: " + (txt[:900] or "(未识别到)"))[:900], "engine": "ocr"})
+    except Exception:
+        return jsonify({"ok": True, "url": rel, "desc": "已保存截图(未装视觉模型/OCR，tesseract 或 Qwen2.5-VL 可启用真看图)", "engine": "none"})
 
 
 @app.route("/api/cost")
@@ -1079,6 +1439,47 @@ def api_cost():
                     "local_tokens": day.get("local_tokens", 0), "cloud_tokens": day.get("cloud_tokens", 0),
                     "cost": round(day.get("cost", 0.0), 4), "saved": round(max(saved, 0.0), 4),
                     "days": d})
+
+
+@app.route("/api/plugin/generate", methods=["POST"])
+def api_plugin_generate():
+    """自然语言造插件: 说需求 -> 用编码大脑生成插件代码 -> 自动注册即用。失败给模板。"""
+    import ast as _ast
+    d = request.get_json(force=True, silent=True) or {}
+    desc = (d.get("description") or "").strip()
+    name = (d.get("name") or "myplugin").strip().lower().replace(" ", "_")
+    if not desc:
+        return jsonify({"ok": False, "error": "缺少描述"}), 400
+    if not name.endswith(".py"):
+        name = name + ("" if name.endswith("_plugin") else "_plugin")
+    tname = name.replace(".py", "") + "_run"
+    prompt = ("你是小焦插件生成器。为需求生成 Python 插件 {file}.py。要求: 1) class MyPlugin 有 get_tool_descriptions() 返回 [{{\"name\":\"{tn}\",...}}]; 2) execute(tool_name,params) 实现; 3) 末尾 def get_plugin(): return MyPlugin(). 只输出完整Python代码。\n需求: {desc}").format(file=name, tn=tname, desc=desc)
+    code = ""
+    try:
+        import requests as _rq
+        rr = _rq.post(LLM_BASE.rstrip("/") + "/chat/completions",
+                     json={"model": "coder", "messages": [{"role": "system", "content": "你只输出 python 代码"}, {"role": "user", "content": prompt}],
+                           "max_tokens": 1600, "temperature": 0.3}, timeout=180)
+        code = (rr.json().get("choices", [{}])[0].get("message", {}).get("content") or "").replace("```python", "").replace("```", "").strip()
+        if not (code and "get_tool_descriptions" in code and "get_plugin" in code):
+            code = ""
+        else:
+            _ast.parse(code)
+    except Exception:
+        code = ""
+    if not code:
+        code = TPL.format(fname=name, tname=tname, desc_short=desc[:40])
+    fp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins", name)
+    try:
+        open(fp, "w", encoding="utf-8").write(code)
+    except Exception as e:
+        return jsonify({"ok": False, "error": "写插件失败: " + str(e)[:80]}), 500
+    try:
+        global PLUGINS
+        PLUGINS = load_plugins()
+    except Exception:
+        pass
+    return jsonify({"ok": True, "name": name.split(".py")[0], "file": "plugins/" + name, "note": "已生成并注册，设置->插件 可开关"})
 
 
 @app.route("/api/presets")
@@ -1431,7 +1832,8 @@ def api_chat():
     # 先写用户 + 占位(空)小焦消息：刷新后能读到"正在回答"
     append_msg("用户", user_input)
     append_msg("小焦", "⏳__pending__")
-    answer, online, info, needs_confirm, tool_trace = agent_run(user_input)
+    lean = bool((request.get_json(force=True, silent=True) or {}).get("lean", False))
+    answer, online, info, needs_confirm, tool_trace = agent_run(user_input, lean=lean)
     # 把占位小焦消息更新为真实回答（含最后那句提示）
     answer_final = answer
     if not answer_final:

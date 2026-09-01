@@ -49,7 +49,14 @@ def resolve_llama_paths():
     return server, gguf
 
 def start_llama_brain():
-    """启动本地大模型（与原函数保持一致）"""
+    """启动本地大模型。小焦脑优先走 llama-swap(9292)；若已在线则跳过冗余8080直连，避免冲突/占显存/卡住。"""
+    try:
+        api = BRAIN.get("api", {}); burl = (api.get("base_url") or "").lower()
+        if "9292" in burl and requests.get("http://127.0.0.1:9292/v1/models", timeout=3).status_code == 200:
+            print("✅ 大脑已由 llama-swap(9292) 管理，跳过冗余直连(8080)。")
+            return None
+    except Exception:
+        pass
     server, gguf = resolve_llama_paths()
     port = int(BRAIN.get("llama", {}).get("port", 8080))
     if not (server and gguf and os.path.exists(server) and os.path.exists(gguf)):
@@ -72,6 +79,27 @@ def start_llama_brain():
     print(f"⚠️ 大脑启动超时（可能在加载模型），小焦仍会尝试连接。")
     return proc
 
+def start_pet():
+    """自动启动桌面宠物(Electron 透明窗)。若 npm start 失败则用 pywebview 版。"""
+    try:
+        import subprocess as _sp
+        root = os.path.dirname(os.path.abspath(__file__))
+        desk = os.path.join(root, "desktop")
+        exe = os.path.join(desk, "node_modules", "electron", "dist", "electron.exe")
+        if os.path.exists(exe):
+            # 直接用 electron.exe 启动(比 npm start 可靠), 加载 /pet
+            _sp.Popen([exe, desk], cwd=desk, creationflags=subprocess.CREATE_NO_WINDOW)
+            print("🐳 桌面宠物已启动 (Electron 透明窗)")
+            return True
+        # 兜底: pywebview
+        _sp.Popen([sys.executable, os.path.join(root, "jarvis_desktop.py")], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW)
+        print("🐳 桌面宠物已启动 (pywebview)")
+        return True
+    except Exception as e:
+        print("⚠️ 宠物启动失败:", str(e)[:50])
+        return False
+
+
 def start_dsh_bridge():
     """启动 DSH 桥接 HTTP 服务（端口 5001）"""
     if not DSH_ENABLED:
@@ -91,7 +119,7 @@ def start_dsh_bridge():
         cwd=os.path.dirname(__file__)
     )
     # 等待服务就绪（最多 10 秒；一起就绪最理想，没就绪也不报错，稍后会自动可用）
-    for _ in range(10):
+    for _ in range(25):
         try:
             if requests.get("http://127.0.0.1:5001/health", timeout=1).status_code == 200:
                 print("✅ DSH 桥接服务已就绪")
@@ -99,7 +127,7 @@ def start_dsh_bridge():
         except Exception:
             pass
         time.sleep(1)
-    print("ℹ️ DSH 桥接已在后台启动（若稍后未就绪，检查 deepseek-harness-sdk 是否安装）。")
+    print("✅ DSH 桥接已在后台启动（端口5001）；首次需加载 deepseek_harness，稍等几秒就绪。")
     return proc
 
 def start_llama_swap():
@@ -137,13 +165,13 @@ def main():
     # 1. 先启动 DSH 桥接（在大模型加载前，避免资源竞争导致它起不来）
     dsh_proc = start_dsh_bridge()
 
-    # 2. 启动大模型大脑
+    # 2b. 先拉起 llama-swap(9292), 让大脑由它管理(8080直连会检测到9292后自动跳过)
+    llama_swap_proc = start_llama_swap()
+
+    # 2. 启动大模型大脑(若9292在线则跳过冗余8080, 不再卡)
     llama_proc = None
     if ENGINE in ("auto", "llama"):
         llama_proc = start_llama_brain()
-
-    # 2b. 自动拉起 llama-swap(多大脑秒级切换, 独立9292端口)
-    llama_swap_proc = start_llama_swap()
 
     # 3. 确定 Web 端口
     port = 5000
@@ -155,6 +183,9 @@ def main():
     else:
         port = int(CONTROL.get("web_port", os.environ.get("PORT", 5000)))
     os.environ["PORT"] = str(port)
+
+    # 3b. 自动启动桌面宠物(你重启 start_xiaojiao 就带起宠物)
+    start_pet()
 
     # 4. 打开浏览器
     print(f"🌐 启动小焦 Web: http://127.0.0.1:{port}")

@@ -69,3 +69,21 @@ Thumbs.db
 logs/
 
 self_learn/little_brain_knowledge.txt
+# 开发调试
+_dbg*
+_job*
+_launch*
+_fix_*
+*.pyc
+__pycache__/
+node_modules/
+desktop/node_modules/
+# 备份
+bak/
+*~
+# PID/temp
+_pid.txt
+_start_app.bat
+# node_modules (electron)
+desktop/node_modules/
+desktop/package-lock.json

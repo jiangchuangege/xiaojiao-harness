@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """把训练数据池清洗为干净、规模可控的 UTF-8 语料文件。"""
 import re, random, os
 SRC = "training_data_pool.txt"; DST = "training_data_pool_clean.txt"; MAX_LINES = 1_000_000

@@ -188,12 +188,41 @@ flowchart LR
     subgraph XJ["小焦 Web(5000)"]
         P["🎭 Agent 预设 presets/<br/>人格+大脑+工具开关, 保存即应用"]
         M["🧠 大脑仓库监控 /monitor<br/>状态/显存/切换/调优/添加"]
+        COST["💰 成本看板 /cost<br/>今日调用/Token/花费/节省"]
     end
     P -->|加载预设| C["xiaojiao_control.json<br/>(合并配置, 热更新不重启)"]
     M -->|每2秒| A["/api/monitor"]
     M -->|操作| B["brain_manager.switch_to<br/>llama-swap(9292) + ComfyUI(8188)"]
     XJ -->|/v1| D["DSH 桥接(5001)<br/>deepseek-harness → DSH 插件生态"]
+    XJ -->|成本记录| J["_record_usage(写入cost_daily.json)"]
+    COST --> J
 ```
+
+---
+
+## 7d. 🐳 桌面贾维斯宠物（Electron）
+
+小焦有了**桌面宠物**——Electron 透明置顶窗口，全息核心，点它弹四格菜单：
+
+```mermaid
+flowchart TD
+    PET["🐳 Electron 透明置顶窗口(520×660)<br/>desktop/main.js"]
+    PET -->|"点击核心"| MENU["弹出四格菜单"]
+    MENU --> V["🎤 语音通话\nWeb Speech ASR + Chatterbox TTS"]
+    MENU --> CHAT["💬 聊天\n调 /api/chat(同网页版)"]
+    MENU --> ENV["🛠️ 装小焦\n秒调 /api/env 体检\n✅/❌ 逐条显示"]
+    MENU --> CLOSE["✖ 收起"]
+    PET -->|"截图"| VIS["📷 /api/vision\n视觉模型描述\n(配 XIAOJIAO_VISION_URL)"]
+    VIS --> QV["Qwen2.5-VL / 兜底 OCR"]
+```
+
+- **透明置顶**：始终在最上层，不影响鼠标操作。
+- **全息核心**：CSS 渐变 + 脉冲动画，点击弹出菜单。
+- **语音通话**：按住 🎤 → ASR 识别 → `/api/chat` → TTS 朗读（Chatterbox sr=24000）。
+- **装小焦体检**：秒级环境检测（Python/llama/ComfyUI/GPU），✅/❌ 明确显示。
+- **视觉识图**：拍照 → `/api/vision` → 视觉模型描述（Qwen2.5-VL 就绪，8G 显卡可用）。
+
+> 详细见 [docs/jarvis-desktop.md](jarvis-desktop.md)。宠物随 `python start_xiaojiao.py` 自动拉起。
 
 - **Agent 预设**：`presets/*.json`（人格+大脑+工具开关），设置页卡片管理，Web 编辑/增删，**保存即应用**（合并配置 + 热更新，不重启）。
 - **大脑仓库监控**：`/monitor` 实时看所有大脑状态/显存/内存/任务，直接切换/调优/添加大脑。

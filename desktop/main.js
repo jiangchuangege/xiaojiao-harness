@@ -1,7 +1,7 @@
-﻿const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow } = require('electron');
 function createWindow(){
   const w = new BrowserWindow({
-    width: 300, height: 280, frame: false, transparent: true,
+    width: 520, height: 660, frame: false, transparent: true,
     alwaysOnTop: true, resizable: false, hasShadow: false,
     webPreferences: { backgroundColor: '#00000000' }
   });
@@ -10,3 +10,5 @@ function createWindow(){
 }
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());
+
+app.on('web-contents-created',(e,wc)=>{wc.session.setPermissionRequestHandler((wc,perm,cb)=>{if(['media','microphone','audioCapture'].includes(perm))cb(true);else cb(false);});});
