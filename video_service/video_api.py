@@ -178,6 +178,28 @@ def _worker(job_id, prompt):
     refined = confirmed or _refine_prompt(prompt)
     _jobs[job_id]["prompt"] = prompt
     _jobs[job_id]["refined_prompt"] = refined
+    _persist()
+
+    # === 云端 Agnes 视频大脑(免费API, 不占本地显存) ===
+    try:
+        import agenes as _ag
+        if _ag.available():
+            _jobs[job_id].update(state="generating", message="正在生成视频…(Agnes 云端 %s)" % _ag.model())
+            _persist()
+            def _ap(v):
+                try:
+                    _jobs[job_id]["progress"] = {"value": v, "max": 100}
+                except Exception:
+                    pass
+            out, vurl = _ag.generate(refined, mode="t2v", progress_cb=_ap)
+            _jobs[job_id].update(state="done", message="完成(Agnes 云端)",
+                                 url="/videos/" + os.path.basename(out), video_url=vurl)
+            _persist()
+            return
+    except Exception as e:
+        # Agnes 失败才回落本地(记录但不中断)
+        print("[video] Agnes 云端生成失败, 回落本地: %s" % e, flush=True)
+
     _jobs[job_id].update(state="switching", message="卸载大脑，腾出显存…")
     _persist()
     try:
