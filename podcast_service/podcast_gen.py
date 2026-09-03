@@ -19,9 +19,8 @@ def _log(msg):
     print("[podcast] %s" % msg, flush=True)
 
 # ============ ① 剧本生成(用聊天大脑) ============
-def _llm_chat(messages, temperature=0.8, max_tokens=1200):
-    """调小焦聊天大脑(llama-swap 9292) 生成文本。"""
-    global _llm
+def _llm_chat(messages, temperature=0.8, max_tokens=1200, retries=2):
+    """调小焦聊天大脑(llama-swap 9292) 生成文本。带重试(应对短时过载/上下文满)。"""
     import requests
     cfg = _load_control()
     api = cfg.get("brain", {}).get("api", {})
@@ -30,9 +29,19 @@ def _llm_chat(messages, temperature=0.8, max_tokens=1200):
     url = base.rstrip("/") + "/chat/completions"
     payload = {"model": model, "messages": messages,
                "temperature": temperature, "max_tokens": max_tokens}
-    r = requests.post(url, json=payload, timeout=180)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    last = None
+    for attempt in range(retries + 1):
+        try:
+            r = requests.post(url, json=payload, timeout=180)
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            last = e
+            # 502/上下文满 → 缩短上下文(去掉最旧的几条历史)再试
+            if attempt < retries and len(messages) > 2:
+                messages = messages[:1] + messages[-3:]   # 保留 system + 最近3条
+            print("[podcast] LLM调用第%s次失败: %s, 重试..." % (attempt + 1, e), flush=True)
+    raise last if last else RuntimeError("LLM 调用失败")
 
 def _load_control():
     try:
@@ -40,28 +49,63 @@ def _load_control():
     except Exception:
         return {}
 
-def generate_script(topic, host_a="小李", host_b="小焦", rounds=4, style="轻松有趣"):
-    """让 LLM 生成一段双人播客对话脚本, 返回 [(speaker, text), ...]。"""
-    system = ("你是资深播客编剧。请围绕主题写一段%d轮(每轮两人各一句)的中文双人播客对话，"
-              "主持人是「%s」和「%s」，风格%s。直接输出纯文本对话，格式每行："
-              "[%s]: 内容  或  [%s]: 内容，不要多余说明。" % (rounds, host_a, host_b, style, host_a, host_b))
-    user = "本期播客主题:%s" % topic
-    content = _llm_chat([{"role": "system", "content": system}, {"role": "user", "content": user}])
-    lines = []
-    for ln in content.splitlines():
-        ln = ln.strip()
-        if not ln:
+def generate_script(topic, host_a="小李", host_b="小焦", rounds=4, style="轻松有趣", minutes=None):
+    """按目标时长生成中文双人播客脚本, 返回 [(speaker, text), ...]。
+    默认 minutes=None → 用 rounds(几轮)控制; 给 minutes 则切章节、按需生成足量中文内容。
+    强制全中文, 内容充实(每句展开讲), 可支撑几到几十分钟播客。"""
+    if minutes is None:
+        minutes = max(1, rounds)  # 无时长时按轮数给个基本量
+    # 目标总字(中文播客语速≈250字/分钟 → 每句50~90字)
+    total_lines = max(6, min(60, int(minutes * 4.5)))   # 每分钟左右~4-5句
+    # 单次生成上限(防超上下文), 切成多段逐段生成
+    per_batch = 6
+
+    n = _load_control().get("brain", {}).get("model") or "xiaojiao"
+    style_desc = {"轻松有趣":"轻松有趣、气氛活跃、像和朋友聊天", "专业严谨":"专业严谨、逻辑清晰、有理有据",
+                  "幽默吐槽":"幽默吐槽、轻松调侃、好笑", "深度访谈":"深度访谈、像专家对谈、层层深入"}.get(style, style)
+
+    all_lines = []
+    # 先写个开场白(小焦)
+    all_lines.append((host_a, "哈喽大家好，欢迎收听今天的播客！我是%s，今天咱们来聊聊「%s」。先请%s给大家打个招呼吧。" % (host_a, topic, host_b)))
+
+    batches = (total_lines + per_batch - 1) // per_batch
+    for bi in range(batches):
+        # 这段要覆盖的子话题/要点
+        seg = "第%d段(共%d段)：" % (bi + 1, batches)
+        system = (
+            "你是资深中文播客编剧。请围绕主题写一段双人中文播客对话（你只需要写这一小段）。"
+            "两位主持人「%s」和「%s」，风格：%s。\n"
+            "硬性要求：\n"
+            "- 必须全部用简体中文，绝不要出现哪怕一个英文单词（人名/专有名词也要写中文）。\n"
+            "- 每句要说完整、内容充实（一句至少50个字，像真人聊天那样自然展开，有观点、有例子、有互动）。\n"
+            "- 两人要一来一回、有来有往，像真的在聊天，不要各说各的。\n"
+            "- 直接输出纯文本，每行格式：[%s]: 内容  或  [%s]: 内容，不要多余说明。\n"
+            "这段是整期播客的%s，要顺着前面继续聊，不要重头开始、不要写开场白。"
+            % (host_a, host_b, style_desc, host_a, host_b, seg))
+        user = "本期播客主题：%s。请接着前面内容，写出这一小段（%d句左右）。" % (topic, per_batch)
+        try:
+            content = _llm_chat([{"role": "system", "content": system}, {"role": "user", "content": user}],
+                                max_tokens=1500)
+        except Exception as e:
+            print("[podcast] 剧本段%s失败: %s" % (bi, e), flush=True)
             continue
-        # 解析 [host]: text
-        for sp in (host_a, host_b):
-            tag = "[%s]" % sp
-            if ln.startswith(tag):
-                lines.append((sp, ln[len(tag):].strip()))
-                break
-    # 兜底: 若没解析出来, 按行当作同一主持人
-    if not lines and content.strip():
-        lines = [(host_a, x) for x in content.splitlines() if x.strip()]
-    return lines or [(host_a, "大家好,欢迎收听本期播客,我们来聊聊「%s」。" % topic)]
+        for ln in content.splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            for sp in (host_a, host_b):
+                tag = "[%s]" % sp
+                if ln.startswith(tag):
+                    all_lines.append((sp, ln[len(tag):].strip()))
+                    break
+        # 段间停顿感: 不加空行, 但保存进度
+    # 去重相邻完全相同的发言(LLM可能重复)
+    dedup = []
+    for sp, t in all_lines:
+        if not t.strip():
+            continue
+        dedup.append((sp, t.strip()))
+    return dedup or [(host_a, "大家好，欢迎收听本期播客，我们来聊聊「%s」。" % topic)]
 
 # ============ ② TTS 逐句合成 ============
 def _get_tts():
@@ -178,24 +222,24 @@ _JOBS = {}
 def _make_job_id():
     return datetime.datetime.now().strftime("%Y%m%d%H%M%S") + str(int(time.time() * 1000) % 1000)
 
-def generate_podcast(topic, host_a="小李", host_b="小焦", rounds=4, style="轻松有趣", use_cover=True, build_cover=True):
-    """主入口: 生成播客包, 返回 job_id(后台线程执行)。"""
+def generate_podcast(topic, host_a="小李", host_b="小焦", rounds=4, style="轻松有趣", use_cover=True, build_cover=True, minutes=None):
+    """主入口: 生成播客包, 返回 job_id(后台线程执行)。minutes=目标时长(分钟), 给足则生成较长内容。"""
     jid = _make_job_id()
-    _JOBS[jid] = {"state": "queued", "progress": 0, "message": "排队中", "topic": topic, "audio": None, "cover": None, "error": None, "ts": time.time()}
-    threading.Thread(target=_run_job, args=(jid, topic, host_a, host_b, rounds, style, use_cover, build_cover), daemon=True).start()
+    _JOBS[jid] = {"state": "queued", "progress": 0, "message": "排队中", "topic": topic, "audio": None, "cover": None, "error": None, "ts": time.time(), "minutes": minutes}
+    threading.Thread(target=_run_job, args=(jid, topic, host_a, host_b, rounds, style, use_cover, build_cover, minutes), daemon=True).start()
     return jid
 
-def _run_job(jid, topic, host_a, host_b, rounds, style, use_cover, build_cover):
+def _run_job(jid, topic, host_a, host_b, rounds, style, use_cover, build_cover, minutes=None):
     job = _JOBS[jid]
     try:
-        _log("开始生成播客: %s" % topic)
+        _log("开始生成播客: %s (目标%s分钟)" % (topic, minutes if minutes else "短版"))
         # 1. 出剧本(用聊天大脑, 剧本生成后它仍在显存)
         job["state"], job["message"] = "script", "正在撰写播客剧本…"
-        job["progress"] = 10
-        lines = generate_script(topic, host_a, host_b, rounds, style)
+        job["progress"] = 8
+        lines = generate_script(topic, host_a, host_b, rounds, style, minutes=minutes)
         job["script"] = lines
-        job["message"] = "剧本完成, 开始配音…"
-        job["progress"] = 30
+        job["message"] = "剧本完成(共 %d 句), 开始配音…" % len(lines)
+        job["progress"] = 25
 
         # 2. TTS 逐句合成
         job["state"] = "tts"
@@ -204,7 +248,7 @@ def _run_job(jid, topic, host_a, host_b, rounds, style, use_cover, build_cover):
             wp = os.path.join(_MEDIA, "%s_%02d.wav" % (jid, i))
             r = _tts_speak(text, wp)
             wavs.append(wp if r else None)
-            job["progress"] = 30 + int(50 * (i + 1) / max(1, len(lines)))
+            job["progress"] = 25 + int(55 * (i + 1) / max(1, len(lines)))
             job["message"] = "正在配音 %d/%d…" % (i + 1, len(lines))
 
         # 3. 拼接

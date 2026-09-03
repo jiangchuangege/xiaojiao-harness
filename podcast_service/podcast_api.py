@@ -47,6 +47,16 @@ _PAGE = """<!DOCTYPE html>
    <div><label>对话轮数</label><select id="rounds"><option>2</option><option selected>4</option><option>6</option><option>8</option></select></div>
    <div><label>风格</label><select id="style"><option>轻松有趣</option><option>专业严谨</option><option>幽默吐槽</option><option>深度访谈</option></select></div>
   </div>
+  <label>目标时长</label>
+  <select id="minutes">
+   <option value="">短播客(约1-2分钟)</option>
+   <option value="5">约5分钟</option>
+   <option value="10">约10分钟</option>
+   <option value="15">约15分钟</option>
+   <option value="20">约20分钟</option>
+   <option value="30">约30分钟</option>
+  </select>
+  <div style="color:#7d8bb0;font-size:12px;margin-top:6px">时长越长 = 内容越充实、生成越久（20分钟约需几分钟排队生成）</div>
   <div class="row">
    <div style="display:flex;align-items:center;gap:8px;margin-top:18px">
      <input type="checkbox" id="cover" checked style="width:auto"><span class="lbl">用 SD1.5 生成封面图</span>
@@ -72,6 +82,7 @@ function go(){
   fetch('/api/podcast',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({topic:topic,host_a:document.getElementById('ha').value,host_b:document.getElementById('hb').value,
       rounds:parseInt(document.getElementById('rounds').value),style:document.getElementById('style').value,
+      minutes:document.getElementById('minutes').value||null,
       build_cover:document.getElementById('cover').checked})})
    .then(function(r){return r.json();}).then(function(d){
      if(!d.ok){st.textContent='提交失败: '+d.error;btn.disabled=false;btn.textContent='🎬 生成播客';return;}
@@ -117,6 +128,7 @@ def api_generate():
             style=(d.get("style") or "轻松有趣"),
             use_cover=bool(d.get("use_cover", True)),
             build_cover=bool(d.get("build_cover", True)),
+            minutes=int(d.get("minutes")) if str(d.get("minutes") or "").isdigit() else None,
         )
         return jsonify({"ok": True, "jid": jid})
     except Exception as e:
