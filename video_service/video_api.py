@@ -9,6 +9,23 @@ bp = Blueprint("video_service", __name__)
 _jobs = {}
 _JOBS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_jobs.json")
 
+def video_mode():
+    """视频大脑模式: 'api'(云端 Agnes API) 或 'local'(本地 ComfyUI+Wan)。
+    环境变量 XIAOJIAO_VIDEO_MODE 优先, 其次控制文件 brain.video_mode, 默认 api。"""
+    m = os.environ.get("XIAOJIAO_VIDEO_MODE", "").strip().lower()
+    if m in ("api", "local"):
+        return m
+    try:
+        import json as _j, os as _o
+        root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+        d = _j.load(open(_o.path.join(root, "xiaojiao_control.json"), encoding="utf-8"))
+        mm = (d.get("brain", {}).get("video_mode", "") or "").strip().lower()
+        if mm in ("api", "local"):
+            return mm
+    except Exception:
+        pass
+    return "api"
+
 def _sweep():
     """清理卡死/超时(30分钟)的 switching/generating 任务，避免'请稍候'死锁。"""
     now = time.time()
@@ -173,32 +190,43 @@ def _refine_prompt(raw, save=True):
 
 def _worker(job_id, prompt):
     confirmed = _jobs[job_id].get("confirmed_refined") or ""
+    # === 模式判定: api(云端 Agnes) vs local(本地 ComfyUI) ===
+    use_cloud = video_mode() == "api"
+    if use_cloud:
+        try:
+            import cloud_video as _cv
+            use_cloud = _cv.available()   # api 模式下还得有配置好的视频模型(带key)才走云端
+        except Exception:
+            use_cloud = False
+    if use_cloud:
+        # api 模式: 不卸载大脑/不占显存/不本地精炼, 直接透传给云端(通用适配器自动识别协议)
+        refined = confirmed or prompt
+        _jobs[job_id]["prompt"] = prompt
+        _jobs[job_id]["refined_prompt"] = refined
+        _persist()
+        _jobs[job_id].update(state="generating", message="正在生成视频…(云端 %s)" % _cv.provider())
+        _persist()
+        try:
+            def _ap(v):
+                try:
+                    _jobs[job_id]["progress"] = {"value": v, "max": 100}
+                except Exception:
+                    pass
+            out, vurl = _cv.generate(refined, mode="ti2vid", progress_cb=_ap)
+            _jobs[job_id].update(state="done", message="完成(云端 %s)" % _cv.provider(),
+                                 url="/videos/" + os.path.basename(out), video_url=vurl)
+            _persist()
+            return
+        except Exception as e:
+            print("[video] 云端视频生成失败, 回落本地: %s" % e, flush=True)
+
+    # === 本地 ComfyUI 模式(卸载大脑→切换→生成→恢复, 带精炼) ===
     _jobs[job_id].update(state="switching", message="精炼提示词…")
     _persist()
     refined = confirmed or _refine_prompt(prompt)
     _jobs[job_id]["prompt"] = prompt
     _jobs[job_id]["refined_prompt"] = refined
     _persist()
-
-    # === 云端 Agnes 视频大脑(免费API, 不占本地显存) ===
-    try:
-        import agenes as _ag
-        if _ag.available():
-            _jobs[job_id].update(state="generating", message="正在生成视频…(Agnes 云端 %s)" % _ag.model())
-            _persist()
-            def _ap(v):
-                try:
-                    _jobs[job_id]["progress"] = {"value": v, "max": 100}
-                except Exception:
-                    pass
-            out, vurl = _ag.generate(refined, mode="ti2vid", progress_cb=_ap)
-            _jobs[job_id].update(state="done", message="完成(Agnes 云端)",
-                                 url="/videos/" + os.path.basename(out), video_url=vurl)
-            _persist()
-            return
-    except Exception as e:
-        # Agnes 失败才回落本地(记录但不中断)
-        print("[video] Agnes 云端生成失败, 回落本地: %s" % e, flush=True)
 
     _jobs[job_id].update(state="switching", message="卸载大脑，腾出显存…")
     _persist()
@@ -256,6 +284,27 @@ def api_video_refine():
         return _p
     zh = _translate_zh(refined) if len(refined) > 15 else prompt
     return jsonify({"ok": True, "refined": refined, "zh": zh})
+
+
+@bp.route("/api/video/mode", methods=["GET", "POST"])
+def api_video_mode():
+    """读/切视频大脑模式: api(云端 Agnes) / local(本地 ComfyUI)。写入 brain.video_mode。"""
+    if request.method == "POST":
+        d = request.get_json(silent=True) or {}
+        m = (d.get("mode") or "").strip().lower()
+        if m not in ("api", "local"):
+            return jsonify({"ok": False, "error": "mode 只能是 api 或 local"}), 400
+        try:
+            import json as _j, os as _o
+            root = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+            p = _o.path.join(root, "xiaojiao_control.json")
+            cfg = _j.load(open(p, encoding="utf-8"))
+            cfg.setdefault("brain", {})["video_mode"] = m
+            _j.dump(cfg, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": True, "mode": m})
+    return jsonify({"ok": True, "mode": video_mode()})
 
 
 @bp.route("/api/video", methods=["POST"])

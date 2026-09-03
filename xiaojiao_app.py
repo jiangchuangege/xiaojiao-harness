@@ -2067,10 +2067,15 @@ def _get_models():
 
 
 def _save_control(brain=None, models=None):
+    # 关键: models 若没显式传, 就**合并**当前与传入的, 绝不因"保存通用设置"而清空用户加的外接模型
+    existing = _get_models()
+    merged = models if models is not None else existing
+    # 若来自 brain 切换等只传部分, 仍保留全部现有 models
     saved = {"model_name": MODEL_NAME,
-             "brain": brain if brain else CONTROL.get("brain", {}),
+             "brain": brain if brain else dict(CONTROL.get("brain", {})),
              "role": SYSTEM_PROMPT, "capabilities": CAP, "behavior": BEH,
-             "models": models if models is not None else _get_models(), "dsh": CONTROL.get("dsh", {})}
+             "models": (merged if merged else existing),
+             "dsh": CONTROL.get("dsh", {})}
     json.dump(saved, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=2)
     reload_control()
@@ -2667,7 +2672,15 @@ HTML = r"""<!DOCTYPE html>
 <div id="videoBg" class="modal-bg" style="display:none">
   <div class="modal modal-video">
     <h3>🎬 生成视频</h3>
-    <p style="color:#8b93a3;font-size:13px;margin:0 0 10px">输入场景，小焦先用大脑把它改写成电影级提示词，再用 ComfyUI+Wan2.1 本地生成真视频。</p>
+    <div style="display:flex;align-items:center;gap:10px;margin:0 0 10px">
+      <span style="font-size:12px;color:#8b93a3">生成引擎：</span>
+      <select id="vengine" onchange="setVideoMode(this.value)" style="width:auto;padding:6px 10px;border-radius:8px;border:1px solid #2a3140;background:#0e1116;color:#e8ebf3">
+        <option value="api">☁️ 云端 Agnes API（免费，不占显存）</option>
+        <option value="local">💻 本地 ComfyUI+Wan2.1</option>
+      </select>
+      <span id="vmodeH" style="font-size:11px;color:#7a8290"></span>
+    </div>
+    <p style="color:#8b93a3;font-size:13px;margin:0 0 10px">输入场景，小焦生成真视频。云端 API 快且不占显存，本地用 ComfyUI+Wan2.1。</p>
     <textarea id="vq" placeholder="例如：樱花飘落的海边、一只猫在阳光下打盹…" rows="3" style="width:100%;resize:vertical"></textarea>
     <div id="vpv" class="vpv" style="display:none"></div>
     <div id="vconfirm" class="m-actions" style="display:none"><button onclick="openVideo()">重输</button><button class="primary" onclick="confirmVideo()">✅ 确认并生成</button></div>
@@ -2818,7 +2831,12 @@ async function openWsFile(name){try{const d=await (await fetch("/api/ws/open",{m
   cur.innerHTML="<div class=\"modal modal-wide\"><h3>📄 "+esc(d.name)+"</h3><pre class=\"wspre\">"+esc(d.content)+"</pre><div class=\"m-actions\"><button onclick=\"closeSearch()\">关闭</button></div></div>";
 }catch(e){alert("读取失败");}}
 
-async function openVideo(){document.getElementById('videoBg').style.display='flex';const i=document.getElementById('vq');i.value='';i.focus();document.getElementById('vpv').style.display='none';document.getElementById('vconfirm').style.display='none';}
+async function loadVideoMode(){try{const d=await (await fetch('/api/video/mode')).json();if(d.ok){const sel=document.getElementById('vengine');sel.value=d.mode||'api';updateVmodeH();}}catch(e){}}
+function updateVmodeH(){const sel=document.getElementById('vengine');const h=document.getElementById('vmodeH');if(!h)return;
+  if(sel.value==='api'){h.textContent='（云端，约1-2分钟，省显存）';}
+  else{h.textContent='（本地，需显存切换）';}}
+async function setVideoMode(v){try{const d=await (await fetch('/api/video/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:v})})).json();if(d.ok)updateVmodeH();}catch(e){}}
+async function openVideo(){document.getElementById('videoBg').style.display='flex';const i=document.getElementById('vq');i.value='';i.focus();document.getElementById('vpv').style.display='none';document.getElementById('vconfirm').style.display='none';loadVideoMode();}
 function closeVideo(){document.getElementById('videoBg').style.display='none';}
 async function startVideo(){const q=document.getElementById('vq').value.trim();if(!q){return;}
   const pv=document.getElementById('vpv');pv.style.display='block';pv.innerHTML='⏳ 小焦正在精炼提示词…';document.getElementById('vconfirm').style.display='none';
@@ -2828,10 +2846,13 @@ async function startVideo(){const q=document.getElementById('vq').value.trim();i
    window._vq=q; window._vr=d.refined;
   }catch(e){pv.innerHTML='⚠️ '+esc(e.message);}}
 async function confirmVideo(){const q=window._vq||'', rf=window._vr||'';
+  const sel=document.getElementById('vengine');const isApi=sel&&sel.value==='api';
+  // api 模式用原话(云端直接生成, 不绕本地精炼); local 模式用精炼后的英文提示词
+  const usePrompt=isApi?q:(rf||q);
   closeVideo();
-  const m=document.createElement('div');m.className='m bot';m.innerHTML='<div class="b">🎬 小焦已学习，正在切换视频模型…</div>';feed.appendChild(m);feed.scrollTop=feed.scrollHeight;
+  const m=document.createElement('div');m.className='m bot';m.innerHTML='<div class="b">🎬 小焦'+(isApi?'已发起云端视频生成…':'已学习，正在切换视频模型…')+'</div>';feed.appendChild(m);feed.scrollTop=feed.scrollHeight;
   const b=m.querySelector('.b');
-  try{const d=await (await fetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:q,refined:rf})})).json();
+  try{const d=await (await fetch('/api/video',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:q,refined:usePrompt})})).json();
    if(d.busy){b.innerHTML='⏳ 正在生成/切换模型中，请稍候…';return;}
    if(!d.ok){b.innerHTML='⚠️ '+esc(d.error||'启动失败');return;}
    try{localStorage.setItem('xj_video_job',d.job);}catch(e){}
