@@ -52,11 +52,11 @@ _PAGE = """<!DOCTYPE html>
    <option value="">短播客(约1-2分钟)</option>
    <option value="5">约5分钟</option>
    <option value="10">约10分钟</option>
-   <option value="15">约15分钟</option>
+   <option value="15" selected>约15分钟</option>
    <option value="20">约20分钟</option>
    <option value="30">约30分钟</option>
   </select>
-  <div style="color:#7d8bb0;font-size:12px;margin-top:6px">时长越长 = 内容越充实、生成越久（20分钟约需几分钟排队生成）</div>
+  <div style="color:#7d8bb0;font-size:12px;margin-top:6px">时长越长 = 内容越充实、生成越久（约15分钟需排队生成几分钟）</div>
   <div class="row">
    <div style="display:flex;align-items:center;gap:8px;margin-top:18px">
      <input type="checkbox" id="cover" checked style="width:auto"><span class="lbl">用 SD1.5 生成封面图</span>
