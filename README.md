@@ -607,6 +607,10 @@ flowchart LR
 
 > 打开 **`http://127.0.0.1:5000/monitor`**。详见 [docs/monitor.md](docs/monitor.md)。
 
+## 🗄️ 一键加模型
+设置→模型→「一键加本地GGUF」→填名字/路径/ctx→自动配置(不写代码)。详情见 `docs/coding-brain.md`。
+
+
 ## 🙏 致谢（核心工具的作者们）
 
 小焦能"秒级切换、真生成视频"，站在这些超棒的开源项目肩膀上：
@@ -672,6 +676,3 @@ flowchart LR
 
 </div>
 
-
-## 🗄️ 一键加模型
-设置→模型→「一键加本地GGUF」→填名字/路径/ctx→自动配置(不写代码)。详情见 `docs/coding-brain.md`。

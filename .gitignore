@@ -87,3 +87,19 @@ _start_app.bat
 # node_modules (electron)
 desktop/node_modules/
 desktop/package-lock.json
+
+# ---------- 生成产物 / 个人记录 ----------
+videos/
+media/
+cost_daily.json
+*.mp4
+*.png
+*.jpg
+*.jpeg
+monitor.html
+_dbg*
+_job*
+_launch*
+_fix_*
+_temp_*
+push_*.py
