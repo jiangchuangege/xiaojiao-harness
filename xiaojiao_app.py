@@ -1627,6 +1627,17 @@ try:
 except Exception as _me:
     print("⚠️ 监控面板未加载:", _me)
 
+# 🎙️ 播客大脑(podcast_service/)：/podcast + /api/podcast
+_pdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "podcast_service")
+if _pdir not in sys.path:
+    sys.path.insert(0, _pdir)
+try:
+    from podcast_api import bp as _pod_bp
+    app.register_blueprint(_pod_bp)
+    print("🎙️ 播客大脑已挂载（LLM写稿 + Chatterbox配音 + SD1.5封面）")
+except Exception as _pe:
+    print("⚠️ 播客大脑未挂载:", _pe)
+
 
 
 def _hist_json():

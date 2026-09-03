@@ -20,6 +20,10 @@ BRAINS = {
         "name": "编码大脑 (Qwen3-8B 工具·代码)", "port": 9292,
         "type": "llama", "vram_gb": 5.2, "state": "OFF",
     },
+    "podcast": {  # 播客大脑：Chatterbox TTS + SD1.5 封面 (用时候加载, 用别的就替换/卸载)
+        "name": "播客大脑 (LLM写稿+配音+封面)", "port": 5000,
+        "type": "podcast", "vram_gb": 6.0, "state": "OFF",
+    },
     # 未来扩展(示例, 加进 BRAINS 即可被调度):
     # "image": {"name":"图像大脑(SD3)","port":8189,"type":"comfy","vram_gb":4.0,"state":"OFF"},
     # "reason": {"name":"推理大脑(DeepSeek)","port":8081,"type":"llama","vram_gb":6.0,"state":"OFF"},

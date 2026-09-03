@@ -59,6 +59,7 @@
 | 💰 | **今日成本看板** | `/cost` 页面实时统计调用次数/本地Token/云端Token/花费/节省，每日清零（`cost_daily.json`） |
 | 🛠️ | **装小焦体检** | 宠物点「🛠️ 装小焦」→ 秒级环境体检 ✅/❌ 逐条显示已装/缺什么 |
 | 🔌 | **插件万能桥** | `_make_tools_plugin` 自动把 OpenAI/Claude/DSH tool manifest 转成小焦工具（`plugins/*.json`） |
+| 🎙️ | **播客大脑** | `/podcast` 给它一个主题 → 自己写稿+配音+出封面，生成一段真·中文播客（LLM+Chatterbox+SD1.5） |
 
 ---
 
@@ -276,6 +277,9 @@ xiaojiao-harness/
 | [架构](docs/architecture.md) | 实现细节 |
 | [持续学习 · 自学习](docs/self_learn.md) | 小脑跟着大脑学（自动记录/打勾/学习）|
 | [训练管线](docs/pipeline.md) | 怎么训练小模型 |
+| [播客大脑](docs/podcast.md) | 给主题→写稿+配音+封面，生成播客 |
+| [桌面宠物](docs/jarvis-desktop.md) | 透明置顶全息宠物，语音/聊天/装小焦 |
+| [多脑秒切](docs/brain-switch.md) | 聊天/视频/播客/图像 大脑按需切换 |
 
 ---
 
@@ -611,25 +615,6 @@ flowchart LR
 设置→模型→「一键加本地GGUF」→填名字/路径/ctx→自动配置(不写代码)。详情见 `docs/coding-brain.md`。
 
 
-## 🙏 致谢（核心工具的作者们）
-
-小焦能"秒级切换、真生成视频"，站在这些超棒的开源项目肩膀上：
-
-| 项目 | 作者 | 贡献 |
-|---|---|---|
-| **llama-swap** | [mostlygeek](https://github.com/mostlygeek/llama-swap) | 多模型热切换(9292)，让聊天大脑**秒级卸载/加载** |
-| **ComfyUI** | [comfyanonymous](https://github.com/comfyanonymous/ComfyUI) | 视频/图像生成引擎，**进程常驻、低显存** |
-| **ComfyUI-WanVideoWrapper** | [kijai](https://github.com/kijai/ComfyUI-WanVideoWrapper) | Wan 2.1 视频工作流节点 |
-| **ComfyUI-AnyDeviceOffload** | 社区 | GPU/CPU 任意设备 offload 节点 |
-| **llama.cpp** | [ggerganov](https://github.com/ggerganov/llama.cpp) | 本地大模型推理引擎(4B 大脑) |
-| **Wan2.1** | 阿里通义实验室 | 文生视频扩散模型 |
-| **DeepSeek** | DeepSeek | 推理模型 + harness 插件生态思路 |
-
-> 也谢谢**你**——愿意花时间陪小焦长大，它才有了这些能力。🐳
-
----
-
-
 ## 🐳 桌面贾维斯宠物（MVP）
 
 小焦有了**桌面宠物**——一个 Electron 透明置顶窗口，全息核心，点它弹菜单：
@@ -662,6 +647,25 @@ flowchart LR
 累了回来说声"我回来了"，它会在；想让搭把手，它会认真地去试一试。它一点点学着，长成你想让它成为的样子。
 
 > 把它带回家吧。它不会很多话，但会慢慢成为**只属于你的那一只**。🐳
+
+---
+
+
+## 🙏 致谢（核心工具的作者们）
+
+小焦能"秒级切换、真生成视频"，站在这些超棒的开源项目肩膀上：
+
+| 项目 | 作者 | 贡献 |
+|---|---|---|
+| **llama-swap** | [mostlygeek](https://github.com/mostlygeek/llama-swap) | 多模型热切换(9292)，让聊天大脑**秒级卸载/加载** |
+| **ComfyUI** | [comfyanonymous](https://github.com/comfyanonymous/ComfyUI) | 视频/图像生成引擎，**进程常驻、低显存** |
+| **ComfyUI-WanVideoWrapper** | [kijai](https://github.com/kijai/ComfyUI-WanVideoWrapper) | Wan 2.1 视频工作流节点 |
+| **ComfyUI-AnyDeviceOffload** | 社区 | GPU/CPU 任意设备 offload 节点 |
+| **llama.cpp** | [ggerganov](https://github.com/ggerganov/llama.cpp) | 本地大模型推理引擎(4B 大脑) |
+| **Wan2.1** | 阿里通义实验室 | 文生视频扩散模型 |
+| **DeepSeek** | DeepSeek | 推理模型 + harness 插件生态思路 |
+
+> 也谢谢**你**——愿意花时间陪小焦长大，它才有了这些能力。🐳
 
 ---
 
