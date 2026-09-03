@@ -73,9 +73,9 @@ def model():
     except Exception:
         return _DEFAULT_MODEL
 
-def generate(prompt, mode="t2v", poll_interval=20, timeout=1800, progress_cb=None, **extra):
+def generate(prompt, mode="ti2vid", poll_interval=20, timeout=1800, progress_cb=None, **extra):
     """提交 Agnes 文生视频任务并轮询到完成, 返回 (本地视频路径, 远程URL)。
-    agnes-video-2.5-flash 接受 model+prompt(+mode), 命令字段会随模型变化, 这里用**extra 透传。
+    agnes-video-2.5-flash 的 mode 取值: 'ti2vid'(文生视频)/'keyframes'/'multi_reference'。
     免费用户 1 RPM: 自动 _throttle。失败抛 RuntimeError。progress_cb(percent) 回调进度。"""
     key = _key()
     if not key:

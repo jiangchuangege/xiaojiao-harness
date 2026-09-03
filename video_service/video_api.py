@@ -191,7 +191,7 @@ def _worker(job_id, prompt):
                     _jobs[job_id]["progress"] = {"value": v, "max": 100}
                 except Exception:
                     pass
-            out, vurl = _ag.generate(refined, mode="t2v", progress_cb=_ap)
+            out, vurl = _ag.generate(refined, mode="ti2vid", progress_cb=_ap)
             _jobs[job_id].update(state="done", message="完成(Agnes 云端)",
                                  url="/videos/" + os.path.basename(out), video_url=vurl)
             _persist()
