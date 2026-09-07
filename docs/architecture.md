@@ -211,7 +211,7 @@ flowchart LR
         C["xiaojiao_control.json<br/>(合并配置, 热更新不重启)"]
         A["/api/monitor"]
         B["brain_manager.switch_to<br/>llama-swap(9292) + ComfyUI(8188)"]
-        D["DSH 桥接(5001)<br/>deepseek-harness → DSH 插件生态"]
+        D["DSH 桥接(5001)<br/>DSH → 小焦当模型(/v1)"]
         J["_record_usage<br/>写入 cost_daily.json"]
     end
 
@@ -288,7 +288,7 @@ flowchart LR
 
 - **Agent 预设**：`presets/*.json`（人格+大脑+工具开关），设置页卡片管理，Web 编辑/增删，**保存即应用**（合并配置 + 热更新，不重启）。
 - **大脑仓库监控**：`/monitor` 实时看所有大脑状态/显存/内存/任务，直接切换/调优/添加大脑。
-- **DSH 桥接**：5001 端口，依赖 `deepseek-harness`（DeepSeekHarness），让 DSH 社区插件可用。
+- **DSH 桥接**：5001 端口，**DSH 把小焦当模型接入**（`/v1`）用——即"DSH → 小焦"单向接入，供 DSH 的界面/皮肤插件在 DSH 里跑、小焦当大脑。注意：**DSH 功能型（工具）插件小焦自己就兼容**（`_make_tools_plugin` 直接识别 DSH/OpenAI/Claude 工具清单，转成小焦插件，无需装 DSH）。
 
 ## 8. 观测层：Web 监控
 
