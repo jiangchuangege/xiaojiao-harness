@@ -96,6 +96,8 @@ cost_daily.json
 *.png
 *.jpg
 *.jpeg
+# README 封面形象图允许入库
+!assets/xiaojiao_mascot.png
 monitor.html
 _dbg*
 _job*

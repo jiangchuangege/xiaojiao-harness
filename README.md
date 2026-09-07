@@ -4,30 +4,34 @@
 
 <br>
 
-### 把一个大模型当底座，套上人格、工具、记忆、联网 —— 做成一个能陪你聊天、也能帮你干活儿的本地 AI 助手。
+<img src="assets/xiaojiao_mascot.png" alt="小焦 · 你的本地 AI 猫娘助手" width="320">
 
 <br>
 
-`Python` · `PyTorch` · `Flask` · `llama.cpp` ·
+### ✨ 一只会陪你聊天、帮你干活、还能生成视频和播客的本地 AI 助手。
+
+> **不是又一个"套壳聊天"。小焦是一个真的会跑在你电脑上的 AI 伙伴**——能记住你、会找工具干活、能生成真视频和播客，还自带一只透明悬浮的桌面猫娘。
+
+<br>
+
+`Python` · `PyTorch` · `Flask` · `llama.cpp` · `ComfyUI` · `Chatterbox` · `Diffusers`
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-green)]()
-[![Status](https://img.shields.io/badge/status-open_source-brightgreen)]()
-[![v1.0.0](https://img.shields.io/badge/release-v1.0.0-blue)](https://github.com/jiangchuangege/xiaojiao-harness/releases/tag/v1.0.0)
+[![Local](https://img.shields.io/badge/100%25-local-important)]()
+[![AI companion](https://img.shields.io/badge/AI-companion-orange)]()
+[![GitHub stars](https://img.shields.io/github/stars/jiangchuangege/xiaojiao-harness)]()
+[![Topics](https://img.shields.io/badge/topics-AI--companion%20local--ai%20catgirl-blue)]()
 
 </div>
 
 ---
 
-> 🧠 自研小模型 · 💬 聊天 · 🌐 联网搜索 · 💾 记忆 · 🛠️ 工具 · 🧩 四类插件生态(py/js/api/skill) · 🔌 DSH 社区插件兼容 · 🧠 持续学习 · 🔗 DSH 接入小焦
+### 🐱 一句话：小焦能干嘛
 
-## 📖 先说一句
+> 🧠 多大脑秒切 · 💬 聊天 · 🌐 联网搜索 · 💾 记忆 · 🛠️ 工具干活 · 🎬 生成真视频 · 🎙️ 生成播客 · 🎵 生成音乐 · 🐳 桌面猫娘宠物 · 🔌 插件生态
 
-**DeepSeek Harness 插件生态伙伴 · 本地 AI 助手（dsh-plugin / deepseek-harness-plugin）**
-
-> **关键词**：DeepSeek Harness 插件 · dsh plugin · DeepSeek Harness 皮肤插件 · 本地AI助手 · LLM Agent · OpenAI 兼容接口 · 功能调用 · 插件生态(Python/Node.js/API/技能) · 记忆 · 联网搜索 · 皮肤 · 鲸鱼娘皮肤 · xiaojiao · 小焦
-
-小焦是把大模型当底座、自己套了一层人格和工具链的本地 AI 助手。你可以让它聊天、联网、记东西，也能让它帮你建文件、写网页、跑命令、**生成真视频**。它还有一套**多大脑·秒级切换**：聊天大脑、视频大脑（未来还有图像/推理大脑）按需热切换（llama-swap + keep_warm + 低显存，权重 RAM↔显存），**切换秒级、ComfyUI 进程常驻**。**兼容 DeepSeek Harness 社区插件**——功能型插件可移植接入小焦，界面型插件在 DSH 里用、小焦当模型，支持 `dsh-plugin` 生态。下面把它的用法、原理、玩法都给你列全。
+**它不是让你"打开一个网页聊天"，而是真的住进你电脑的一个 AI 伙伴。** 你自己用本地大模型当它的大脑，给它套上人格、记忆、工具链，再插上**聊天 / 编码 / 视频 / 播客 / 音乐 / 图像**多个脑子，按需秒级切换。你点一下，它就能帮你写文件、跑命令、生成一段真·AI 视频或播客，甚至变成一只**透明悬浮的桌面猫娘**陪着你。
 
 ---
 
