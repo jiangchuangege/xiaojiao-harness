@@ -45,7 +45,7 @@
 | 用户不信任"自动上云" | 默认本地优先；上云前可提示"这条较复杂，用云端(约¥0.01)？" |
 
 ## 1.3 插件万能桥：DSH/OpenAI/Claude 通吃 + 自然语言造插件
-- **统一工具协议**：把 DSH 插件、OpenAI function-calling、Claude tool-use 统一成小焦的内部工具描述（已有 `_build_tools` 骨架，加适配器层）。
+- **统一工具协议**：把 DSH 插件、OpenAI function-calling、Claude tool-use 统一成小焦的内部工具描述（已有 `_make_tools_plugin`，加适配器层）。**DSH 功能型（工具）插件小焦独立兼容，无需装 DSH**。
 - **适配器**：`adapters/dsh`（读 DSH 插件目录）、`adapters/openai`（读 tools.json）、`adapters/claude`（读 tool manifests）→ 自动注册进工具列表。
 - **即插即用**：用户把插件文件丢进 `plugins/` → 自动扫描注册（现有机制）→ 设置页可见可开关。
 - **自然语言生成插件**：用户说"帮我写个查天气的插件" → 编码大脑生成插件代码 → 自动写进 `plugins/` → 注册 → 立刻可用（现有 addlocal/插件模式延伸）。
