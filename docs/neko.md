@@ -81,6 +81,8 @@ N.E.K.O. 支持**插件**，插件分两类目录：
   - `env_check` → 读小焦的 `XIAOJIAO_BASE/api/env`，返回一条完整安装体检；
   - `install_guide` → 返回 5 步安装指引。
 
+> ℹ️ **仓库里有现成插件**：`neko_plugin/xiaojiao_install/`（含 `plugin.toml` + `__init__.py` + `README.md`）。clone 小焦仓库后，把整个 `xiaojiao_install/` 复制到 `%LOCALAPPDATA%\N.E.K.O\plugins\` 即可装到猫娘。
+
 > ⚠️ **踩坑**：别把插件放进 `resources\bin\plugin\plugins\`（app.asar 内置只读区），否则加载报"入口点:0"。放 `%LOCALAPPDATA%\N.E.K.O\plugins\` 才行。
 
 ---
@@ -95,9 +97,10 @@ N.E.K.O. 支持**插件**，插件分两类目录：
 
 | 项 | 说明 |
 | --- | --- |
-| `XIAOJIAO_NEKO_DIR` | 指向 N.E.K.O. 项目根目录（含 `launcher.py`） |
+| `XIAOJIAO_NEKO_DIR` | 指向 N.E.K.O. 项目根目录（含 `N.E.K.O.exe`（Steam 版）或 `launcher.py`（源码版）） |
 | `XIAOJIAO_BASE` | 小焦后端根目录（供 N.E.K.O. 插件调 `/api/env` 体检） |
-| 自动候选路径 | `G:\moxing__xiaojiao\maoniang\N.E.K.O-main`、`G:\模型文件\猫娘\N.E.K.O-main`、`C:\NEKO\N.E.K.O-main` |
+| Steam 版候选 | `G:\SteamLibrary\steamapps\common\n.e.k.o`（`N.E.K.O.exe` 拉起 48911/48912） |
+| 源码版候选 | `G:\moxing__xiaojiao\maoniang\N.E.K.O-main`、`G:\模型文件\猫娘\N.E.K.O-main`、`C:\NEKO\N.E.K.O-main` |
 
 ---
 
