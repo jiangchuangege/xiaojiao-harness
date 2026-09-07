@@ -234,16 +234,18 @@ flowchart LR
 
 > ⚠️ 猫娘**不是小焦自带的**——它是**你下载的开源 N.E.K.O. 项目**。小焦只是**集成**它：一键启动拉起它的服务、学习它的记忆、给它装"小焦"插件。
 
-一键启动拉起 **N.E.K.O. 猫娘**（你下载的）——成熟 Live2D 猫娘壳 + 小焦本地内核，二者互相学习：
+一键启动拉起 **N.E.K.O. 猫娘**（你下载的开源项目，Steam **桌面客户端 `N.E.K.O.exe`**）——成熟 Live2D 猫娘壳 + 小焦本地内核，二者互相学习：
 
 ```mermaid
 flowchart LR
     ST["▶ start_xiaojiao.start_neko()"]
 
-    subgraph NEKO_SRV["🐱 N.E.K.O. 猫娘"]
+    subgraph NEKO_SRV["🐱 N.E.K.O. 猫娘（Steam 桌面客户端）"]
         direction TB
-        MS["main_server<br/>(48911) 猫娘页面"]
+        APP["N.E.K.O.exe 桌面客户端<br/>(你看到的猫娘界面)"]
+        MS["后端 main_server<br/>(48911) 猫娘后端"]
         MEM["memory_server<br/>(48912) 猫娘记忆"]
+        APP --> MS & MEM
     end
 
     subgraph SRC["📚 猫娘记忆 %LOCALAPPDATA%\\N.E.K.O\\memory\\YUI"]
@@ -263,7 +265,8 @@ flowchart LR
         K2["学会:* · 猫娘说话风格"]
     end
 
-    ST --> MS & MEM
+    ST --> APP
+    APP --> MS & MEM
     MS --> FACTS & PERSONA
     FACTS & PERSONA --> LEARN
     LEARN --> KNOW --> K2
@@ -274,7 +277,7 @@ flowchart LR
     classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
     classDef xj fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
     class ST st;
-    class MS,MEM neko;
+    class APP,MS,MEM neko;
     class FACTS,PERSONA src;
     class LEARN lrn;
     class KNOW,K2 xj;
