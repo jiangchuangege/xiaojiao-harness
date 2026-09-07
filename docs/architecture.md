@@ -195,7 +195,7 @@ flowchart LR
 - **上次用的留内存**（切回快）。
 - **防止双模型驻留 OOM**（睡觉真卸载）。
 
-## 7b. Agent 预设 · 大脑监控 · DSH 桥接（最新能力）
+## 7b. Agent 预设 · 大脑监控 · DSH 功能型插件兼容（最新能力）
 
 ```mermaid
 flowchart LR
@@ -211,7 +211,7 @@ flowchart LR
         C["xiaojiao_control.json<br/>(合并配置, 热更新不重启)"]
         A["/api/monitor"]
         B["brain_manager.switch_to<br/>llama-swap(9292) + ComfyUI(8188)"]
-        D["DSH 桥接(5001)<br/>DSH → 小焦当模型(/v1)"]
+        D["DSH 功能型插件兼容<br/>_make_tools_plugin<br/>(识别 DSH/OpenAI/Claude tools)"]
         J["_record_usage<br/>写入 cost_daily.json"]
     end
 
@@ -288,7 +288,7 @@ flowchart LR
 
 - **Agent 预设**：`presets/*.json`（人格+大脑+工具开关），设置页卡片管理，Web 编辑/增删，**保存即应用**（合并配置 + 热更新，不重启）。
 - **大脑仓库监控**：`/monitor` 实时看所有大脑状态/显存/内存/任务，直接切换/调优/添加大脑。
-- **DSH 桥接**：5001 端口，**DSH 把小焦当模型接入**（`/v1`）用——即"DSH → 小焦"单向接入，供 DSH 的界面/皮肤插件在 DSH 里跑、小焦当大脑。注意：**DSH 功能型（工具）插件小焦自己就兼容**（`_make_tools_plugin` 直接识别 DSH/OpenAI/Claude 工具清单，转成小焦插件，无需装 DSH）。
+- **DSH 功能型插件兼容**：小焦**独立兼容** DSH/OpenAI/Claude 的工具插件——内置"插件万能桥"`_make_tools_plugin` 直接识别它们的 tools 清单，转成小焦的 `py/js/json/skill` 插件，在 5000 端口就能用，**无需装 DSH**。DSH 的界面/皮肤插件则在 DSH 里原生跑（把小焦当模型接入 `/v1`）。
 
 ## 8. 观测层：Web 监控
 
