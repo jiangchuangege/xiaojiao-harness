@@ -44,7 +44,7 @@ def main():
     print("\n[2/3] 检查大模型 ...")
     check_model()
     # 3) 启动
-    print("\n[3/3] 启动小焦（大模型 + Web + DSH 桥接）...")
+    print("\n[3/3] 启动小焦（大模型 + Web + N.E.K.O. 猫娘）...")
     run('"%s" "%s"' % (sys.executable, os.path.join(ROOT, "start_xiaojiao.py")))
     print("\n✅ 完成。浏览器打开 http://127.0.0.1:5000")
 
