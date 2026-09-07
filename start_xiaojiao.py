@@ -78,48 +78,62 @@ def start_llama_brain():
 
 def start_neko():
     """启动 N.E.K.O. 猫娘(融合进小焦一键启动): 起 memory_server + main_server, 后台学习你的需求, 打开猫娘页面。
-    路径可改(用户下载位置不同), 找不到就跳过(不阻塞小焦)。"""
+    支持两种形态(自动探测, 找不到就跳过, 不阻塞小焦):
+      - Steam 版:  G:\\SteamLibrary\\steamapps\\common\\n.e.k.o  (N.E.K.O.exe 拉起 48911/48912)
+      - 源码克隆版: 任意 N.E.K.O-main/launcher.py  + .venv
+    路径可改(用户下载位置不同): XIAOJIAO_NEKO_DIR 环境变量优先。"""
     import subprocess as _sp
-    # N.E.K.O 项目根(多个候选, 取第一个存在的)
+    # 1) 定位 N.E.K.O. 项目根: 优先环境变量 -> Steam 版 -> 源码克隆版候选
     roots = []
     env_neko = os.environ.get("XIAOJIAO_NEKO_DIR", "")
     if env_neko:
         roots.append(env_neko)
-    for cand in [r"G:\moxing__xiaojiao\maoniang\N.E.K.O-main",
-                 r"G:\模型文件\猫娘\N.E.K.O-main", r"C:\NEKO\N.E.K.O-main"]:
-        roots.append(cand)
-    root = next((r for r in roots if os.path.exists(os.path.join(r, "launcher.py"))), None)
+    roots += [
+        r"G:\SteamLibrary\steamapps\common\n.e.k.o",        # Steam 版(你实际的)
+        r"C:\Program Files (x86)\Steam\steamapps\common\n.e.k.o",
+        r"C:\Program Files\Steam\steamapps\common\n.e.k.o",
+        r"G:\moxing__xiaojiao\maoniang\N.E.K.O-main",       # 源码克隆版
+        r"G:\模型文件\猫娘\N.E.K.O-main", r"C:\NEKO\N.E.K.O-main",
+    ]
+    # 先找含 N.E.K.O.exe(Steam版) 或 launcher.py(源码版) 的根
+    root = None
+    for r_ in roots:
+        if os.path.exists(os.path.join(r_, "N.E.K.O.exe")):
+            root = r_; break
     if not root:
-        print("⚠️ 未找到 N.E.K.O. 猫娘(设 XIAOJIAO_NEKO_DIR 指向其根目录, 或放到 G:\\moxing__xiaojiao\\maoniang\\N.E.K.O-main)")
+        root = next((r_ for r_ in roots if os.path.exists(os.path.join(r_, "launcher.py"))), None)
+    if not root:
+        print("⚠️ 未找到 N.E.K.O. 猫娘(设 XIAOJIAO_NEKO_DIR 指向其目录, 或装 Steam 版于 n.e.k.o)")
         return None
+
+    steam_exe = os.path.join(root, "N.E.K.O.exe")            # Steam 版入口
+    launcher = os.path.join(root, "launcher.py")             # 源码版入口
     py = os.path.join(root, ".venv", "Scripts", "python.exe")
-    if not os.path.exists(py):
-        print("⚠️ N.E.K.O. 未装依赖(.venv 不存在), 请先在该目录 uv sync")
-        return None
+
     def _alive(port):
         try:
             import socket as _s
-            s = _s.socket()
-            s.settimeout(2)
-            s.connect(("127.0.0.1", port))
-            s.close()
-            return True
+            s = _s.socket(); s.settimeout(2); s.connect(("127.0.0.1", port)); s.close(); return True
         except Exception:
             return False
-    # 1. 起 memory_server (48912)
-    if not _alive(48912):
-        _sp.Popen([py, "-m", "app.memory_server"], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW)
-        print("🧠 [N.E.K.O] memory_server(:48912) 已启动")
+
+    # 2) 确保 48911/48912 在线; 都不在线才尝试拉起
+    if not (_alive(48911) or _alive(48912)):
+        if os.path.exists(steam_exe):
+            _sp.Popen([steam_exe], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW)
+            print("🐱 [N.E.K.O] Steam 版已启动(N.E.K.O.exe, 起 48911/48912)")
+        elif os.path.exists(launcher) and os.path.exists(py):
+            _sp.Popen([py, "-m", "app.memory_server"], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW)
+            _sp.Popen([py, "-m", "app.main_server"], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW,
+                      env={**os.environ, "PYTHONUTF8": "1"})
+            print("🐱 [N.E.K.O] 源码版已启动(memory_server:48912 + main_server:48911)")
+        else:
+            print("⚠️ [N.E.K.O] 在 %s 但既无 N.E.K.O.exe 也无可用 launcher.py/.venv, 跳过自动拉起" % root)
+            return root
     else:
-        print("🧠 [N.E.K.O] memory_server(:48912) 已在运行")
-    # 2. 起 main_server (48911)
-    if not _alive(48911):
-        _sp.Popen([py, "-m", "app.main_server"], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW,
-                  env={**os.environ, "PYTHONUTF8": "1"})
-        print("🐱 [N.E.K.O] main_server(:48911) 已启动")
-    else:
-        print("🐱 [N.E.K.O] main_server(:48911) 已在运行")
-    # 3. 后台学习通道(每 5 分钟学一次你的需求)
+        print("🐱 [N.E.K.O] 已在运行(48911/48912 在线)")
+
+    # 3) 后台学习通道(每 5 分钟学一次你与猫娘的对话)
     try:
         learn = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learn_from_neko.py")
         if os.path.exists(learn):
@@ -128,7 +142,7 @@ def start_neko():
             print("🎓 [N.E.K.O] 后台学习通道已启动(每5分钟学你与猫娘的对话)")
     except Exception:
         pass
-    return True
+    return root
 
 
 def start_llama_swap():
