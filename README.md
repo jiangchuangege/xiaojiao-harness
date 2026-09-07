@@ -323,6 +323,7 @@ xiaojiao-harness/
 | [播客大脑](docs/podcast.md) | 给主题→写稿+配音+封面，生成播客 |
 | [N.E.K.O. 猫娘集成](docs/neko.md) | 桌面 Live2D 猫娘伙伴，学猫娘与主人的对话 |
 | [多脑秒切](docs/brain-switch.md) | 聊天/视频/播客/图像 大脑按需切换 |
+| [依赖检测逻辑](docs/dependency-check.md) | 模型/依赖为何按"协议连通"检测 |
 | [更新记录](CHANGELOG.md) | 每个版本改了什么 |
 | [行为准则](CODE_OF_CONDUCT.md) | 社区友好共识 |
 
