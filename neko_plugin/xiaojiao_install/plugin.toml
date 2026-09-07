@@ -1,0 +1,18 @@
+[plugin]
+id = "xiaojiao_install"
+name = "装小焦指引"
+description = "让猫娘帮主人装/熟悉「小焦 XiaoJiao」开源项目：读小焦后端真实环境体检 + 给分步安装指引。"
+short_description = "Help master install/setup the XiaoJiao project (env check + install guide)."
+keywords = ["小焦", "安装", "装小焦", "xiaojiao", "环境", "体检", "setup", "install"]
+version = "1.0.0"
+entry = "plugin.plugins.xiaojiao_install:XiaojiaoInstallPlugin"
+
+[plugin.author]
+name = "XiaoJiao"
+
+[plugin.sdk]
+recommended = ">=0.1.0,<0.2.0"
+supported = ">=0.1.0,<0.3.0"
+
+[plugin.i18n]
+default_locale = "zh-CN"
