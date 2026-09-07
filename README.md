@@ -51,7 +51,7 @@
 | 🤖 | **多步执行** | 自己推理"建目录→写文件→打开"，分步干活 |
 | 🔒 | **危险命令确认** | 碰到 `rm/del/format` 之类，先问你要不要 |
 | 🧩 | **四类插件生态** | Python / Node.js / API / 技能，通吃多生态插件 |
-| 🔌 | **DeepSeek Harness 社区插件兼容** | 功能型插件可移植接入小焦；DSH 界面插件 DSH 用、小焦当模型 |
+| 🔌 | **DSH 社区插件兼容** | 小焦**独立**兼容 DSH 功能型插件（工具清单直接转成小焦插件，无需装 DSH）；界面型插件 DSH 用、小焦当模型 |
 | 🧾 | **插件驱动设置模块** | 装了什么插件，设置里就自动出现对应模块（像 DSH） |
 | 🔌 | **DeepSeek Harness 接入** | 提供 /v1，可作为 DSH 的模型接入 |
 | 🖥️ | **DSH 式网页布局** | 顶栏/侧栏/底栏/设置导航，和 DSH 一致 |
@@ -202,41 +202,43 @@ flowchart LR
 
 ### DeepSeek Harness 社区插件兼容（原理 + 图）
 
-**怎么兼容**：DeepSeek Harness 社区的**功能型插件**（工具/接口/技能，如 [dsh-netdoctor 网络诊断](https://github.com/TYEclipse/dsh-netdoctor)），通过小焦插件生态**移植接入**——把它的功能写成小焦的 `py/js/json/skill` 插件即可在 5000 端口使用；**界面型插件**（皮肤，如鲸鱼娘）在 DSH 里跑、小焦当模型；小焦自己的网页也能**复用其素材做成主题皮肤**。
+小焦对 DeepSeek Harness 社区插件是**两条完全独立**的兼容路径，**互不依赖**：
+
+- **功能型插件（工具/接口/技能）→ 小焦独立兼容**：小焦内置"插件万能桥"（`_make_tools_plugin`），能直接识别 **DSH / OpenAI / Claude** 风格的 tools 清单，把它们的工具功能转成小焦自己的 `py/js/json/skill` 插件，**在 5000 端口就能用，不需要 DSH harness 接入、不需要额外安装**。例如 [dsh-netdoctor 网络诊断](https://github.com/TYEclipse/dsh-netdoctor)这类工具型插件，功能移植进来小焦即可调用。
+- **界面型插件（皮肤/UI）→ 走 DSH harness**：这类在 DSH 里原生跑，小焦当模型（`/v1`）供它调用；小焦自己的网页也能复用其素材做主题皮肤。
 
 ```mermaid
 flowchart LR
     subgraph DSHC["🧩 DSH 社区插件"]
-        direction LR
-        D1["功能型<br/>工具 / 技能"]
+        direction TB
+        D1["功能型<br/>工具 / 接口 / 技能"]
         D2["界面型<br/>皮肤 / UI"]
     end
 
-    subgraph XJ["🐱 小焦 5000"]
+    subgraph XJ["🐱 小焦 5000（独立兼容）"]
         direction TB
-        X1["插件生态<br/>py / js / json / skill"]
-        X2["皮肤管理<br/>whale-skins"]
+        X1["插件万能桥 _make_tools_plugin<br/>识别 DSH/OpenAI/Claude tools 清单<br/>→ py / js / json / skill 插件"]
     end
 
-    subgraph DSH["🖥️ DSH harness"]
+    subgraph DSH["🖥️ DSH harness（仅界面型）"]
         direction TB
         DS1["跑社区插件"]
         DS2["小焦当模型 (/v1)"]
     end
 
-    D1 -->|移植接入| X1
-    D2 -->|DSH 原生| DS1
+    D1 -->|"功能移植 · 无需 DSH 接入"| X1
+    D2 -->|"界面型 · DSH 原生"| DS1
     DS1 --> DS2
 
     classDef dshc fill:#f1f5f9,stroke:#94a3b8,color:#1e293b;
     classDef xj fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
     classDef dsh fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
     class D1,D2 dshc;
-    class X1,X2 xj;
+    class X1 xj;
     class DS1,DS2 dsh;
 ```
 
-**一句话**：**小焦能"接各种生态的插件能力"**（Python / Node.js / API / 技能 / DSH 功能型插件），并且**装了什么插件就出现什么设置模块**；DSH 原生界面插件在 DSH 里用、小焦当模型。
+**一句话**：**功能型 DSH 插件由小焦自己就兼容**（`_make_tools_plugin` 直接识别 DSH/OpenAI/Claude 工具清单，移植成小焦插件即可用，**不用装 DSH**）；只有**界面型/皮肤**需要在 DSH 里跑、小焦当模型。小焦本身也支持 Python / Node.js / API / 技能四类插件。
 
 ---
 
@@ -549,7 +551,8 @@ flowchart TD
 
 ### 说明
 - 小焦 `/v1` 会自动注入"我是小焦"人格 + 工具 + 记忆。
-- DSH 的**社区插件在 DSH 里跑、用小焦当模型**——这就是 "DSH 插件 + 小焦" 兼容。
+- **DSH → 小焦（单向）**：DSH 的社区插件在 DSH 里跑、用小焦当模型（`/v1`）。
+- **小焦 → DSH（独立兼容）**：小焦自己也能**直接兼容 DSH 功能型插件**——用内置插件万能桥把 DSH/OpenAI/Claude 的工具清单转成小焦插件（`py/js/json/skill`），在 5000 端口就能用，**不需要装 DSH**。
 - 小焦**自身也有插件生态**（Python / Node.js / API / 技能），可独立使用。
 
 > 更细的图文见 [docs/dsh-integration.md](docs/dsh-integration.md)。

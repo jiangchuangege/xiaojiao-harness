@@ -66,7 +66,8 @@ DSH → **设置 → 模型** → 添加提供方，填：
 
 - **小焦又不想用 DSH**：直接用 `http://127.0.0.1:5000` 网页即可（聊天/联网/记忆/工具/插件生态）。
 - **小焦自己的插件**（py/js/api/skill）：`plugins/` 放文件即加载，模型自动用。
-- DSH 官方 Python SDK（`deepseek-harness-sdk`）因官方发布不完整暂不可用，但**走 `/v1` 接入 DSH 是通的**。
+- **小焦独立兼容 DSH 功能型插件**：不用装 DSH——小焦内置"插件万能桥"`_make_tools_plugin`，能直接识别 DSH/OpenAI/Claude 的工具清单，转成小焦的 `py/js/api/skill` 插件在 5000 端口使用（如 dsh-netdoctor 网络诊断）。只有**界面型/皮肤**插件需要在 DSH 里跑、小焦当模型。
+- DSH 官方 Python SDK（`deepseek-harness-sdk`）因官方发布不完整暂不可用，但**走 `/v1` 接入 DSH 是通的**（DSH → 小焦当模型）。
 
 ---
 
