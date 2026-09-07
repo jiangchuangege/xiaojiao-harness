@@ -11,7 +11,7 @@
 | 文件/目录 | 干什么 |
 |---|---|
 | `xiaojiao_app.py` | **主应用**（Flask, 端口 5000）：Web UI + 人格 + 工具 + 记忆 + 会话 + `/v1` OpenAI 兼容接口 |
-| `start_xiaojiao.py` | **一键启动**：起 llama-swap(9292) 大脑 + Web(5000) + N.E.K.O. 猫娘(48911/48912) + DSH 桥(5001) |
+| `start_xiaojiao.py` | **一键启动**：起 llama-swap(9292) 大脑 + Web(5000) + N.E.K.O. 猫娘(48911/48912) |
 | `brain_manager.py` | **多大脑调度中心**：聊天/视频/播客/云视频大脑注册表，RUN/WARM/OFF 秒级切换 |
 | `video_service/` | **文生视频**：本地 ComfyUI+Wan2.1 **或** 云端(Agnes 免费 API)，按需切换 |
 | `podcast_service/` | **播客大脑**：LLM 写稿 → Chatterbox 配音 → pydub 拼接 → SD1.5 封面 |
