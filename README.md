@@ -802,26 +802,23 @@ flowchart LR
 
 ## 🙏 致谢
 
-小焦能"秒级切换、真生成视频/播客/音乐、还能变成一只桌面猫娘"，站在这些超棒的开源项目肩膀上：
+小焦能"秒级切换、真生成视频/播客、还能变成一只桌面猫娘"，站在这些超棒的开源项目肩膀上：
 
 | 项目 | 作者 | 贡献 |
 |---|---|---|
 | **llama-swap** | [mostlygeek](https://github.com/mostlygeek/llama-swap) | 多模型热切换(9292)，让聊天大脑**秒级卸载/加载** |
-| **llama.cpp** | [ggerganov](https://github.com/ggerganov/llama.cpp) | 本地大模型推理引擎(llama-server)，**本地离线大脑** |
+| **llama.cpp** | [ggerganov](https://github.com/ggerganov/llama.cpp) | 本地大模型**推理引擎**(llama-server)，本地离线大脑 |
 | **ComfyUI** | [comfyanonymous](https://github.com/comfyanonymous/ComfyUI) | 视频/图像生成引擎，**进程常驻、低显存** |
 | **ComfyUI-WanVideoWrapper** | [kijai](https://github.com/kijai/ComfyUI-WanVideoWrapper) | Wan 2.1 视频工作流节点 |
 | **ComfyUI-AnyDeviceOffload** | 社区 | GPU/CPU 任意设备 offload 节点 |
-| **Wan2.1** | [阿里通义实验室](https://github.com/Wan-Video) | 文生视频扩散模型 |
-| **Chatterbox / ChatTTS** | [2noise](https://github.com/2noise/ChatTTS) · [ResembleAI](https://github.com/resemble-ai/chatterbox) | 🎙️ 播客配音 TTS（中英） |
-| **Diffusers + SD1.5** | [Hugging Face](https://github.com/huggingface/diffusers) · [Stability AI](https://github.com/Stability-AI/stablediffusion) | 播客/视频封面图生成 |
-| **ACE-Step** | [ACE-Step](https://github.com/ace-step/ACE-Step) | 🎵 音乐生成大脑(自带 API) |
 | **N.E.K.O.** | N.E.K.O. 开源项目 | 🐱 桌面 Live2D 猫娘伙伴(你下载的) |
-| **DeepSeek** | [DeepSeek](https://github.com/deepseek-ai) | 推理模型思路 + [DeepSeek Harness](https://github.com/deepseek-ai) 插件生态 / SDK |
+| **DeepSeek Harness** | [deepseek-ai](https://github.com/deepseek-ai) | 社区插件生态思路 + SDK 桥接 |
 | **PyTorch** | [PyTorch](https://github.com/pytorch/pytorch) | 深度学习框架(训练/推理小模型) |
 | **Flask** | [Pallets](https://github.com/pallets/flask) | Web 服务(5000 / `/v1`) |
 | **jieba** | [fxsjy](https://github.com/fxsjy/jieba) | 中文分词 |
 | **LCCC 语料** | [THUNLP](https://github.com/thunlp/LCCC) | 中文多轮对话语料(自研小模型主食) |
 
+> **模型说明**：小焦的大脑/视频/图像/TTS 模型均**可插拔、大部分兼容**，可自行更换任意 OpenAI 兼容模型，故不逐一列举特定模型作者。
 > 也谢谢**你**——愿意花时间陪小焦长大，它才有了这些能力。🐱
 
 ---
