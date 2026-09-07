@@ -111,40 +111,56 @@ python start_xiaojiao.py
 一句话：**用户消息 → 小焦（注入人设 + 取记忆 + 取会话）→ 交给大脑推理 → 大脑决定调工具/联网 → 执行并回显 → 记忆沉淀 + 会话存 → 回答**。
 
 ```mermaid
-flowchart TD
-    subgraph UI["界面层（DSH 式布局）"]
-        W["小焦 Web (5000)<br/>顶栏/侧栏/聊天/底栏"]
-        C["/v1 接口<br/>供 dsh / 任意客户端"]
-        T["工具服务 (5003)<br/>直接调工具"]
-        NEKO["🐱 N.E.K.O. 猫娘 (48911)<br/>桌面 Live2D 伙伴"]
+flowchart LR
+    subgraph UI["🖥️ 界面层"]
+        direction LR
+        W["小焦 Web<br/>(5000)"]
+        C["/v1 接口<br/>供 dsh"]
     end
-    subgraph AGENT["小焦壳（人设 + 编排 + 动态设置）"]
-        R["人设 / 环境路径 / 技能插件"]
-        M["记忆自学习"]
-        S["会话存储"]
-        P["插件注册表<br/>设置模块随插件动态出现"]
-        LEARN["learn_from_neko<br/>学猫娘与主人的对话"]
+
+    subgraph CORE["🧡 小焦壳 · 人设 + 记忆 + 编排"]
+        direction TB
+        R["注入人设 + 真实路径"]
+        M["取记忆<br/>xiaojiao_knowledge_memory"]
+        S["取会话<br/>最近 N 条"]
+        P["插件注册表<br/>随插件动态出现"]
     end
-    subgraph BRAIN["大脑（可插拔 · brain_manager 调度）"]
-        B1["聊天大脑 llama-swap (9292)"]
-        B2["外接 API"]
-        BM["multi-brain<br/>RUN/WARM/OFF 秒切"]
+
+    subgraph BRAIN["🧠 大脑（brain_manager 秒切）"]
+        direction TB
+        B1["聊天大脑 llama-swap<br/>(9292)"]
+        B2["外接 API / 云端"]
+        BM["RUN · WARM · OFF"]
     end
-    subgraph TOOLS["工具 / 插件生态"]
-        T1["内置：命令/读写文件/打开"]
-        T2["Python 插件 .py"]
-        T3["Node.js 插件 .js(经 node 子进程)"]
-        T4["API 插件 .json(接口声明成工具)"]
-        T5["技能插件 .md(拼进人设)"]
+
+    subgraph TOOLS["🛠️ 工具 / 插件生态"]
+        direction TB
+        T1["内置：命令/读写/打开"]
+        T2["Python / Node / API / 技能"]
         T6["联网检索"]
-        T7["文生视频 video_service<br/>(人工切换模型→ComfyUI+Wan2.1)"]
+        T7["文生视频<br/>ComfyUI + Wan2.1"]
     end
-    W & C --> AGENT
-    T --> TOOLS
-    AGENT --> BRAIN
-    AGENT --> TOOLS
-    NEKO -->|facts/persona| LEARN
-    LEARN --> M
+
+    NEKO["🐱 N.E.K.O. 猫娘<br/>(48911)"]
+
+    W & C --> R
+    R & M & S & P --> BRAIN
+    BRAIN --> TOOLS
+    TOOLS -->|执行结果| AGENT_RES
+    AGENT_RES["💬 回答"]
+    NEKO -->|facts / persona| LEARN
+    LEARN["learn_from_neko<br/>学猫娘对话"] --> M
+
+    classDef ui fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef core fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
+    classDef brain fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    classDef tools fill:#ecfdf5,stroke:#34d399,color:#064e3b;
+    classDef neko fill:#fce7f3,stroke:#f472b6,color:#831843;
+    class W,C ui;
+    class R,M,S,P core;
+    class B1,B2,BM brain;
+    class T1,T2,T6,T7 tools;
+    class NEKO,LEARN neko;
 ```
 
 ### 一条消息在内部怎么走
@@ -186,22 +202,34 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph DSH社区["DeepSeek Harness 社区插件"]
-        D1["功能型(工具/技能)"]
-        D2["界面型(皮肤/UI)"]
+    subgraph DSHC["🧩 DSH 社区插件"]
+        direction LR
+        D1["功能型<br/>工具 / 技能"]
+        D2["界面型<br/>皮肤 / UI"]
     end
-    subgraph XJ["小焦 5000"]
-        X1["插件生态 py/js/json/skill\n→ 变成小焦工具/人设"]
-        X2["皮肤管理(whale-skins 插件)\n作为 DSH 模型接入"]
+
+    subgraph XJ["🐱 小焦 5000"]
+        direction TB
+        X1["插件生态<br/>py / js / json / skill"]
+        X2["皮肤管理<br/>whale-skins"]
     end
-    subgraph DSH["DSH harness"]
-        DS1["DSH 跑社区插件"]
-        DS2["小焦当模型(/v1)"]
+
+    subgraph DSH["🖥️ DSH harness"]
+        direction TB
+        DS1["跑社区插件"]
+        DS2["小焦当模型 (/v1)"]
     end
+
     D1 -->|移植接入| X1
-    
     D2 -->|DSH 原生| DS1
     DS1 --> DS2
+
+    classDef dshc fill:#f1f5f9,stroke:#94a3b8,color:#1e293b;
+    classDef xj fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
+    classDef dsh fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    class D1,D2 dshc;
+    class X1,X2 xj;
+    class DS1,DS2 dsh;
 ```
 
 **一句话**：**小焦能"接各种生态的插件能力"**（Python / Node.js / API / 技能 / DSH 功能型插件），并且**装了什么插件就出现什么设置模块**；DSH 原生界面插件在 DSH 里用、小焦当模型。
@@ -315,19 +343,31 @@ xiaojiao-harness/
 
 ```mermaid
 flowchart LR
-    subgraph src["数据源"]
-        A["LCCC 语料"] --> B["convert / clean_data → 训练池"]
+    subgraph src["📚 数据源"]
+        direction LR
+        A["LCCC 语料"] --> B["convert / clean_data<br/>→ 训练池"]
     end
-    subgraph teach["老师 = 本地大模型（蒸馏）"]
+
+    subgraph teach["🎓 老师 = 本地大模型（蒸馏）"]
+        direction LR
         C["本地大模型"] --> D["按主题生成多轮对话"]
         C --> E["知识库 → QA"]
         D --> F["training_data_pool.txt"]
         E --> F
     end
-    subgraph stu["学生 = 自研小模型"]
+
+    subgraph stu["🧠 学生 = 自研小模型"]
+        direction LR
         F --> G["train_model.py 训练"]
         G --> H["mini_gpt_model.pth"]
     end
+
+    classDef src fill:#f1f5f9,stroke:#94a3b8,color:#1e293b;
+    classDef teach fill:#fef9c3,stroke:#eab308,color:#713f12;
+    classDef stu fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    class A,B src;
+    class C,D,E,F teach;
+    class G,H stu;
 ```
 
 ### 小模型长什么样（MiniGPT）
@@ -346,12 +386,29 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A["输入字符序列"] --> B["Embedding 查表 → 512 维"]
-    B --> C["+ 位置编码"]
-    C --> D["8× TransformerEncoderLayer<br/>d_model=512, nhead=8, ff=2048<br/>每层加因果掩码"]
-    D --> E["输出头 Linear → 6305"]
-    E --> F["softmax → 下一个字符概率"]
-    F --> G["取最高者拼回去，循环生成"]
+    subgraph INP["📥 输入"]
+        A["输入字符序列"] --> B["Embedding 查表 → 512 维"]
+        B --> C["+ 位置编码"]
+    end
+    subgraph TRF["🧠 因果 Transformer（8 层）"]
+        direction TB
+        D["8× TransformerEncoderLayer<br/>d_model=512 · nhead=8 · ff=2048<br/>每层加因果掩码"]
+    end
+    subgraph OUT["📤 输出"]
+        direction TB
+        E["输出头 Linear → 6305"]
+        F["softmax → 下一个字符概率"]
+        G["取最高者拼回去，循环生成"]
+    end
+    C --> D --> E
+    E --> F --> G
+
+    classDef inp fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef trf fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    classDef out fill:#ecfdf5,stroke:#34d399,color:#064e3b;
+    class A,B,C inp;
+    class D trf;
+    class E,F,G out;
 ```
 
 - **因果掩码**：每个位置只能看前面的字，不能偷看后面——这是早期"输出乱码"的根因，修好后才正常。
@@ -511,37 +568,82 @@ flowchart TD
 ## 🗺️ 文件 / 模型 互相调用一览
 
 ```mermaid
-flowchart TD
-    U["用户"] --> W["小焦 Web(5000)<br/>xiaojiao_app.py"]
-    DSH["DeepSeek Harness"] -->|/v1| W
-    W -->|api_chat| A["agent_run"]
-    A --> M["记忆 recall<br/>xiaojiao_knowledge_memory.json"]
-    A --> S["联网 search"]
-    A --> C{"选大脑"}
-    C -->|auto/llama| BIG["聊天大脑 llama-swap:9292<br/>llama-server / xiaojiao1.0-4B.gguf"]
-    C -->|xiaojiao| SMALL["自研小模型(小脑)<br/>xiaojiao_harness.py → mini_gpt_model.pth<br/>检索用向量库"]
-    BIG --> TOOLS["工具: run_command/write_file/open_app<br/>+ 插件(py/js/api/skill)"]
-    A --> TOOLS
-    SMALL --> RET["检索池 training_data_pool_clean.txt"]
-    W -->|自动记录| LOG["logs/chat_history.jsonl"]
-    LOG -->|👍/👎| FB["logs/feedback.jsonl"]
-    FB -->|被赞/更正| KNOW["self_learn/little_brain_knowledge.txt(小脑知识库)"]
-    KNOW --> RET
-    KNOW --> T2["self_learn/learn.py"]
-    T2 --> TRAIN["train_model.py → mini_gpt_model.pth"]
-    TRAIN --> SMALL
-    ST["start_xiaojiao.py"] --> BIG
-    ST --> W
-    ST --> BR["dsh_bridge(5001)"]
-    ST --> NEKO["🐱 N.E.K.O. 猫娘<br/>main_server(48911)+memory_server(48912)"]
-    NEKO -->|learn_from_neko.py<br/>每5分钟学| MEM["小焦记忆库<br/>xiaojiao_knowledge_memory.json"]
-    W -->|🎬生成视频| VID["video_service<br/>(卸载大脑→ComfyUI+Wan2.1→生成→恢复大脑)"]
-    VID --> COMFY["ComfyUI(8188) + Wan2.1-FP8<br/>(按需切换, 8G互斥)"]
-    COMFY --> OUTV["videos/*.mp4 真视频"]
-    W -->|📷拍照识图| VIS["vision_service<br/>XIAOJIAO_VISION_URL<br/>(Qwen2.5-VL 等)"]
-    PET --> W
-    W -->|💰成本记录| COST["cost_daily.json<br/>(调用/Token/花费/节省)"]
-    W --> COST_PAGE["/cost 看板页"]
+flowchart LR
+    subgraph INPUT["🧑‍💻 用户 / 接入"]
+        direction LR
+        U["用户"]
+        DSH["DeepSeek Harness"]
+    end
+
+    subgraph WEB["🖥️ 小焦 Web (5000)"]
+        direction TB
+        W["xiaojiao_app.py"]
+        A["agent_run"]
+        COST_PAGE["💰 /cost 看板"]
+    end
+
+    subgraph AGENT["🧡 小焦壳"]
+        direction TB
+        M["💰 记忆 recall<br/>xiaojiao_knowledge_memory"]
+        S["🌐 联网 search"]
+        TOOLS["🔧 工具 + 插件<br/>run_command/write_file<br/>py·js·api·skill"]
+    end
+
+    subgraph BRAIN["🧠 大脑（选一个）"]
+        direction TB
+        BIG["聊天大脑 llama-swap:9292<br/>llama-server / xiaojiao1.0-4B"]
+        SMALL["自研小脑 MiniGPT<br/>检索 + 生成"]
+    end
+
+    subgraph GEN["🎬 生成大脑（按需切换 · 8G 互斥）"]
+        direction TB
+        VID["video_service<br/>卸大脑 → ComfyUI → 恢复"]
+        COMFY["ComfyUI(8188) + Wan2.1-FP8"]
+        OUTV["videos/*.mp4 真视频"]
+    end
+
+    subgraph LEARN["🎓 持续学习"]
+        direction TB
+        LOG["logs/chat_history.jsonl"]
+        FB["logs/feedback.jsonl"]
+        KNOW["little_brain_knowledge.txt"]
+        TRAIN["train_model.py 重训"]
+    end
+
+    NEKO["🐱 N.E.K.O. 猫娘<br/>(48911/48912)"]
+    ST["▶ start_xiaojiao.py"]
+    BR["🌉 dsh_bridge(5001)"]
+
+    U --> W
+    DSH -->|/v1| W
+    W --> A
+    A --> M & S
+    A --> BRAIN
+    BRAIN --> TOOLS
+    TOOLS -->|执行结果| A
+    W -->|🎬| VID
+    VID --> COMFY --> OUTV
+    W -->|自动记录| LOG
+    LOG --> FB --> KNOW --> TRAIN
+    ST --> W & BIG & BR
+    ST --> NEKO
+    NEKO -->|每5分钟| KNOW
+    W --> COST_PAGE
+
+    classDef in fill:#f1f5f9,stroke:#94a3b8,color:#1e293b;
+    classDef web fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef ag fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
+    classDef br fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    classDef gen fill:#ecfdf5,stroke:#34d399,color:#064e3b;
+    classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
+    classDef neko fill:#fce7f3,stroke:#f472b6,color:#831843;
+    class U,DSH in;
+    class W,A,COST_PAGE web;
+    class M,S,TOOLS ag;
+    class BIG,SMALL br;
+    class VID,COMFY,OUTV gen;
+    class LOG,FB,KNOW,TRAIN lrn;
+    class NEKO,ST,BR neko;
 ```
 
 **调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；点 🎬 → video_service **按需切换**（卸大脑→ComfyUI+Wan2.1 生成→恢复大脑）出真视频；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + DSH 桥接。
@@ -581,14 +683,28 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    subgraph XJ["小焦 · 小脑（调度中心 brain_manager）"]
-        A["意图 → 选大脑"]
-        B["显存调度: 休眠/唤醒/让位"]
+    subgraph XJ["🧠 brain_manager · 调度中心"]
+        direction TB
+        A["🙋 意图 → 选大脑"]
+        B["⚙️ 显存调度<br/>休眠 / 唤醒 / 让位"]
     end
+
+    subgraph BRAINS["🧠 大脑们（8G 互斥）"]
+        direction TB
+        CHAT["💬 聊天大脑 llama.cpp 4B<br/>llama-swap(9292) 秒级卸载/加载"]
+        VID["🎬 视频大脑 ComfyUI+Wan2.1(8188)<br/>keep_warm 常驻 + 低显存"]
+        IMG["🖼️ 图像/推理大脑（可扩展）"]
+    end
+
     A --> B
-    B -->|switch_to| CHAT["聊天大脑 llama.cpp 4B<br/>llama-swap(9292) 秒级卸载/加载"]
-    B -->|switch_to| VID["视频大脑 ComfyUI+Wan2.1(8188)<br/>keep_warm 常驻 + 低显存(权重RAM↔显存)"]
-    B -->|未来| IMG["图像/推理大脑(可扩展)"]
+    B -->|switch_to| CHAT
+    B -->|switch_to| VID
+    B -.->|未来| IMG
+
+    classDef xj fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef br fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    class A,B xj;
+    class CHAT,VID,IMG br;
 ```
 
 **原理**：
@@ -610,12 +726,23 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A["🧠 监控面板 /monitor"] -->|每2秒| B["/api/monitor"]
-    B --> C["brain_manager.BRAINS"]
-    B --> D["nvidia-smi 显存"]
-    B --> E["psutil 内存"]
-    B --> F["llama-swap(9292) 聊天脑"]
-    B --> G["ComfyUI(8188) 视频脑"]
+    A["🧠 监控面板 /monitor"] -->|每 2 秒| B["/api/monitor"]
+
+    subgraph DATA["📊 数据源"]
+        direction TB
+        C["brain_manager.BRAINS"]
+        D["nvidia-smi 显存"]
+        E["psutil 内存"]
+        F["llama-swap(9292) 聊天脑"]
+        G["ComfyUI(8188) 视频脑"]
+    end
+
+    B --> C & D & E & F & G
+
+    classDef panel fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef data fill:#f1f5f9,stroke:#94a3b8,color:#1e293b;
+    class A panel;
+    class C,D,E,F,G data;
 ```
 
 > 打开 **`http://127.0.0.1:5000/monitor`**。详见 [docs/monitor.md](docs/monitor.md)。

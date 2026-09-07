@@ -151,15 +151,29 @@ class XXPlugin:
 
 ```mermaid
 flowchart LR
-    subgraph XJ["小焦 Web (5000)"]
+    subgraph XJ["🐱 小焦 Web (5000)"]
+        direction TB
         A["agent_run (对话)"]
         V["🎬 生成视频 video_service"]
     end
-    V -->|1 卸载大脑| STOP["llama-swap 卸载模型(9292, 秒级)"]
-    V -->|2 启动| COMFY["ComfyUI(8188)<br/>+ Wan2.1-1.3B-FP8"]
-    COMFY -->|3 生成 480p| OUT["videos/*.mp4"]
-    V -->|4 温存留内存/切第三脑或闲置超时清| RESTORE["聊天上显卡, 视频留内存(llama-swap 加载大脑9292)"]
-    A -->|5 恢复后继续对话| A
+
+    subgraph STEP["⚙️ 按需切换（8G 互斥）"]
+        direction TB
+        STOP["1 卸载大脑<br/>llama-swap 卸载模型(9292, 秒级)"]
+        COMFY["2 启动 ComfyUI(8188)<br/>+ Wan2.1-1.3B-FP8"]
+        OUT["3 生成 480p videos/*.mp4"]
+        RESTORE["4 温存留内存 / 切第三脑或闲置超时清<br/>聊天上显卡, 视频留内存(9292 加载大脑)"]
+    end
+
+    V --> STOP
+    V --> COMFY --> OUT
+    V --> RESTORE
+    RESTORE -->|5 恢复后继续对话| A
+
+    classDef xj fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef stp fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    class A,V xj;
+    class STOP,COMFY,OUT,RESTORE stp;
 ```
 
 **关键**：大脑(LLM) 与 视频(扩散) 不同时占显存——`video_service/model_switch.py` 负责：卸大脑→起 ComfyUI→生成→**温存留内存**（聊天上显卡时不杀它）→切第三个大脑或闲置超15分钟才清。前端显示进度条（后端轮询 ComfyUI `/progress`），状态无锁读取、刷新/多标签不丢进度。
@@ -185,17 +199,33 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph XJ["小焦 Web(5000)"]
+    subgraph XJ["🐱 小焦 Web(5000)"]
+        direction TB
         P["🎭 Agent 预设 presets/<br/>人格+大脑+工具开关, 保存即应用"]
         M["🧠 大脑仓库监控 /monitor<br/>状态/显存/切换/调优/添加"]
         COST["💰 成本看板 /cost<br/>今日调用/Token/花费/节省"]
     end
-    P -->|加载预设| C["xiaojiao_control.json<br/>(合并配置, 热更新不重启)"]
-    M -->|每2秒| A["/api/monitor"]
-    M -->|操作| B["brain_manager.switch_to<br/>llama-swap(9292) + ComfyUI(8188)"]
-    XJ -->|/v1| D["DSH 桥接(5001)<br/>deepseek-harness → DSH 插件生态"]
-    XJ -->|成本记录| J["_record_usage(写入cost_daily.json)"]
+
+    subgraph OP["⚙️ 配置 / 调度 / 接入"]
+        direction TB
+        C["xiaojiao_control.json<br/>(合并配置, 热更新不重启)"]
+        A["/api/monitor"]
+        B["brain_manager.switch_to<br/>llama-swap(9292) + ComfyUI(8188)"]
+        D["DSH 桥接(5001)<br/>deepseek-harness → DSH 插件生态"]
+        J["_record_usage<br/>写入 cost_daily.json"]
+    end
+
+    P --> C
+    M --> A
+    M -->|操作| B
+    XJ -->|/v1| D
+    XJ -->|成本记录| J
     COST --> J
+
+    classDef xj fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef op fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    class P,M,COST xj;
+    class C,A,B,D,J op;
 ```
 
 ---
@@ -205,15 +235,47 @@ flowchart LR
 一键启动拉起 **N.E.K.O. 猫娘**——成熟 Live2D 猫娘壳 + 小焦本地内核，二者互相学习：
 
 ```mermaid
-flowchart TD
-    ST["start_xiaojiao.start_neko()"]
-    ST --> MS["main_server(:48911)<br/>猫娘页面"]
-    ST --> MEM["memory_server(:48912)<br/>猫娘记忆"]
-    ST --> LEARN["learn_from_neko.py --daemon --interval 300<br/>每5分钟学猫娘与主人的对话"]
-    MS --> YUI["%LOCALAPPDATA%\\N.E.K.O\\memory\\YUI<br/>facts.json / persona.json"]
-    YUI --> LEARN
-    LEARN --> KNOW["小焦记忆库<br/>xiaojiao_knowledge_memory.json"]
-    KNOW --> K2["键: 学会:* / 猫娘说话风格"]
+flowchart LR
+    ST["▶ start_xiaojiao.start_neko()"]
+
+    subgraph NEKO_SRV["🐱 N.E.K.O. 猫娘"]
+        direction TB
+        MS["main_server<br/>(48911) 猫娘页面"]
+        MEM["memory_server<br/>(48912) 猫娘记忆"]
+    end
+
+    subgraph SRC["📚 猫娘记忆 %LOCALAPPDATA%\\N.E.K.O\\memory\\YUI"]
+        direction TB
+        FACTS["facts.json<br/>关于主人的事实"]
+        PERSONA["persona.json<br/>说话风格"]
+    end
+
+    subgraph LEARN_FLOW["🎓 学习通道"]
+        direction TB
+        LEARN["learn_from_neko.py<br/>--daemon --interval 300"]
+    end
+
+    subgraph XJ_MEM["🧡 小焦记忆库"]
+        direction TB
+        KNOW["xiaojiao_knowledge_memory.json"]
+        K2["学会:* · 猫娘说话风格"]
+    end
+
+    ST --> MS & MEM
+    MS --> FACTS & PERSONA
+    FACTS & PERSONA --> LEARN
+    LEARN --> KNOW --> K2
+
+    classDef st fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef neko fill:#fce7f3,stroke:#f472b6,color:#831843;
+    classDef src fill:#f1f5f9,stroke:#94a3b8,color:#1e293b;
+    classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
+    classDef xj fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
+    class ST st;
+    class MS,MEM neko;
+    class FACTS,PERSONA src;
+    class LEARN lrn;
+    class KNOW,K2 xj;
 ```
 
 - **记忆来源**：读 N.E.K.O. 猫娘 `facts.json`（关于主人的事实）+ `persona.json`（说话风格）。
