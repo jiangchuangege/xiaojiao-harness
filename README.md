@@ -211,34 +211,37 @@ flowchart LR
 flowchart LR
     subgraph DSHC["🧩 DSH 社区插件"]
         direction TB
-        D1["功能型<br/>工具 / 接口 / 技能"]
-        D2["界面型<br/>皮肤 / UI"]
+        D1["功能型<br/>工具·技能"]
+        D2["界面型<br/>皮肤·UI"]
     end
 
-    subgraph XJ["🐱 小焦 5000（独立兼容）"]
+    subgraph XJ["🐱 小焦 5000"]
         direction TB
-        X1["插件万能桥 _make_tools_plugin<br/>识别 DSH/OpenAI/Claude tools 清单<br/>→ py / js / json / skill 插件"]
+        X1["插件万能桥"]
+        X2["_make_tools_plugin"]
+        X3["→ py/js/json/skill"]
+        X1 --> X2 --> X3
     end
 
-    subgraph DSH["🖥️ DSH harness（仅界面型）"]
+    subgraph DSHW["🖥️ DSH harness"]
         direction TB
-        DS1["跑社区插件"]
-        DS2["小焦当模型 (/v1)"]
+        DS1["跑界面插件"]
+        DS2["小焦当模型 /v1"]
+        DS1 --> DS2
     end
 
-    D1 -->|"功能移植 · 无需 DSH 接入"| X1
-    D2 -->|"界面型 · DSH 原生"| DS1
-    DS1 --> DS2
+    D1 -->|"移植 · 无需 DSH"| X1
+    D2 -->|"界面型原生"| DS1
 
     classDef dshc fill:#f1f5f9,stroke:#94a3b8,color:#1e293b;
     classDef xj fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
     classDef dsh fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
     class D1,D2 dshc;
-    class X1 xj;
+    class X1,X2,X3 xj;
     class DS1,DS2 dsh;
 ```
 
-**一句话**：**功能型 DSH 插件由小焦自己就兼容**（`_make_tools_plugin` 直接识别 DSH/OpenAI/Claude 工具清单，移植成小焦插件即可用，**不用装 DSH**）；只有**界面型/皮肤**需要在 DSH 里跑、小焦当模型。小焦本身也支持 Python / Node.js / API / 技能四类插件。
+**一句话**：**功能型 DSH 插件由小焦自己就兼容**（`_make_tools_plugin` 直接识别 DSH/OpenAI/Claude 工具清单，转成小焦插件即可用，**不用装 DSH**）；只有**界面型/皮肤**需要在 DSH 里跑、小焦当模型。
 
 ---
 
@@ -542,7 +545,7 @@ flowchart TD
 小焦暴露一个 **OpenAI 兼容接口**（`/v1`），DeepSeek Harness（DSH）可直接把它当**模型**接入，从而用上小焦的人格 + 工具 + 记忆，并在 DSH 里跑它的社区插件。
 
 ### 步骤
-1. **启动小焦**：`python start_xiaojiao.py`（llama-swap:9292 接管大脑 + Web 5000 + DSH 桥接 5001 一起启动）。
+1. **启动小焦**：`python start_xiaojiao.py`（llama-swap:9292 接管大脑 + Web 5000 + N.E.K.O. 猫娘 48911/48912 一起启动）。
 2. 在 DSH 的 **设置 → 模型** → 添加一个模型提供方：
    - Base URL：`http://127.0.0.1:5000/v1`
    - API Key：留空（本地免鉴权）
@@ -623,7 +626,7 @@ flowchart LR
 
     NEKO["🐱 N.E.K.O. 猫娘<br/>(48911/48912)"]
     ST["▶ start_xiaojiao.py"]
-    BR["🌉 dsh_bridge(5001)"]
+    DSHPLUG["🔌 DSH 功能型插件<br/>工具/接口/技能"]
 
     U --> W
     DSH -->|/v1| W
@@ -636,9 +639,10 @@ flowchart LR
     VID --> COMFY --> OUTV
     W -->|自动记录| LOG
     LOG --> FB --> KNOW --> TRAIN
-    ST --> W & BIG & BR
+    ST --> W & BIG
     ST --> NEKO
     NEKO -->|每5分钟| KNOW
+    DSHPLUG -->|插件万能桥<br/>_make_tools_plugin| TOOLS
     W --> COST_PAGE
 
     classDef in fill:#f1f5f9,stroke:#94a3b8,color:#1e293b;
@@ -648,7 +652,7 @@ flowchart LR
     classDef gen fill:#ecfdf5,stroke:#34d399,color:#064e3b;
     classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
     classDef neko fill:#fce7f3,stroke:#f472b6,color:#831843;
-    class U,DSH in;
+    class U,DSH,DSHPLUG in;
     class W,A,COST_PAGE web;
     class M,S,TOOLS ag;
     class BIG,CLOUD,SMALL br;
@@ -657,7 +661,7 @@ flowchart LR
     class NEKO,ST,BR neko;
 ```
 
-**调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；点 🎬 → video_service **按需切换**（卸大脑→ComfyUI+Wan2.1 生成→恢复大脑）出真视频；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + DSH 桥接。
+**调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；点 🎬 → video_service **按需切换**（卸大脑→ComfyUI+Wan2.1 生成→恢复大脑）出真视频；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + N.E.K.O. 猫娘。
 
 ---
 
@@ -784,13 +788,42 @@ flowchart LR
 
 一键启动后，小焦会把**你本地部署的 N.E.K.O. 猫娘**服务拉起——成熟 Live2D 猫娘壳 + 小焦本地内核，两者互相学习：
 
-```
-      [透明桌面 · Live2D 猫娘]
-        ↑ main_server(:48911)
-   N.E.K.O. 猫娘（记忆/人格/插件）
-        │  learn_from_neko.py（每5分钟）
-        ▼
-  小焦记忆库 xiaojiao_knowledge_memory.json
+**猫娘 ↔ 小焦 互通原理图**：
+
+```mermaid
+flowchart LR
+    subgraph NEKO["🐱 N.E.K.O. 猫娘（你本地部署的开源项目）"]
+        direction TB
+        MS["main_server<br/>(48911) Live2D 形象"]
+        MEM["memory_server<br/>(48912) 记忆"]
+        PLUG["插件系统<br/>xiaojiao_install"]
+    end
+
+    subgraph LEARN["🎓 学习通道"]
+        direction TB
+        LF["learn_from_neko.py<br/>(每5分钟/手动)"]
+    end
+
+    subgraph XJ["🧡 小焦（本地大脑 + 工具）"]
+        direction TB
+        KNOW["小焦记忆库<br/>xiaojiao_knowledge_memory.json"]
+        BRAIN["大脑 + 工具 + 记忆 + 人格"]
+        GEN["生成视频/播客/音乐<br/>桌面猫娘"]
+    end
+
+    MS -->|"facts.json / persona.json"| LF
+    MEM --> LF
+    LF -->|"学会:* / 猫娘说话风格"| KNOW
+    KNOW --> BRAIN
+    BRAIN --> GEN
+    PLUG -->|"装小焦体检/指引<br/>调 /api/env"| BRAIN
+
+    classDef neko fill:#fce7f3,stroke:#f472b6,color:#831843;
+    classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
+    classDef xj fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
+    class MS,MEM,PLUG neko;
+    class LF lrn;
+    class KNOW,BRAIN,GEN xj;
 ```
 
 - **一键拉起**：`start_neko()` 自动起 `main_server(48911)` + `memory_server(48912)` + 后台学习通道。
