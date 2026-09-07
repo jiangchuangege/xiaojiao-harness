@@ -96,6 +96,8 @@ cost_daily.json
 *.jpeg
 # README 封面形象图允许入库
 !assets/xiaojiao_cover.jpg
+# GitHub 社交预览图(social preview)
+!assets/social_preview.png
 monitor.html
 _dbg*
 _job*
