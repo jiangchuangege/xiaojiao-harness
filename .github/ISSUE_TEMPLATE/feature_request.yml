@@ -1,0 +1,24 @@
+name: ✨ 功能建议
+description: 想让小焦多一个能力？提出来，最简单的方式就是写进插件。
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: 想法
+    attributes:
+      label: 你想让小焦多干点什么
+      placeholder: 举个例子：帮我定时提醒 / 查天气 / 读网页摘要 / 生成图片…
+    validations:
+      required: true
+  - type: textarea
+    id: 场景
+    attributes:
+      label: 使用场景（可选）
+      placeholder: 什么情况下会用到它
+  - type: checkboxes
+    id: 插件
+    attributes:
+      label: 你是否愿意自己写个插件来实现？
+      options:
+        - label: 愿意，参考 docs/extend.md 写一个 Python/Node/API/技能插件
+        - label: 只是想提需求，希望有人做

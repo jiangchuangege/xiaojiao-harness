@@ -1,0 +1,32 @@
+name: 🐛 报告 Bug
+description: 小焦哪儿出问题了？帮我描述一下，我来查。
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: 现象
+    attributes:
+      label: 现象 / 发生了什么
+      placeholder: 你做了什么操作，看到什么（报错、卡住、显示不对…）
+    validations:
+      required: true
+  - type: textarea
+    id: 期望
+    attributes:
+      label: 你期望怎么样
+      placeholder: 本应该怎样
+  - type: input
+    id: 环境
+    attributes:
+      label: 环境
+      placeholder: 例如 Windows 11 · Python 3.10 · 8G 显卡 · 本地 GGUF / DeepSeek API
+  - type: textarea
+    id: 复现
+    attributes:
+      label: 复现步骤（可选）
+      placeholder: 1. ... 2. ... 3. ...
+  - type: textarea
+    id: 日志
+    attributes:
+      label: 日志 / 截图（可选）
+      placeholder: 把控制台报错或截图贴进来，更好定位

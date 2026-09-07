@@ -21,7 +21,11 @@
 [![Local](https://img.shields.io/badge/100%25-local-important)]()
 [![AI companion](https://img.shields.io/badge/AI-companion-orange)]()
 [![GitHub stars](https://img.shields.io/github/stars/jiangchuangege/xiaojiao-harness)]()
-[![Topics](https://img.shields.io/badge/topics-AI--companion%20local--ai%20catgirl-blue)]()
+[![GitHub forks](https://img.shields.io/github/forks/jiangchuangege/xiaojiao-harness)]()
+[![GitHub release](https://img.shields.io/github/v/release/jiangchuangege/xiaojiao-harness)]()
+[![GitHub last commit](https://img.shields.io/github/last-commit/jiangchuangege/xiaojiao-harness)]()
+[![GitHub repo size](https://img.shields.io/github/repo-size/jiangchuangege/xiaojiao-harness)]()
+[![GitHub issues](https://img.shields.io/github/issues/jiangchuangege/xiaojiao-harness)]()
 
 </div>
 
@@ -319,6 +323,8 @@ xiaojiao-harness/
 | [播客大脑](docs/podcast.md) | 给主题→写稿+配音+封面，生成播客 |
 | [N.E.K.O. 猫娘集成](docs/neko.md) | 桌面 Live2D 猫娘伙伴，学猫娘与主人的对话 |
 | [多脑秒切](docs/brain-switch.md) | 聊天/视频/播客/图像 大脑按需切换 |
+| [更新记录](CHANGELOG.md) | 每个版本改了什么 |
+| [行为准则](CODE_OF_CONDUCT.md) | 社区友好共识 |
 
 ---
 
@@ -656,9 +662,12 @@ flowchart LR
 
 小焦是开源的，也**欢迎你来一起开发**：插件生态(py/js/api/skill)、持续学习、DSH 社区接入、皮肤、训练管线……任何一个你感兴趣的方向，都可以来贡献。
 
-- 提功能/想法：在仓库开 **Issue**；
-- 提交代码：Fork 后提 **Pull Request**；
-- 一起聊：欢迎任何问题、建议与协作。
+- **🚀 快速上手**：看 [docs/quickstart.md](docs/quickstart.md) 五分钟跑起来；
+- **🐛 报 Bug**：开 [Bug Issue](.github/ISSUE_TEMPLATE/bug_report.yml)，按模板写现象/环境/日志；
+- **✨ 提功能**：开 [Feature Issue](.github/ISSUE_TEMPLATE/feature_request.yml)，或直接写个**插件**（`docs/extend.md`）；
+- **🔀 交代码**：Fork 后提 [Pull Request](.github/PULL_REQUEST_TEMPLATE.md)；
+- **💙 行为规范**：见 [Code of Conduct](CODE_OF_CONDUCT.md)，我们对新人很友好；
+- **📝 更新记录**：见 [CHANGELOG.md](CHANGELOG.md)。
 
 > 它正等着，**和愿意陪它长大的人一起，慢慢长大**。✨
 
