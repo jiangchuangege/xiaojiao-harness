@@ -77,10 +77,11 @@ def start_llama_brain():
     return proc
 
 def start_neko():
-    """启动 N.E.K.O. 猫娘(融合进小焦一键启动): 起 memory_server + main_server, 后台学习你的需求, 打开猫娘页面。
-    支持两种形态(自动探测, 找不到就跳过, 不阻塞小焦):
-      - Steam 版:  G:\\SteamLibrary\\steamapps\\common\\n.e.k.o  (N.E.K.O.exe 拉起 48911/48912)
-      - 源码克隆版: 任意 N.E.K.O-main/launcher.py  + .venv
+    """启动 N.E.K.O. 猫娘(融合进小焦一键启动)。支持两种形态(自动探测, 找不到就跳过, 不阻塞小焦):
+      - Steam 版(你实际的): G:\\SteamLibrary\\steamapps\\common\\n.e.k.o
+          入口 = 桌面客户端 N.E.K.O.exe; 它会连带拉起 projectneko_server.exe(监听 48911/48912 后端)。
+          【主界面是桌面客户端, 不是 web 页面】
+      - 源码克隆版: 任意 N.E.K.O-main/launcher.py + .venv
     路径可改(用户下载位置不同): XIAOJIAO_NEKO_DIR 环境变量优先。"""
     import subprocess as _sp
     # 1) 定位 N.E.K.O. 项目根: 优先环境变量 -> Steam 版 -> 源码克隆版候选
@@ -106,7 +107,7 @@ def start_neko():
         print("⚠️ 未找到 N.E.K.O. 猫娘(设 XIAOJIAO_NEKO_DIR 指向其目录, 或装 Steam 版于 n.e.k.o)")
         return None
 
-    steam_exe = os.path.join(root, "N.E.K.O.exe")            # Steam 版入口
+    steam_exe = os.path.join(root, "N.E.K.O.exe")            # Steam 版桌面客户端入口
     launcher = os.path.join(root, "launcher.py")             # 源码版入口
     py = os.path.join(root, ".venv", "Scripts", "python.exe")
 
@@ -117,11 +118,18 @@ def start_neko():
         except Exception:
             return False
 
-    # 2) 确保 48911/48912 在线; 都不在线才尝试拉起
-    if not (_alive(48911) or _alive(48912)):
+    # 2) 确保猫娘已运行: 看桌面客户端进程 + 后端端口
+    import subprocess as sp
+    def _running(exe):
+        for pr in sp.check_output("tasklist /FI \"IMAGENAME eq %s\"" % os.path.basename(exe), text=True, shell=True, errors="ignore").splitlines():
+            if os.path.basename(exe).lower() in pr.lower():
+                return True
+        return False
+    # 都在线(客户端+后端)则认为已运行; 否则拉起桌面客户端 N.E.K.O.exe(会连带拉后端)
+    if not (_running(steam_exe) or _alive(48911)):
         if os.path.exists(steam_exe):
             _sp.Popen([steam_exe], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW)
-            print("🐱 [N.E.K.O] Steam 版已启动(N.E.K.O.exe, 起 48911/48912)")
+            print("🐱 [N.E.K.O] Steam 桌面客户端已启动(N.E.K.O.exe, 连带拉起后端 48911/48912)")
         elif os.path.exists(launcher) and os.path.exists(py):
             _sp.Popen([py, "-m", "app.memory_server"], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW)
             _sp.Popen([py, "-m", "app.main_server"], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW,
@@ -131,7 +139,7 @@ def start_neko():
             print("⚠️ [N.E.K.O] 在 %s 但既无 N.E.K.O.exe 也无可用 launcher.py/.venv, 跳过自动拉起" % root)
             return root
     else:
-        print("🐱 [N.E.K.O] 已在运行(48911/48912 在线)")
+        print("🐱 [N.E.K.O] 已在运行(N.E.K.O.exe + 后端 48911/48912)")
 
     # 3) 后台学习通道(每 5 分钟学一次你与猫娘的对话)
     try:
@@ -212,10 +220,9 @@ def main():
     # 4. 打开浏览器
     print(f"🌐 启动小焦 Web: http://127.0.0.1:{port}")
     threading.Timer(1.5, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
-    # 打开 N.E.K.O. 猫娘页
+    # N.E.K.O. 猫娘: Steam 桌面客户端(不是 web 页面)。start_neko 已确保拉起它。
     if neko_root:
-        threading.Timer(3.5, lambda: webbrowser.open("http://127.0.0.1:48911")).start()
-        print("🐱 猫娘已上线: http://127.0.0.1:48911")
+        print("🐱 N.E.K.O. 猫娘桌面客户端已就绪 (Steam 客户端 / N.E.K.O.exe)")
 
     # 5. 启动 Web 服务（阻塞在这里）
     try:
