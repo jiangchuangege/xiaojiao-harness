@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-小焦 · 一键启动（把她融合成一套：大模型大脑 + 小焦壳 + Web + DSH插件桥接）
+小焦 · 一键启动（把她融合成一套：大模型大脑 + 小焦壳 + Web + N.E.K.O. 猫娘）
 
 用法：  python start_xiaojiao.py
 它做五件事：
@@ -8,7 +8,7 @@
   2. 若配置了本地大模型(GGUF) → 自动用 llama.cpp 跑起来
   3. 启动小焦的 Web 界面
   4. 自动打开浏览器
-  5. 启动 DSH 桥接服务（用于调用 DeepSeek Harness 社区插件）
+  5. 拉起 N.E.K.O. 猫娘(48911/48912) + 后台学习
 """
 import os
 import shutil, sys, time, threading, webbrowser, subprocess
@@ -19,9 +19,6 @@ CONTROL = app.CONTROL
 MODEL_NAME = app.MODEL_NAME
 BRAIN = CONTROL.get("brain", {})
 ENGINE = BRAIN.get("engine", "auto")
-
-# DSH 配置
-DSH_ENABLED = CONTROL.get("dsh", {}).get("enabled", False)
 
 
 def resolve_llama_paths():
@@ -134,36 +131,6 @@ def start_neko():
     return True
 
 
-def start_dsh_bridge():
-    """启动 DSH 桥接 HTTP 服务（端口 5001）"""
-    if not DSH_ENABLED:
-        print("ℹ️ DSH 桥接未启用（dsh.enabled = false），跳过。")
-        return None
-
-    bridge_path = os.path.join(os.path.dirname(__file__), "dsh_bridge", "main.py")
-    if not os.path.exists(bridge_path):
-        print(f"⚠️ 未找到 DSH 桥接服务文件：{bridge_path}")
-        return None
-
-    print("🌉 正在启动 DSH 桥接服务（端口 5001）...")
-    proc = subprocess.Popen(
-        [sys.executable, bridge_path],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        cwd=os.path.dirname(__file__)
-    )
-    # 等待服务就绪（最多 10 秒；一起就绪最理想，没就绪也不报错，稍后会自动可用）
-    for _ in range(25):
-        try:
-            if requests.get("http://127.0.0.1:5001/health", timeout=1).status_code == 200:
-                print("✅ DSH 桥接服务已就绪")
-                return proc
-        except Exception:
-            pass
-        time.sleep(1)
-    print("✅ DSH 桥接已在后台启动（端口5001）；首次需加载 deepseek_harness，稍等几秒就绪。")
-    return proc
-
 def start_llama_swap():
     """自动启动 llama-swap(多大脑热切换管理器)。独立端口9292, 不冲突直接大脑8080。
     路径多候选自动检测(不写死, 兼容移动位置): 环境变量/常见位置。"""
@@ -206,9 +173,6 @@ def main():
     print(f"  大脑:   {ENGINE}")
     print("=" * 50)
 
-    # 1. 先启动 DSH 桥接（在大模型加载前，避免资源竞争导致它起不来）
-    dsh_proc = start_dsh_bridge()
-
     # 2b. 先拉起 llama-swap(9292), 让大脑由它管理(8080直连会检测到9292后自动跳过)
     llama_swap_proc = start_llama_swap()
 
@@ -247,11 +211,6 @@ def main():
         if llama_proc:
             try:
                 llama_proc.kill()
-            except:
-                pass
-        if dsh_proc:
-            try:
-                dsh_proc.kill()
             except:
                 pass
         print("🛑 所有服务已关闭。")
