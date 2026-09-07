@@ -39,6 +39,8 @@ xiaojiao_history.json
 xiaojiao_knowledge_memory.json
 xiaojiao_sessions.json
 xiaojiao_config.json
+# 操控文件(含本地 api key) —— 严禁入库, 只留 xiaojiao_config.json.example
+xiaojiao_control.json
 
 # ---------- Python ----------
 __pycache__/
