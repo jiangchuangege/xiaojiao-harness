@@ -92,7 +92,7 @@ python start_xiaojiao.py
 | 想干嘛 | 连哪里 | 说明 |
 | --- | --- | --- |
 | 🖥️ **小焦网页** | `http://127.0.0.1:5000` | 聊天 + 联网 + 记忆 + 工具 + 会话 |
-| 🐱 **N.E.K.O. 猫娘** | `http://127.0.0.1:48911` | 桌面 Live2D 猫娘伙伴，自动学你与猫娘的对话（一键启动拉起） |
+| 🐱 **N.E.K.O. 猫娘** | Steam 桌面客户端 `N.E.K.O.exe`（不是 web 页面；48911/48912 是它的后端端口） | 桌面 Live2D 猫娘伙伴，自动学你与猫娘的对话（一键启动拉起） |
 | 🔗 **接 dsh / 客户端** | `http://127.0.0.1:5000/v1` | OpenAI 兼容，自动带上小焦人格 + 工具 |
 | 👁️ **视觉识图** | `POST /api/vision` | 截图 → 视觉模型描述（配 XIAOJIAO_VISION_URL） |
 | 💰 **成本看板** | `http://127.0.0.1:5000/cost` | 今日调用/本地Token/云端Token/花费/节省 |
@@ -103,7 +103,7 @@ python start_xiaojiao.py
 - **开/关工具**：右上角「🛠️ 工具」（🟢开 / 🔴关）。
 - **建会话**：左边「＋ 新对话」；点历史会话切换，右上角「⟨」收起侧边栏。
 - **换端口**：`python start_xiaojiao.py --port 8081`，或改 `xiaojiao_control.json` 的 `web_port`。
-- **🐱 N.E.K.O. 猫娘**：`python start_xiaojiao.py` 自动拉起 N.E.K.O. `main_server(48911)` + `memory_server(48912)` + 后台学习通道，并打开猫娘页 `http://127.0.0.1:48911`。
+- **🐱 N.E.K.O. 猫娘**：`python start_xiaojiao.py` 会自动拉起你的 **N.E.K.O. 桌面客户端（`N.E.K.O.exe`，Steam 版）**，它连带拉起后端 `main_server(48911)` + `memory_server(48912)`（这两个是后端端口，不是网页入口）+ 后台学习通道。
 - **装小焦体检**：N.E.K.O. 插件「装小焦」→ 秒出环境清单 ✅/❌。
 - **成本看板**：打开 `http://127.0.0.1:5000/cost` 看今日花费。
 - **视觉识图**：设环境变量 `XIAOJIAO_VISION_URL=http://127.0.0.1:8082/v1` 后，拍照识图。
@@ -792,11 +792,13 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph NEKO["🐱 N.E.K.O. 猫娘（你本地部署的开源项目）"]
+    subgraph NEKO["🐱 N.E.K.O. 猫娘（你本地开源项目，Steam 桌面客户端）"]
         direction TB
-        MS["main_server<br/>(48911) Live2D 形象"]
-        MEM["memory_server<br/>(48912) 记忆"]
-        PLUG["插件系统<br/>xiaojiao_install"]
+        APP["N.E.K.O.exe 桌面客户端<br/>(你看到的界面)"]
+        MS["后端 main_server (48911)"]
+        MEM["memory_server (48912)"]
+        PLUG["插件系统 xiaojiao_install"]
+        APP --> MS & MEM
     end
 
     subgraph LEARN["🎓 学习通道"]
@@ -821,12 +823,12 @@ flowchart LR
     classDef neko fill:#fce7f3,stroke:#f472b6,color:#831843;
     classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
     classDef xj fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
-    class MS,MEM,PLUG neko;
+    class APP,MS,MEM,PLUG neko;
     class LF lrn;
     class KNOW,BRAIN,GEN xj;
 ```
 
-- **一键拉起**：`start_neko()` 自动起 `main_server(48911)` + `memory_server(48912)` + 后台学习通道。
+- **一键拉起**：`start_neko()` 拉起**桌面客户端 `N.E.K.O.exe`**（连带后端 48911/48912）+ 后台学习通道。**主入口是桌面客户端，不是 web 页面**。
 - **学你与猫娘的对话**：`learn_from_neko.py` 读猫娘 `facts.json`/`persona.json` → 写进小焦记忆（`学会:*` / `猫娘说话风格`）。
 - **N.E.K.O. 插件**：`%LOCALAPPDATA%\N.E.K.O\plugins\xiaojiao_install\` 提供「装小焦」体检 + 安装指引。
 
