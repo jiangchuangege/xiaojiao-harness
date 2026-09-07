@@ -48,7 +48,7 @@ cd C:\xiaojiao\xiaojiao harness
 pip install -r requirements.txt
 python start_xiaojiao.py      # 起 9292 大脑 + 5000 网页 + N.E.K.O. 猫娘(48911/48912)
 ```
-- 网页：`http://127.0.0.1:5000` ｜ 猫娘：`http://127.0.0.1:48911` ｜ 播客：`/podcast` ｜ `/v1` 给 dsh/客户端 ｜ 成本看板 `/cost`
+- 网页：`http://127.0.0.1:5000` ｜ 猫娘：**Steam 桌面客户端 `N.E.K.O.exe`**（48911/48912 是后端端口）｜ 播客：`/podcast` ｜ `/v1` 给 dsh/客户端 ｜ 成本看板 `/cost`
 - N.E.K.O.: `uv sync` → `build_frontend.bat` → `python -m app.memory_server` + `python -m app.main_server` → `http://127.0.0.1:48911`
 
 ## 8. 常用接口速查
