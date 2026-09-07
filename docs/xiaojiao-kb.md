@@ -11,14 +11,14 @@
 | 文件/目录 | 干什么 |
 |---|---|
 | `xiaojiao_app.py` | **主应用**（Flask, 端口 5000）：Web UI + 人格 + 工具 + 记忆 + 会话 + `/v1` OpenAI 兼容接口 |
-| `start_xiaojiao.py` | **一键启动**：起 llama-swap(9292) 大脑 + Web(5000) + 桌面宠物 + DSH 桥(5001) |
+| `start_xiaojiao.py` | **一键启动**：起 llama-swap(9292) 大脑 + Web(5000) + N.E.K.O. 猫娘(48911/48912) + DSH 桥(5001) |
 | `brain_manager.py` | **多大脑调度中心**：聊天/视频/播客/云视频大脑注册表，RUN/WARM/OFF 秒级切换 |
 | `video_service/` | **文生视频**：本地 ComfyUI+Wan2.1 **或** 云端(Agnes 免费 API)，按需切换 |
 | `podcast_service/` | **播客大脑**：LLM 写稿 → Chatterbox 配音 → pydub 拼接 → SD1.5 封面 |
 | `music_service/` | **ACE-Step 音乐大脑**（调它自带 API server :8001） |
-| `desktop/` | **桌面宠物**（Electron 透明置顶窗） |
+| `learn_from_neko.py` | **学 N.E.K.O. 猫娘与主人的对话** → 小焦记忆库（支持 `--daemon` 后台每 5 分钟学） |
 | `plugins/` | **四类插件生态**：py / js / api(json) / skill(md) |
-| `docs/` | 全套文档：架构/quickstart/podcast/video/猫娘宠物等 |
+| `docs/` | 全套文档：架构/quickstart/podcast/video/猫娘(N.E.K.O.)等 |
 | `xiaojiao_control.json` | 操控文件：人格(role)/大脑(brain)/模型(models)/行为 |
 
 ## 3. 大脑（可插拔、秒级切换）
@@ -37,17 +37,18 @@
 - 流程：LLM 写双人中文对话稿（可指定分钟数, 默认15）→ Chatterbox TTS 逐句 → pydub 拼 mp3 → SD1.5 出封面
 - 参数：topic / host_a / host_b / rounds / style / minutes
 
-## 6. 桌面宠物
-- **当前**：Electron 透明置顶窗，加载小焦 `/pet` 页（全息核心 or 猫娘形象，可点菜单：语音/聊天/装小焦体检）
-- 另接 **N.E.K.O. 猫娘**（`G:\moxing__xiaojiao\maoniang\N.E.K.O-main`，端口 48911）：成熟 Live2D 猫娘 App，目标是"N.E.K.O. 形象壳 + 小焦本地内核"
+## 6. 桌面猫娘伙伴（N.E.K.O.）
+- **当前**：N.E.K.O. 猫娘（`G:\moxing__xiaojiao\maoniang\N.E.K.O-main`，端口 48911/48912）——成熟 Live2D 猫娘 App，目标"N.E.K.O. 形象壳 + 小焦本地内核"。
+- **互相学习**：`learn_from_neko.py` 读猫娘 `facts.json`/`persona.json`（`%LOCALAPPDATA%\N.E.K.O\memory\YUI\`）→ 写进小焦记忆库（`学会:*` / `猫娘说话风格`）。
+- **N.E.K.O. 插件**：`%LOCALAPPDATA%\N.E.K.O\plugins\xiaojiao_install\`，提供「装小焦」体检 + 安装指引。
 
 ## 7. 部署/启动
 ```powershell
 cd C:\xiaojiao\xiaojiao harness
 pip install -r requirements.txt
-python start_xiaojiao.py      # 起 9292 大脑 + 5000 网页 + 宠物
+python start_xiaojiao.py      # 起 9292 大脑 + 5000 网页 + N.E.K.O. 猫娘(48911/48912)
 ```
-- 网页：`http://127.0.0.1:5000` ｜ 播客：`/podcast` ｜ `/v1` 给 dsh/客户端 ｜ 成本看板 `/cost`
+- 网页：`http://127.0.0.1:5000` ｜ 猫娘：`http://127.0.0.1:48911` ｜ 播客：`/podcast` ｜ `/v1` 给 dsh/客户端 ｜ 成本看板 `/cost`
 - N.E.K.O.: `uv sync` → `build_frontend.bat` → `python -m app.memory_server` + `python -m app.main_server` → `http://127.0.0.1:48911`
 
 ## 8. 常用接口速查

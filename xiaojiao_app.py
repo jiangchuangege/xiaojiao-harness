@@ -14,7 +14,7 @@
 """
 import os, sys, json, re, time, threading, webbrowser
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template_string, Response
+from flask import Flask, request, jsonify, render_template_string, Response, redirect
 import requests
 import torch
 
@@ -1168,75 +1168,10 @@ def _list_preset_files():
 
 @app.route("/pet")
 def api_pet():
-    """桌面贾维斯宠物页(MVP): J.A.R.V.I.S. 全息核心 + 语音气泡 + 与小焦对话。"""
-    return render_template_string(PET_HTML)
+    """猫娘桌面伙伴：重定向到 N.E.K.O. 猫娘(48911)。"""
+    return redirect("http://127.0.0.1:48911")
 
 
-PET_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
-<title>⚡ J.A.R.V.I.S.</title><style>
-*{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none;color:#7fd4ff;-webkit-app-region:drag}
-#api{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;z-index:9}
-.bubble{position:relative;background:rgba(8,20,40,.95);border:1px solid #2a6f9c;border-radius:12px;padding:8px 12px;color:#cfeaff;font-size:13px;max-width:94vw;margin:0 0 10px;white-space:pre-wrap;word-break:break-word;-webkit-app-region:no-drag}
-.bubble:after{content:'';position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);border:7px solid transparent;border-top-color:#2a6f9c88}
-.core{position:relative;width:92px;height:92px;-webkit-app-region:drag}
-.core .halo{position:absolute;inset:0;border-radius:50%;border:2px solid #2a6f9c88;animation:spin 9s linear infinite}
-.core .halo2{position:absolute;inset:7px;border-radius:50%;border:1px dashed #2a6f9c66;animation:spin 5s linear infinite reverse}
-.core .ring{position:absolute;inset:15px;border-radius:50%;border:2px solid transparent;border-top-color:#37b6ff;animation:spin 2.5s linear infinite}
-.core .core-in{position:absolute;inset:26px;border-radius:50%;background:radial-gradient(circle,#7fd4ff,#2a6f9c 60%,#0a1a33);box-shadow:0 0 24px #37b6ff88,0 0 46px #37b6ff44;animation:pulse 2.4s ease-in-out infinite;-webkit-app-region:no-drag;cursor:pointer}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
-.core.talk .core-in{animation:pulse .5s ease-in-out infinite}
-.menu{position:relative;background:#0a1830ee;border:1px solid #2a6f9c;border-radius:12px;padding:8px;display:none;grid-template-columns:1fr 1fr;gap:8px;-webkit-app-region:no-drag;box-shadow:0 8px 30px #000a;width:230px;margin-top:12px}
-.menu.show{display:grid}
-.menu button{padding:7px 13px;border-radius:8px;border:1px solid #2a6f9c;background:#0e2233;color:#cfeaff;font-size:13px;cursor:pointer;-webkit-app-region:no-drag;white-space:nowrap}
-.menu button:hover{background:#16324a}
-#row{display:none;gap:8px;margin-top:12px;-webkit-app-region:no-drag;align-items:center}
-#row.show{display:flex}
-#inp{padding:9px 14px;border-radius:20px;border:1px solid #2a6f9c;background:#0a1830ee;color:#cfeaff;font-size:13px;outline:none;-webkit-app-region:no-drag;width:180px}
-#inp:focus{border-color:#37b6ff}
-#send{padding:9px 16px;border-radius:16px;border:1px solid #2a6f9c;background:#16324a;color:#cfeaff;font-size:13px;cursor:pointer;-webkit-app-region:no-drag}
-#send:hover{background:#1e3f5e}
-#voicebox{display:none;flex-direction:column;align-items:center;gap:8px;margin-top:12px;-webkit-app-region:no-drag}
-#voicebox.show{display:flex}
-.vst{color:#7fd4ff;font-size:13px;text-align:center;-webkit-app-region:no-drag}
-#stopvoice{padding:8px 15px;border-radius:16px;border:1px solid #2a6f9c;background:#5a2020;color:#ffb4b4;font-size:13px;cursor:pointer;-webkit-app-region:no-drag}
-.st{color:#37b6ff;font-size:11px;letter-spacing:1px;margin-top:8px;-webkit-app-region:no-drag}
-</style></head><body>
-<div id="api">
-  <div class="bubble" id="bub" style="display:none"></div>
-  <div class="core" id="core">
-    <div class="halo"></div><div class="halo2"></div><div class="ring"></div><div class="core-in" id="corebtn"></div>
-  </div>
-  <div class="menu" id="menu">
-    <button onclick="setupHelp()">🛠 装小焦</button>
-    <button onclick="voiceMode()">🎤 语音通话</button>
-    <button onclick="chatMode()">💬 聊天</button>
-    <button onclick="hideMenu()">✖ 收起</button>
-  </div>
-  <div id="voicebox"><div class="vst" id="vst">🎤 通话中…</div><button id="stopvoice" onclick="stopVoice()">✖ 结束通话</button></div>
-  <div id="row"><button id="screenshot" onclick="snap()">📷</button><input id="inp" placeholder="对小焦说…" onkeydown="if(event.key==='Enter')ask()"><button id="send" onclick="ask()">发送</button></div>
-  <img id="shotPreview" style="display:none;max-width:94vw;max-height:48vh;border-radius:10px;border:1px solid #2a6f9c;margin-top:8px">
-  <div class="st" id="st">系统在线</div>
-</div>
-<script>
-function $(id){return document.getElementById(id)}
-var bub=$('bub'),core=$('core'),menu=$('menu'),st=$('st'),inp=$('inp'),row=$('row'),voicebox=$('voicebox'),vst=$('vst');
-var voiceModeOn=false,mediaRec=null,busy=false,bubHide=null;
-$('corebtn').onclick=function(){menu.classList.contains('show')?menu.classList.remove('show'):menu.classList.add('show');};
-function hideMenu(){menu.classList.remove('show');}
-function speak(t){bub.style.display='block';bub.textContent=t;core.classList.add('talk');st.textContent='正在说话…';clearTimeout(bubHide);bubHide=setTimeout(function(){if(!voiceModeOn){bub.style.display='none';st.textContent='系统在线';}},Math.max(4000,t.length*90));setTimeout(function(){core.classList.remove('talk');},2500);}
-function ask(t){var txt=(t===undefined?inp.value:t).trim();if(!txt){return;}inp.value='';if(voiceModeOn&&mediaRec&&mediaRec.state!=='inactive'){mediaRec.stop();}busy=true;st.textContent='✅ 已发送 · 思考中…';bub.style.display='block';bub.textContent='…';var ac=new AbortController(),tm=setTimeout(function(){ac.abort();},90000);
-  fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:txt,lean:voiceModeOn}),signal:ac.signal}).then(function(r){return r.json();}).then(function(d){clearTimeout(tm);var ans=(d.answer||'没听清').slice(0,220);speak(ans);if(ans&&ans.indexOf('模型调用出错')<0){speakTTS(ans);}if(voiceModeOn){busy=false;mediaRec.start(4000);vst.textContent='🎤 通话中…请说话';}}).catch(function(){clearTimeout(tm);speak('回复太慢或超时，请再点发送');if(voiceModeOn){busy=false;mediaRec.start(4000);}});}
-function speakTTS(t){fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t.slice(0,300)})}).then(function(r){return r.json();}).then(function(d){if(d.ok&&audioSrc){audio.src=d.url;audio.play();}}).catch(function(){});}
-var audioSrc=true,audio=new Audio();
-function chatMode(){hideMenu();voicebox.classList.remove('show');voiceModeOn=false;row.classList.add('show');inp.focus();st.textContent='聊天模式 · 打字点发送';}
-var ms=null;
-function startMedia(){if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){vst.textContent='此环境不支持麦克风';return;}vst.textContent='开启麦克风…';navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){if(!window._stream){window._stream=stream;}var rec=new MediaRecorder(stream);mediaRec=rec;rec.ondataavailable=function(e){if(voiceModeOn&&!busy&&e.data&&e.data.size>800){busy=true;rec.stop();var fd=new FormData();fd.append('audio',new Blob([e.data],{type:'audio/webm'}),'a.webm');vst.textContent='识别中…';fetch('/api/asr',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(d){if(d.ok&&d.text){ask(d.text);}else{vst.textContent='🎤 请说话';busy=false;rec.start(4000);}}).catch(function(){vst.textContent='🎤 请说话';busy=false;rec.start(4000);});}};rec.onstop=function(){if(voiceModeOn&&!busy){rec.start(4000);}};rec.start(4000);vst.textContent='🎤 通话中… 直接说话';}).catch(function(){vst.textContent='无法访问麦克风，请检查权限';});}
-function voiceMode(){hideMenu();row.classList.remove('show');voicebox.classList.add('show');voiceModeOn=true;busy=false;vst.textContent='🔄 准备语音中…';speak('正在准备语音通话');fetch('/api/voice/warm',{method:'POST'}).then(function(){vst.textContent='🎤 通话中… 直接说话';startMedia();}).catch(function(){vst.textContent='🎤 通话中… 直接说话';startMedia();});}
-function snap(){st.textContent='📷 正在看你屏幕…';fetch('/api/vision').then(function(r){return r.json();}).then(function(d){if(d.ok){var img=document.getElementById('shotPreview');img.src=d.url;img.style.display='block';speak(d.desc||'我看到你的屏幕了');}else{speak('截图失败：'+(d.error||''));}}).catch(function(){speak('截图失败');});}
-function setupHelp(){st.textContent='🛠 正在检查小焦环境…';bub.style.display='block';bub.textContent='稍等，我正在检查你的环境…';fetch('/api/env').then(function(r){return r.json();}).then(function(d){var ok=[],miss=[];(d.items||[]).forEach(function(it){if(it.ok){ok.push(it.name);}else{miss.push(it);}});var t='✅ 已装：\\n';ok.forEach(function(n){t+='✅ '+n+'\\n';});if(miss.length){t+='\\n❌ 还需要装/启动：\\n';miss.forEach(function(it){t+='❌ '+it.name+' → '+((it.need||'生成时自动起').slice(0,28))+'\\n';});t+='\\n把你缺的告诉我，我带你逐步装好。';}else{t+='\\n🎉 全部就绪，小焦现在就能用！';}speak(t);st.textContent='系统在线';}).catch(function(){speak('检查失败');});}
-function stopVoice(){voiceModeOn=false;if(mediaRec&&mediaRec.state!=='inactive'){mediaRec.stop();}voicebox.classList.remove('show');st.textContent='系统在线';}
-</script></body></html>"""
 
 
 @app.route("/api/voice/warm", methods=["POST"])
@@ -1777,25 +1712,44 @@ def api_env():
     except Exception:
         _bp = 9292
     add("聊天大脑(llama-swap:%d) 在线" % _bp, port_up(_bp), "现在" + ("在线" if port_up(_bp) else "未启动"), "启动后自动拉起", "")
-    # ComfyUI + 视频模型
+    # ComfyUI + 视频模型 (多路径自动识别: 旧位置 + G:\moxing__xiaojiao\ + 环境变量)
     comfy_dirs = [
         r"G:\模型文件\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI",
+        r"G:\moxing__xiaojiao\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI",
+        r"G:\moxing__xiaojiao\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI",
     ]
+    if os.environ.get("XIAOJIAO_COMFY_DIR"):
+        comfy_dirs.insert(0, os.environ["XIAOJIAO_COMFY_DIR"])
     comfy = None
     for cd in comfy_dirs:
-        if exists(os.path.join(cd, "main.py")):
+        if exists(os.path.join(cd, "main.py")) or exists(os.path.join(cd, "ComfyUI", "main.py")):
             comfy = cd; break
     add("ComfyUI(视频大脑)", bool(comfy), ("位于 " + comfy if comfy else "未找到"), "做法：下载 ComfyUI 便携版(N卡版) → 解压 → 设 XIAOJIAO_COMFY_DIR=你的\\ComfyUI 目录", "github.com/comfyanonymous/ComfyUI/releases")
-    ck = r"G:\模型文件\视频模型\dit_fp8.safetensors"
-    tc = r"G:\模型文件\视频模型\umt5_fp8.safetensors"
-    va = r"G:\模型文件\视频模型\vae_fp8.safetensors"
+    def _find_model(*names):
+        for b in [r"G:\模型文件\视频模型", r"G:\moxing__xiaojiao\视频模型"]:
+            for n in names:
+                for ext in ["", ".safetensors"]:
+                    p = os.path.join(b, n + ext)
+                    if exists(p): return p
+        return None
+    ck = _find_model("dit_fp8") or r"G:\模型文件\视频模型\dit_fp8.safetensors"
+    tc = _find_model("umt5_fp8") or r"G:\模型文件\视频模型\umt5_fp8.safetensors"
+    va = _find_model("vae_fp8") or r"G:\模型文件\视频模型\vae_fp8.safetensors"
     add("视频模型三件套(Wan2.1)", exists(ck) and exists(tc) and exists(va),
         "模型/编码器/VAE " + ("齐全" if exists(ck) and exists(tc) and exists(va) else "缺"), "下 dit_fp8/umt5/vae 放对应目录", "")
-    add("视频大脑(8188) 在线", port_up(8188), "现在" + ("在线" if port_up(8188) else "未启动"), "生成时自动起", "")
-    # llama-swap(热切换)
-    sw = r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe"
-    ok = exists(sw)
-    add("llama-swap(秒切管理)", ok, ("位于" if ok else "未找到") + (os.path.basename(sw) if ok else ""), "做法：解压 llama-swap.exe → 设 XIAOJIAO_LLAMA_SWAP=路径", "github.com/mostlygeek/llama-swap/releases")
+    # 视频大脑(8188): 按需启动(生成视频时才起, 不算缺/不用装, ok=True 以免猫娘误报"缺")
+    _v8 = port_up(8188)
+    add("视频大脑(8188) 在线", True if _v8 else True, "现在" + ("在线" if _v8 else "未启动(按需,生成视频时自动拉起,正常)"), "生成时自动起", "")
+    # llama-swap(热切换) 多路径识别
+    sw_cands = [os.environ.get("XIAOJIAO_LLAMA_SWAP", "")] if os.environ.get("XIAOJIAO_LLAMA_SWAP") else []
+    sw_cands += [
+        r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe",
+        r"G:\moxing__xiaojiao\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe",
+        r"G:\moxing__xiaojiao\大脑秒计切换\llama-swap.exe",
+    ]
+    sw = next((s for s in sw_cands if s and exists(s)), "")
+    ok = bool(sw)
+    add("llama-swap(秒切管理)", ok, ("位于 " + os.path.basename(sw) if ok else "未找到"), "做法：解压 llama-swap.exe → 设 XIAOJIAO_LLAMA_SWAP=路径", "github.com/mostlygeek/llama-swap/releases")
     add("llama-swap(9292) 在线", port_up(9292), "多大脑秒切管理" + ("在线" if port_up(9292) else "未启动"), "start_xiaojiao 会自动拉起", "")
     # Node.js(.js 插件)
     add("Node.js(js插件)", shutil.which("node") is not None, "运行 .js 插件用" + ("，已装" if shutil.which("node") else "，未装"), "做法：去 nodejs.org 下载 LTS 版安装(一路默认)", "nodejs.org")
@@ -2628,7 +2582,7 @@ HTML = r"""<!DOCTYPE html>
   <div id="main">
 <header>
   <button class="icon-btn sd-toggle" id="sdToggle" onclick="toggleSidebar()" title="收起/展开侧栏">⟨</button>
-  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span> <a href="/monitor" style="font-size:11px;color:#a78bfa;margin-left:6px">🧠 监控</a> <a href="/pet" style="font-size:11px;color:#45d483;margin-left:6px">⚡ J.A.R.V.I.S.</a> <span id="costBadge" style="font-size:11px;color:#8b93a3;margin-left:8px"></span></div>
+  <div class="brand"><span class="logo">🐳 小焦</span><span class="tag">harness · 标准模式</span><span class="badge2" id="taskBadge" style="display:none">⏳ 空闲</span> <a href="/monitor" style="font-size:11px;color:#a78bfa;margin-left:6px">🧠 监控</a> <a href="http://127.0.0.1:48911" style="font-size:11px;color:#45d483;margin-left:6px">🐱 猫娘</a> <span id="costBadge" style="font-size:11px;color:#8b93a3;margin-left:8px"></span></div>
   <div class="hdr-right">
     <button class="icon-btn" id="toolsBtn" onclick="toggleTools()">🛠️ 工具</button>
     <button class="icon-btn" onclick="openBrain()">🧠 小脑</button>

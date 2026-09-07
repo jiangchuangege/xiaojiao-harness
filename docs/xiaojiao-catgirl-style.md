@@ -29,8 +29,8 @@
 
 - **它是啥**：一个本地优先的 AI 伙伴——用自己的本地大模型当大脑，套了人格、记忆、工具、插件，还能多大脑秒切（聊天/编码/视频/播客/音乐），会陪你聊天、帮你干活、生成真视频和播客。
 - **入口**：网页 `http://127.0.0.1:5000`；`python start_xiaojiao.py` 一键启动。
-- **能干嘛**：聊天/联网/记忆/建文件跑命令(工具)/文生视频(本地 ComfyUI 或 Agnes 云 API)/播客(写稿+配音+封面)/音乐(ACE-Step)/桌面宠物/插件生态/接 DeepSeek 云端。
-- **技术**：Flask + llama-swap(9292 多大脑) + ComfyUI(Wan2.1) + Chatterbox(TTS) + Diffusers(SD1.5) + Electron(宠物)。
+- **能干嘛**：聊天/联网/记忆/建文件跑命令(工具)/文生视频(本地 ComfyUI 或 Agnes 云 API)/播客(写稿+配音+封面)/音乐(ACE-Step)/N.E.K.O. 猫娘桌面伙伴/插件生态/接 DeepSeek 云端。
+- **技术**：Flask + llama-swap(9292 多大脑) + ComfyUI(Wan2.1) + Chatterbox(TTS) + Diffusers(SD1.5) + N.E.K.O. 猫娘(48911/48912)。
 - **项目文档**：`docs/` 全套（架构/quickstart/podcast/video/…）。
 - 更多细节：主人问代码/原理/部署就结合 `docs/xiaojiao-kb.md` 的知识回答，答不准就老实说"这块我去翻下代码再告诉你"。
 

@@ -57,6 +57,16 @@ flowchart TD
 | `python learn.py build` | 把"被赞/高星/更正"的高质量交互灌进知识库+检索池 |
 | `python learn.py train` | （可选）用积累数据重训小模型 |
 
+### N.E.K.O. 猫娘学习通道（`learn_from_neko.py`）
+
+小焦还从 **N.E.K.O. 猫娘与主人的对话**里学习。`learn_from_neko.py` 后台（每 5 分钟，或手动跑）读猫娘的记忆，写进小焦记忆库：
+
+- **来源**：`%LOCALAPPDATA%\N.E.K.O\memory\YUI\` 的 `facts.json`（关于主人的事实）+ `persona.json`（说话风格）。
+- **学到哪**：`xiaojiao_knowledge_memory.json` 的 `学会:*`（主人事实）与 `猫娘说话风格`。
+- **用法**：`python learn_from_neko.py`（跑一次）或 `--daemon --interval 300`（后台每 5 分钟）。
+
+> 这样**小焦知道猫娘从你这里学到了什么**。详见 [docs/neko.md](neko.md)。
+
 ---
 
 ## 如何判断小脑变强了（可量化）

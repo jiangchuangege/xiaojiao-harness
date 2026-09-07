@@ -79,27 +79,6 @@ def start_llama_brain():
     print(f"⚠️ 大脑启动超时（可能在加载模型），小焦仍会尝试连接。")
     return proc
 
-def start_pet():
-    """自动启动桌面宠物(Electron 透明窗)。若 npm start 失败则用 pywebview 版。"""
-    try:
-        import subprocess as _sp
-        root = os.path.dirname(os.path.abspath(__file__))
-        desk = os.path.join(root, "desktop")
-        exe = os.path.join(desk, "node_modules", "electron", "dist", "electron.exe")
-        if os.path.exists(exe):
-            # 直接用 electron.exe 启动(比 npm start 可靠), 加载 /pet
-            _sp.Popen([exe, desk], cwd=desk, creationflags=subprocess.CREATE_NO_WINDOW)
-            print("🐳 桌面宠物已启动 (Electron 透明窗)")
-            return True
-        # 兜底: pywebview
-        _sp.Popen([sys.executable, os.path.join(root, "jarvis_desktop.py")], cwd=root, creationflags=subprocess.CREATE_NO_WINDOW)
-        print("🐳 桌面宠物已启动 (pywebview)")
-        return True
-    except Exception as e:
-        print("⚠️ 宠物启动失败:", str(e)[:50])
-        return False
-
-
 def start_neko():
     """启动 N.E.K.O. 猫娘(融合进小焦一键启动): 起 memory_server + main_server, 后台学习你的需求, 打开猫娘页面。
     路径可改(用户下载位置不同), 找不到就跳过(不阻塞小焦)。"""
@@ -186,12 +165,22 @@ def start_dsh_bridge():
     return proc
 
 def start_llama_swap():
-    """自动启动 llama-swap(多大脑热切换管理器)。独立端口9292, 不冲突直接大脑8080。"""
-    exe = os.environ.get("XIAOJIAO_LLAMA_SWAP") or r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe"
+    """自动启动 llama-swap(多大脑热切换管理器)。独立端口9292, 不冲突直接大脑8080。
+    路径多候选自动检测(不写死, 兼容移动位置): 环境变量/常见位置。"""
+    env_exe = os.environ.get("XIAOJIAO_LLAMA_SWAP", "")
+    cands = [env_exe] if env_exe else []
+    cands += [
+        r"G:\moxing__xiaojiao\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe",
+        r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe",
+        r"G:\模型文件\大脑秒计切换\llama-swap.exe",
+        r"G:\moxing__xiaojiao\大脑秒计切换\llama-swap.exe",
+    ]
     cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama-swap.yaml")
-    if not (os.path.exists(exe) and os.path.exists(cfg)):
-        print("  [llama-swap] 未找到(exe或配置)，跳过")
+    exe = next((c for c in cands if c and os.path.exists(c)), "")
+    if not (exe and os.path.exists(cfg)):
+        print("  [llama-swap] 未找到(exe或配置)，跳过 —— 聊天大脑不会跟起，请设 XIAOJIAO_LLAMA_SWAP 或检查 llama-swap.exe")
         return None
+    print("  [llama-swap] exe: %s" % exe)
     try:
         import socket
         s = socket.socket(); s.settimeout(0.8)
@@ -238,9 +227,6 @@ def main():
     else:
         port = int(CONTROL.get("web_port", os.environ.get("PORT", 5000)))
     os.environ["PORT"] = str(port)
-
-    # 3b. 自动启动桌面宠物(你重启 start_xiaojiao 就带起宠物)
-    start_pet()
 
     # 3c. 融合 N.E.K.O. 猫娘: 起它的服务 + 后台学习你的需求 + 打开猫娘页
     neko_root = start_neko()

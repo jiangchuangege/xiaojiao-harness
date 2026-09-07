@@ -4,7 +4,7 @@
 
 <br>
 
-<img src="assets/xiaojiao_mascot.png" alt="小焦 · 你的本地 AI 猫娘助手" width="320">
+<img src="assets/xiaojiao_cover.jpg" alt="小焦 · 你的本地 AI 猫娘助手" width="480">
 
 <br>
 
@@ -29,7 +29,7 @@
 
 ### 🐱 一句话：小焦能干嘛
 
-> 🧠 多大脑秒切 · 💬 聊天 · 🌐 联网搜索 · 💾 记忆 · 🛠️ 工具干活 · 🎬 生成真视频 · 🎙️ 生成播客 · 🎵 生成音乐 · 🐳 桌面猫娘宠物 · 🔌 插件生态
+> 🧠 多大脑秒切 · 💬 聊天 · 🌐 联网搜索 · 💾 记忆 · 🛠️ 工具干活 · 🎬 生成真视频 · 🎙️ 生成播客 · 🎵 生成音乐 · 🐱 桌面猫娘 · 🔌 插件生态
 
 **它不是让你"打开一个网页聊天"，而是真的住进你电脑的一个 AI 伙伴。** 你自己用本地大模型当它的大脑，给它套上人格、记忆、工具链，再插上**聊天 / 编码 / 视频 / 播客 / 音乐 / 图像**多个脑子，按需秒级切换。你点一下，它就能帮你写文件、跑命令、生成一段真·AI 视频或播客，甚至变成一只**透明悬浮的桌面猫娘**陪着你。
 
@@ -58,10 +58,10 @@
 | ⚡ | **多大脑·秒级切换** | llama-swap + keep_warm + 低显存(权重RAM↔显存)，聊天/视频/未来大脑秒切、ComfyUI 进程常驻 |
 | 🎭 | **Agent 预设** | 一键切换人格+大脑+工具开关（presets/，设置里卡片管理，Web 编辑/增删/保存即应用） |
 | 🧠 | **大脑仓库监控面板** | 实时看所有大脑状态/显存/内存，直接切换·调优·添加大脑（`/monitor`，免写码） |
-| 🐳 | **桌面贾维斯宠物** | Electron 透明置顶窗口，全息核心，点击弹出[语音通话/聊天/装小焦/收起]四格菜单（`desktop/`） |
+| 🐱 | **N.E.K.O. 猫娘桌面伙伴** | 一键启动拉起 Live2D 猫娘(48911/48912)，后台学猫娘与主人的对话，猫娘懂小焦、小焦懂猫娘（`docs/neko.md`） |
 | 👁️ | **视觉模型接入** | `/api/vision` 拍照识图（Qwen2.5-VL 就绪，设 `XIAOJIAO_VISION_URL` 即可开眼） |
 | 💰 | **今日成本看板** | `/cost` 页面实时统计调用次数/本地Token/云端Token/花费/节省，每日清零（`cost_daily.json`） |
-| 🛠️ | **装小焦体检** | 宠物点「🛠️ 装小焦」→ 秒级环境体检 ✅/❌ 逐条显示已装/缺什么 |
+| 🛠️ | **装小焦体检** | N.E.K.O. 插件点「🛠️ 装小焦」→ 秒级环境体检 ✅/❌ 逐条显示已装/缺什么 |
 | 🔌 | **插件万能桥** | `_make_tools_plugin` 自动把 OpenAI/Claude/DSH tool manifest 转成小焦工具（`plugins/*.json`） |
 | 🎙️ | **播客大脑** | `/podcast` 给它一个主题 → 自己写稿+配音+出封面，生成一段真·中文播客（LLM+Chatterbox+SD1.5） |
 
@@ -75,7 +75,7 @@ pip install -r requirements.txt
 python start_xiaojiao.py
 ```
 
-自动起聊天大脑(llama-swap:9292) + 网页(5000)，然后打开 `http://127.0.0.1:5000`。
+自动起聊天大脑(llama-swap:9292) + 网页(5000) + **N.E.K.O. 猫娘(48911/48912 + 后台学习)**，然后打开 `http://127.0.0.1:5000`。
 
 > 手把手上手看 [docs/quickstart.md](docs/quickstart.md)。
 
@@ -88,7 +88,7 @@ python start_xiaojiao.py
 | 想干嘛 | 连哪里 | 说明 |
 | --- | --- | --- |
 | 🖥️ **小焦网页** | `http://127.0.0.1:5000` | 聊天 + 联网 + 记忆 + 工具 + 会话 |
-| 🐳 **桌面宠物** | 自动起（透明置顶，点核心弹菜单） | 全息核心，语音/聊天/装小焦一键触发 |
+| 🐱 **N.E.K.O. 猫娘** | `http://127.0.0.1:48911` | 桌面 Live2D 猫娘伙伴，自动学你与猫娘的对话（一键启动拉起） |
 | 🔗 **接 dsh / 客户端** | `http://127.0.0.1:5000/v1` | OpenAI 兼容，自动带上小焦人格 + 工具 |
 | 👁️ **视觉识图** | `POST /api/vision` | 截图 → 视觉模型描述（配 XIAOJIAO_VISION_URL） |
 | 💰 **成本看板** | `http://127.0.0.1:5000/cost` | 今日调用/本地Token/云端Token/花费/节省 |
@@ -99,10 +99,10 @@ python start_xiaojiao.py
 - **开/关工具**：右上角「🛠️ 工具」（🟢开 / 🔴关）。
 - **建会话**：左边「＋ 新对话」；点历史会话切换，右上角「⟨」收起侧边栏。
 - **换端口**：`python start_xiaojiao.py --port 8081`，或改 `xiaojiao_control.json` 的 `web_port`。
-- **桌面宠物**：`python start_xiaojiao.py` 自动拉起 Electron 宠物；点透明核心 → 选[语音通话/聊天/装小焦/收起]。
-- **装小焦体检**：宠物点「🛠️ 装小焦」→ 秒出环境清单 ✅/❌。
+- **🐱 N.E.K.O. 猫娘**：`python start_xiaojiao.py` 自动拉起 N.E.K.O. `main_server(48911)` + `memory_server(48912)` + 后台学习通道，并打开猫娘页 `http://127.0.0.1:48911`。
+- **装小焦体检**：N.E.K.O. 插件「装小焦」→ 秒出环境清单 ✅/❌。
 - **成本看板**：打开 `http://127.0.0.1:5000/cost` 看今日花费。
-- **视觉识图**：设环境变量 `XIAOJIAO_VISION_URL=http://127.0.0.1:8082/v1` 后，宠物点📷可拍照识图。
+- **视觉识图**：设环境变量 `XIAOJIAO_VISION_URL=http://127.0.0.1:8082/v1` 后，拍照识图。
 
 ---
 
@@ -116,16 +116,19 @@ flowchart TD
         W["小焦 Web (5000)<br/>顶栏/侧栏/聊天/底栏"]
         C["/v1 接口<br/>供 dsh / 任意客户端"]
         T["工具服务 (5003)<br/>直接调工具"]
+        NEKO["🐱 N.E.K.O. 猫娘 (48911)<br/>桌面 Live2D 伙伴"]
     end
     subgraph AGENT["小焦壳（人设 + 编排 + 动态设置）"]
         R["人设 / 环境路径 / 技能插件"]
         M["记忆自学习"]
         S["会话存储"]
         P["插件注册表<br/>设置模块随插件动态出现"]
+        LEARN["learn_from_neko<br/>学猫娘与主人的对话"]
     end
-    subgraph BRAIN["大脑（可插拔）"]
+    subgraph BRAIN["大脑（可插拔 · brain_manager 调度）"]
         B1["聊天大脑 llama-swap (9292)"]
         B2["外接 API"]
+        BM["multi-brain<br/>RUN/WARM/OFF 秒切"]
     end
     subgraph TOOLS["工具 / 插件生态"]
         T1["内置：命令/读写文件/打开"]
@@ -140,6 +143,8 @@ flowchart TD
     T --> TOOLS
     AGENT --> BRAIN
     AGENT --> TOOLS
+    NEKO -->|facts/persona| LEARN
+    LEARN --> M
 ```
 
 ### 一条消息在内部怎么走
@@ -240,7 +245,9 @@ class MyTimePlugin:
 ```
 xiaojiao-harness/
 ├── xiaojiao_app.py               # ★ Web + 人格 + 工具 + 记忆 + 会话 + /v1
-├── start_xiaojiao.py             # ★ 一键启动（起大模型 + Web + 开浏览器）
+├── start_xiaojiao.py             # ★ 一键启动（llama-swap + 大模型 + Web + N.E.K.O. 猫娘）
+├── brain_manager.py              # ★ 多大脑·秒级切换调度中心(RUN/WARM/OFF)
+├── learn_from_neko.py            # ★ 学 N.E.K.O. 猫娘与主人的对话 → 小焦记忆库
 ├── xiaojiao_tools.py             # ★ 工具接口(5003)
 ├── xiaojiao_harness.py           #   自建小模型 (MiniGPT) + 推理
 ├── train_model.py                #   训练自建小模型
@@ -282,7 +289,7 @@ xiaojiao-harness/
 | [持续学习 · 自学习](docs/self_learn.md) | 小脑跟着大脑学（自动记录/打勾/学习）|
 | [训练管线](docs/pipeline.md) | 怎么训练小模型 |
 | [播客大脑](docs/podcast.md) | 给主题→写稿+配音+封面，生成播客 |
-| [桌面宠物](docs/jarvis-desktop.md) | 透明置顶全息宠物，语音/聊天/装小焦 |
+| [N.E.K.O. 猫娘集成](docs/neko.md) | 桌面 Live2D 猫娘伙伴，学猫娘与主人的对话 |
 | [多脑秒切](docs/brain-switch.md) | 聊天/视频/播客/图像 大脑按需切换 |
 
 ---
@@ -407,11 +414,8 @@ flowchart TD
 
 | 版本 | 内容 |
 | --- | --- |
-| **v2.3.0** | 🐳 桌面贾维斯宠物(Electron透明置顶/全息核心/语音聊天/装小焦体检) + 👁️ 视觉模型接口(/api/vision) + 💰 成本看板(/cost) + 🔌 插件万能桥(OpenAI/Claude/DSH tool manifest) + ⚡ 多脑秒切优化(9292优先,8080自动跳过) |
-| **v2.2.0** | 会话侧边栏(新对话/列表/点击切换/可折叠) + 会话持久化 + brain.engine修复为auto |
-| **v2.1.0** | 聊天历史持久化(刷新不丢) + 插件自动接入工具系统(可被模型调用) + 插件开发指南 |
-| **v2.0.0** | 工具调用交给大模型自己选(原生function calling)，多步任务(建目录-写文件-打开)自动执行 |
-| **v1.0.0** | 初始开源：完整壳 + 工具 + 记忆 + 会话 + 联网 + 插件 + 美观 README |
+| **v1.0.0（当前）** | 全新发布：N.E.K.O. 猫娘桌面伙伴集成(一键拉起+后台学对话) + 多大脑秒切(brain_manager/llama-swap) + 视觉/成本/插件全家桶 + 完整文档 |
+| *历史开发版本* | v2.3.0(视觉/成本桥接) → v2.2(v2 会话侧栏) → v2.1(历史持久化) → v2.0(function calling) —— 均为 v1.0.0 之前的演进快照，已并入当前版 |
 
 ---
 
@@ -529,7 +533,8 @@ flowchart TD
     ST["start_xiaojiao.py"] --> BIG
     ST --> W
     ST --> BR["dsh_bridge(5001)"]
-    ST --> PET["🐳 桌面宠物(Electron)<br/>透明置顶/全息核心/语音聊天"]
+    ST --> NEKO["🐱 N.E.K.O. 猫娘<br/>main_server(48911)+memory_server(48912)"]
+    NEKO -->|learn_from_neko.py<br/>每5分钟学| MEM["小焦记忆库<br/>xiaojiao_knowledge_memory.json"]
     W -->|🎬生成视频| VID["video_service<br/>(卸载大脑→ComfyUI+Wan2.1→生成→恢复大脑)"]
     VID --> COMFY["ComfyUI(8188) + Wan2.1-FP8<br/>(按需切换, 8G互斥)"]
     COMFY --> OUTV["videos/*.mp4 真视频"]
@@ -595,7 +600,7 @@ flowchart LR
 > 详见 [docs/brain-switch.md](docs/brain-switch.md) 与 [docs/tools.md](docs/tools.md)。
 >
 > 🚀 [docs/upgrade-plan.md](docs/upgrade-plan.md) · 对标 Harness 升级路线图（零门槛安装 / 智能调度省钱 / 插件万能桥）
-> 🐳 [docs/jarvis-desktop.md](docs/jarvis-desktop.md) · 桌面贾维斯宠物 MVP
+> 🐱 [docs/neko.md](docs/neko.md) · N.E.K.O. 猫娘桌面伙伴
 
 
 
@@ -619,27 +624,24 @@ flowchart LR
 设置→模型→「一键加本地GGUF」→填名字/路径/ctx→自动配置(不写代码)。详情见 `docs/coding-brain.md`。
 
 
-## 🐳 桌面贾维斯宠物（MVP）
+## 🐱 N.E.K.O. 猫娘桌面伙伴（MVP）
 
-小焦有了**桌面宠物**——一个 Electron 透明置顶窗口，全息核心，点它弹菜单：
+一键启动后，桌面出现一只 **N.E.K.O. 猫娘**——成熟 Live2D 猫娘壳 + 小焦本地内核，两者互相学习：
 
 ```
-        [透明背景]
-           ↑
-    ◉ 全息核心（点击弹菜单）
-   ┌─────────────────┐
-   │ 🛠装小焦 │ 🎤语音通话│
-   │ 💬聊天      │ ✖收起   │
-   └─────────────────┘
+      [透明桌面 · Live2D 猫娘]
+        ↑ main_server(:48911)
+   N.E.K.O. 猫娘（记忆/人格/插件）
+        │  learn_from_neko.py（每5分钟）
+        ▼
+  小焦记忆库 xiaojiao_knowledge_memory.json
 ```
 
-- **🎤 语音通话**：按住说话 → Web Speech ASR（中文）→ 回复后 TTS 朗读。
-- **💬 聊天**：直接打字回车，和网页版体验一致。
-- **🛠️ 装小焦**：秒级环境体检，✅/❌ 逐条显示已装/缺什么。
-- **📷 拍照识图**：截图 → `/api/vision` → 视觉模型描述（配 `XIAOJIAO_VISION_URL`）。
-- **💰 成本看板**：浏览器打开 `http://127.0.0.1:5000/cost` 看今日花费。
+- **一键拉起**：`start_neko()` 自动起 `main_server(48911)` + `memory_server(48912)` + 后台学习通道。
+- **学你与猫娘的对话**：`learn_from_neko.py` 读猫娘 `facts.json`/`persona.json` → 写进小焦记忆（`学会:*` / `猫娘说话风格`）。
+- **N.E.K.O. 插件**：`%LOCALAPPDATA%\N.E.K.O\plugins\xiaojiao_install\` 提供「装小焦」体检 + 安装指引。
 
-> 详细见 [docs/jarvis-desktop.md](docs/jarvis-desktop.md)。宠物随 `python start_xiaojiao.py` 自动拉起。
+> 详细见 [docs/neko.md](docs/neko.md)。猫娘随 `python start_xiaojiao.py` 自动拉起。
 
 
 ## 💙 一份温柔的小约定

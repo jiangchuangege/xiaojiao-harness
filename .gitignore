@@ -74,19 +74,17 @@ _dbg*
 _job*
 _launch*
 _fix_*
+_cfgpath.py
 *.pyc
 __pycache__/
 node_modules/
-desktop/node_modules/
 # 备份
 bak/
+*.bak
 *~
 # PID/temp
 _pid.txt
 _start_app.bat
-# node_modules (electron)
-desktop/node_modules/
-desktop/package-lock.json
 
 # ---------- 生成产物 / 个人记录 ----------
 videos/
@@ -97,7 +95,7 @@ cost_daily.json
 *.jpg
 *.jpeg
 # README 封面形象图允许入库
-!assets/xiaojiao_mascot.png
+!assets/xiaojiao_cover.jpg
 monitor.html
 _dbg*
 _job*
