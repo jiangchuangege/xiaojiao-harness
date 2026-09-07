@@ -26,11 +26,11 @@
 1. **llama-swap(9292)**：多大脑热切换管理器。
 2. **聊天大脑**：由 llama-swap 托管（避免再起 8080 冗余直连）。
 3. **Web(5000)**：小焦网页 / `/v1`。
-4. **N.E.K.O. 猫娘**（`start_neko()`）：
-   - 起 **memory_server(:48912)**（猫娘记忆服务）；
-   - 起 **main_server(:48911)**（猫娘主服务/页面）；
-   - 后台起 **`learn_from_neko.py --daemon --interval 300`**（每 5 分钟学你与猫娘的对话）；
-   - 自动打开猫娘页 `http://127.0.0.1:48911`。
+4. **N.E.K.O. 猫娘**（`start_neko()`，你的是 **Steam 桌面客户端**）：
+   - 拉起**桌面客户端 `N.E.K.O.exe`**（你看到的猫娘界面），它连带拉起后端；
+   - 后端 `main_server(:48911)` + `memory_server(:48912)`（这两个是**后端端口**，不是网页入口）；
+   - 后台起 **`learn_from_neko.py --daemon --interval 300`**（每 5 分钟学你与猫娘的对话）。
+   > ⚠️ **主入口是桌面客户端 `N.E.K.O.exe`**，不是浏览器里的 `http://127.0.0.1:48911`（那只是后端服务端口）。
 5. **打开小焦 Web** `http://127.0.0.1:5000`。
 
 运行 `/api/env` 会检测 N.E.K.O. 各服务是否在线（48911/48912 等）。
@@ -41,7 +41,7 @@
 | --- | --- | --- |
 | **5000** | 小焦 Web | 聊天 / `/v1` / 工具 / 记忆 |
 | **9292** | llama-swap | 多大脑热切换 |
-| **48911** | N.E.K.O. main_server | 猫娘页面 |
+| **48911** | N.E.K.O. main_server | 猫娘**后端**服务（非网页入口，界面在桌面客户端 `N.E.K.O.exe`） |
 | **48912** | N.E.K.O. memory_server | 猫娘记忆 |
 | **48915** | N.E.K.O. agent flags | 猫娘 agent 开关 |
 
@@ -108,7 +108,7 @@ N.E.K.O. 支持**插件**，插件分两类目录：
 
 | 文件 | 作用 |
 | --- | --- |
-| `start_xiaojiao.py` | `start_neko()`：起猫娘 + 后台学习 + 开猫娘页 |
+| `start_xiaojiao.py` | `start_neko()`：拉桌面客户端 `N.E.K.O.exe` + 后台学习 |
 | `learn_from_neko.py` | 读猫娘 `facts.json`/`persona.json` → 写进小焦记忆库（可独立跑，也支持 `--daemon`） |
 | `%LOCALAPPDATA%\N.E.K.O\plugins\xiaojiao_install\` | N.E.K.O. 小焦安装助手插件 |
 | `docs/xiaojiao-catgirl-style.md` | 猫娘说话风格模板 |
