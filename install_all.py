@@ -4,11 +4,46 @@
 它会：检测 11 项工具 → 自动下载缺失的(小件全自动, 大件给选项) → 写配置 → 报告哪些可用。
 装完(或补完缺失) → 全部功能就能用。
 """
-import os, sys, json, shutil, subprocess, urllib.request, zipfile, time
+import os, sys, json, shutil, subprocess, urllib.request, zipfile, time, socket
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CFG = os.path.join(ROOT, "xiaojiao_control.json")
 HF_MIRROR = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
+
+
+def test_cloud_api(base_url, api_key, model=""):
+    """按 OpenAI 兼容协议真实探测一次, 确认这个 API 通不通、能不能用。
+    返回 (ok: bool, message: str)。"""
+    base_url = (base_url or "").strip().rstrip("/")
+    if not base_url:
+        return False, "base_url 为空"
+    import requests
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = "Bearer " + api_key
+    # 1) 先试 GET /v1/models(大多数 OpenAI 兼容端点都有)
+    try:
+        r = requests.get(base_url + "/models", headers=headers, timeout=15)
+        if r.status_code == 200:
+            return True, "GET /models 200 OK"
+        # 2) 若 models 405/404, 回退发一个最小 chat/completions 试探
+        body = {"model": model or "test", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
+        r2 = requests.post(base_url + "/chat/completions", headers=headers, json=body, timeout=20)
+        if r2.status_code == 200:
+            return True, "POST /chat/completions 200 OK"
+        return False, "HTTP %s (models=%s, chat=%s)" % (r2.status_code, r.status_code, r2.status_code)
+    except Exception as e:
+        return False, "连接失败: %s" % str(e)[:80]
+
+
+def is_port_up(port, timeout=1.0):
+    try:
+        s = socket.socket(); s.settimeout(timeout)
+        s.connect(("127.0.0.1", port)); s.close(); return True
+    except Exception:
+        return False
+
+
 G = lambda x: "\033[92m" + x + "\033[0m" if os.name != "nt" else x
 R = lambda x: "\033[91m" + x + "\033[0m" if os.name != "nt" else x
 
@@ -87,12 +122,24 @@ def main():
     else:
         print("   ✅", server)
 
-    # 3) 大脑模型(不写死: 本地 GGUF 或 云端兼容 API 任一即可, 缺哪个=相应的聊天/工具能力受限)
-    print("\n[3/11] 大脑模型 (本地 GGUF 或 云端 OpenAI 兼容 key) ...")
+    # 3) 大脑模型(不写死: 本地 GGUF 或 云端兼容 API; 统一按"协议连通"检测——真发起请求, 通了才算通过)
+    print("\n[3/11] 大脑模型 (本地 GGUF 或 云端 OpenAI 兼容 key) —— 按协议连通检测 ...")
+    api = c.setdefault("brain", {}).setdefault("api", {})
+    api_key = (api.get("api_key") or "").strip()
+    api_url = (api.get("base_url") or "").strip()
+    api_model = (api.get("model") or "").strip()
+
+    # 3a) 先看本地: 是否已有大脑服务在线(llama-swap / llama-server 端口)
+    local_port = None
+    try:
+        from urllib.parse import urlparse
+        local_port = urlparse(api_url or "http://127.0.0.1:9292/v1").port or 9292
+    except Exception:
+        local_port = 9292
+    local_online = is_port_up(local_port)
     gf = ll.get("gguf") or ""
-    ok_g = bool(gf) and os.path.exists(gf)
-    # 任意本地 GGUF 模型都算有本地大脑(不限定型号)
-    if not ok_g:
+    ok_g_file = bool(gf) and os.path.exists(gf)
+    if not ok_g_file:
         for d in (r"C:/llama", ROOT, os.path.expanduser("~/Downloads"), os.path.expanduser("~")):
             if os.path.isdir(d):
                 for fn in sorted(os.listdir(d)):
@@ -100,29 +147,73 @@ def main():
                         gf = os.path.join(d, fn); break
                 if gf: break
         if gf:
-            ll["gguf"] = gf
-            ok_g = True
-            print("   ✅ 自动找到本地 GGUF:", gf)
-    # 云端 key(任意 OpenAI 兼容端点) 也算有大脑
-    api = c.setdefault("brain", {}).setdefault("api", {})
-    cloud_key = (api.get("api_key") or "").strip()
-    cloud_url = (api.get("base_url") or "").strip()
-    ok_cloud = bool(cloud_key and cloud_url)
+            ok_g_file = True
+    # 3b) 本地真连通检测: 对着在线的大脑服务发一次 OpenAI 兼容请求
+    local_ok = False; local_msg = ""
+    if local_online:
+        try:
+            url = "http://127.0.0.1:%d/v1" % local_port
+            ok, msg = test_cloud_api(url, api_key, api_model)
+            local_ok, local_msg = ok, msg
+        except Exception as e:
+            local_msg = "探测异常: %s" % str(e)[:60]
+    if not local_ok:
+        local_msg = ("大脑服务未在线(端口 %d). 文件%s; 启动 start_xiaojiao 后会自动拉起大脑." % (local_port, ("已找到 " + gf if ok_g_file else "未找到 GGUF")))
+    # 3c) 云端真连通检测: 若配置里有云端 key+url, 实测一次
+    cloud_ok = False; cloud_msg = "未配置云端 API"
+    if api_key and api_url:
+        try:
+            ok, msg = test_cloud_api(api_url, api_key, api_model)
+            cloud_ok, cloud_msg = ok, msg
+        except Exception as e:
+            cloud_msg = "探测异常: %s" % str(e)[:60]
+    model_ok = local_ok or cloud_ok
+
     # 报告
-    if ok_g:
-        print("   ✅ 本地 GGUF:", gf)
-    if ok_cloud:
-        print("   ✅ 云端 API: %s (%s)" % (cloud_url, api.get("model") or "任意兼容模型"))
-    if ok_g or ok_cloud:
-        if ok_g:
-            print("   ℹ️ 已配本地模型 → 用本地大脑(离线, 不依赖网络)")
-        if ok_cloud:
-            print("   ℹ️ 已配云端 API → 用云端大脑(能力更强, 不占本地显存)")
-        print("   ℹ️ 想换模型: 改 xiaojiao_control.json 的 brain.engine(llama/auto/api) 或 models 列表即可, 型号不写死。")
+    if local_ok:
+        print("   ✅ 本地大脑协议通: %s (%s)" % (("http://127.0.0.1:%d/v1" % local_port), local_msg))
     else:
-        print("   ❌ 未检测到任何可用大脑模型")
-        print("   请任选其一:\n     a) 放一个任意 GGUF 到 C:/llama 或本项目目录(会自动识别)\n     b) 在配置里填任意 OpenAI 兼容 API(base_url + key + model, 如 DeepSeek/Qwen/OpenAI 兼容端点)")
-        missing.append("大脑模型(本地GGUF或云端API至少其一)")
+        print("   ⓘ 本地大脑: %s" % local_msg)
+    if cloud_ok:
+        print("   ✅ 云端 API 协议通: %s (%s)" % (api_url, cloud_msg))
+    elif api_key and api_url:
+        print("   ❌ 云端 API 不通: %s" % cloud_msg)
+    if model_ok:
+        print("   ℹ️ 已用协议连通确认大脑可用; 想换模型: 改 xiaojiao_control.json 的 brain.engine(llama/auto/api) 或 models, 型号不写死。")
+    else:
+        print("   ⚠️ 当前没有协议连通的大脑。")
+        # 交互式让用户填云端 API 并实测连通(通了即通过并写配置)
+        try:
+            ans = input("   想现在配置一个云端 OpenAI 兼容 API(base_url + key + model)? [Y/n]: ").strip().lower()
+        except Exception:
+            ans = "y"
+        if ans in ("", "y", "yes", "是", "1"):
+            try:
+                print("   · 输入 base_url(如 https://api.deepseek.com/v1):")
+                bu = input("     > ").strip().rstrip("/")
+                print("   · 输入 api_key:")
+                bk = input("     > ").strip()
+                print("   · 输入模型名(如 deepseek-chat, 可回车用默认):")
+                bm = input("     > ").strip() or "deepseek-chat"
+                print("   🔍 正在按 OpenAI 兼容协议实测连通...")
+                ok, msg = test_cloud_api(bu, bk, bm)
+                if ok:
+                    api["base_url"] = bu
+                    api["api_key"] = bk
+                    api["model"] = bm
+                    c.setdefault("brain", {})["engine"] = "api"
+                    save_cfg(c)
+                    print("   ✅ 协议连通通过 (%s) —— 已写入 xiaojiao_control.json(brain.api), 用过即通过。" % msg)
+                else:
+                    print("   ❌ 检测不通: %s" % msg)
+                    print("   不通视为未通过(避免配置了却不能用)。请检查 base_url/key/model 后重试, 或先启动本地大脑。")
+                    missing.append("大脑模型(云端API — 协议连通)")
+            except Exception as e:
+                print("   ✗ 输入/检测异常: %s" % str(e)[:60])
+                missing.append("大脑模型(云端API — 协议连通)")
+        else:
+            print("   好，跳过。先启动本地大脑(start_xiaojiao.py)或稍后再配 API。")
+            missing.append("大脑模型(本地大脑服务或云端API — 需协议连通)")
 
     # 4) llama-swap
     print("\n[4/11] llama-swap (秒级切换) ...")

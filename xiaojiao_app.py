@@ -1703,18 +1703,38 @@ def api_env():
     ls_ok = os.path.exists(ls) or shutil.which(ls) is not None
     add("llama-server(聊天大脑)", ls_ok, "本地大脑引擎" + ("，已装" if ls_ok else "，未找到"), "做法：下载 llama.cpp 便携版 → 解压 → 设环境变量 XIAOJIAO_LLAMA_SERVER=你的路径\\llama-server.exe", "github.com/ggml-org/llama.cpp/releases")
     gf = os.environ.get("XIAOJIAO_LLAMA_GGUF") or _ll.get("gguf") or ""
-    # 大脑模型: 本地 GGUF 或 已配云端兼容 API 任一即算有(不写死型号/接口兼容任意 OpenAI 模型)
+    # ---- 大脑模型检测: 本地 GGUF 文件 或 云端 key 之外, 按"协议连通"真验一次 ----
+    # 本地: 看大脑服务端口是否在线(socket 连通)
+    _local_port = None
+    try:
+        import urllib.parse as _up
+        _local_port = _up.urlparse(_ap.get("base_url") or "http://127.0.0.1:9292/v1").port or 9292
+    except Exception:
+        _local_port = 9292
+    _local_online = port_up(_local_port)
     _has_local_gf = bool(gf) and exists(gf)
-    _has_cloud_api = bool((_ap.get("api_key") or "").strip()) and bool((_ap.get("base_url") or "").strip())
-    _model_ok = _has_local_gf or _has_cloud_api
+    # 云端: 真发一次 OpenAI 兼容 GET /models 探测(超时短, 连通即算有)
+    _cloud_ok = False; _cloud_info = ""
+    _ck = (_ap.get("api_key") or "").strip(); _cu = (_ap.get("base_url") or "").strip(); _cm = (_ap.get("model") or "").strip()
+    if _ck and _cu:
+        try:
+            _r = requests.get(_cu.rstrip("/") + "/models", headers={"Authorization": "Bearer " + _ck}, timeout=3)
+            _cloud_ok = (_r.status_code == 200)
+            _cloud_info = ("已连(%s)" % _r.status_code) if _cloud_ok else ("不通(HTTP %s)" % _r.status_code)
+        except Exception as _e:
+            _cloud_info = "连接失败: %s" % str(_e)[:40]
+    _model_ok = _local_online or _cloud_ok
     if _model_ok:
-        _minfo = ("本地 " + (os.path.basename(gf) if _has_local_gf else "")
-                  + (" + " if _has_local_gf and _has_cloud_api else "")
-                  + ("云端 " + (_ap.get("model") or "兼容模型") if _has_cloud_api else "")) or "已配置"
+        _parts = []
+        if _local_online:
+            _parts.append("本地大脑(:%d 在线)" % _local_port)
+        if _cloud_ok:
+            _parts.append("云端 " + (_cm or "兼容模型") + " " + _cloud_info)
+        _minfo = (" + ".join(_parts)) or "已配置"
         _mneed = ""
     else:
-        _minfo = "未配置(本地GGUF或云端key)"
-        _mneed = "做法：放任意 GGUF 到 C:/llama(自动识别) 或 配置里填任意 OpenAI 兼容 API(base_url+key+model)"
+        _minfo = "未连通"
+        _mneed = "做法：启动 start_xiaojiao 让本地大脑(:%d)上线, 或配置任意 OpenAI 兼容 API(base_url+key+model)" % _local_port
     add("对话/工具模型", _model_ok, _minfo, _mneed, "")
     # 大脑在线(llama-swap 端口, 从配置读)
     _bp = 9292
