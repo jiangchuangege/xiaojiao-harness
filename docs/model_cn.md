@@ -17,10 +17,10 @@ flowchart LR
         M["记忆自学习<br/>xiaojiao_knowledge_memory.json"]
         H["对话上下文<br/>xiaojiao_history.json"]
     end
-    subgraph Brain["大脑（可插拔）"]
-        B1["本地大模型 brain=llama<br/>llama.cpp + GGUF(4B)"]
+    subgraph Brain["大脑（可插拔, 模型不写死）"]
+        B1["本地大模型 brain=llama<br/>任意 GGUF(~4B起)"]
         B2["自建小焦模型 brain=xiaojiao<br/>mini_gpt_model.pth (35M)"]
-        B3["外接 API brain=api<br/>OpenAI 兼容(DeepSeek等)"]
+        B3["外接 API brain=api<br/>任意 OpenAI 兼容(DeepSeek/Qwen/…)"]
     end
     subgraph Tools["工具"]
         S["联网检索<br/>Bing / Sogou"]
@@ -57,13 +57,13 @@ flowchart LR
 
 | engine | 大脑 | 说明 |
 | --- | --- | --- |
-| `llama` | 本地大模型（GGUF 4B） | 用 `llama.cpp` 启动，最强、最能推理，需显存。名字即 `model_name`(=xiaojiao1.0-4B) |
-| `api` | 外接 OpenAI 兼容接口 | DeepSeek/OpenAI 等，填 `base_url/api_key/model` |
-| `xiaojiao` | 你自建的小焦模型 | 35M 字符模型，离线、轻量、快 |
+| `llama` | 本地大模型（任意 GGUF） | 用 `llama.cpp` 启动，~4B 起，8G 显存可跑；最强、最能推理，需显存 |
+| `api` | 外接 OpenAI 兼容接口 | DeepSeek/Qwen/OpenAI 兼容端点等，填 `base_url/api_key/model`，不占本地显存 |
+| `xiaojiao` | 你自建的小焦模型 | 35M 字符模型，离线、轻量、快，作兜底 |
 | `auto` | 自动 | 能连上大模型就用大模型，否则用自建小焦模型 |
 
-> 说明：这里没有把"两个不同架构的模型文件"物理合并成一个文件（不同架构无法合并，否则成废文件）。
-> 而是**功能上融合**成一套"小焦 = xiaojiao1.0-4B"：大模型当最强大脑、自建模型当兜底，统一由同一壳/操控文件控制。
+> 说明：**模型不写死**——只要满足"多轮对话 + 工具调用"即可当小焦大脑。`/v1` 兼容 OpenAI，`brain.api` 可接**任何**兼容模型（最小 ~4B 本地 → 最大云端超大模型）。
+> 这里没有把"两个不同架构的模型文件"物理合并成一个文件（不同架构无法合并，否则成废文件）。而是**功能上融合**成一套壳：大模型当最强大脑、自建模型当兜底，统一由同一壳/操控文件控制。
 
 ---
 
@@ -95,7 +95,7 @@ flowchart LR
 
 ```jsonc
 {
-  "model_name": "xiaojiao1.0-4B",          // 名字
+  "model_name": "可任意(如 xiaojiao)",  // 名字，实际用哪颗大脑看 brain.engine
   "brain": { "engine": "auto", ... },       // 用哪个大脑
   "role": "你是小焦，一个...（写它的类型/性格/规矩）",  // ← 改这里=改变它是哪种模型
   "capabilities": { "web_search": true, "memory": true, "context_len": 20 },  // 开关工具

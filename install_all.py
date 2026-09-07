@@ -58,6 +58,7 @@ def main():
     print("=" * 56)
     c = load_cfg()
     missing = []
+    opt_miss = []
 
     # 1) Python 依赖
     print("\n[1/11] Python 依赖 ...")
@@ -86,18 +87,42 @@ def main():
     else:
         print("   ✅", server)
 
-    # 3) 4B 聊天模型
-    print("\n[3/11] 聊天模型 (4B gguf) ...")
+    # 3) 大脑模型(不写死: 本地 GGUF 或 云端兼容 API 任一即可, 缺哪个=相应的聊天/工具能力受限)
+    print("\n[3/11] 大脑模型 (本地 GGUF 或 云端 OpenAI 兼容 key) ...")
     gf = ll.get("gguf") or ""
     ok_g = bool(gf) and os.path.exists(gf)
+    # 任意本地 GGUF 模型都算有本地大脑(不限定型号)
     if not ok_g:
-        print("   ❌ 未找到模型 gguf（这是你微调过的 xiaojiao1.0-4B，脚本不能替你下）")
-        p = input("   请把 xiaojiao1.0-4B.gguf 的完整路径粘贴进来(回车跳过): ").strip().strip('"')
-        if p and os.path.exists(p):
-            ll["gguf"] = p
-        missing.append("4B 模型 gguf")
+        for d in (r"C:/llama", ROOT, os.path.expanduser("~/Downloads"), os.path.expanduser("~")):
+            if os.path.isdir(d):
+                for fn in sorted(os.listdir(d)):
+                    if fn.lower().endswith(".gguf") and os.path.isfile(os.path.join(d, fn)):
+                        gf = os.path.join(d, fn); break
+                if gf: break
+        if gf:
+            ll["gguf"] = gf
+            ok_g = True
+            print("   ✅ 自动找到本地 GGUF:", gf)
+    # 云端 key(任意 OpenAI 兼容端点) 也算有大脑
+    api = c.setdefault("brain", {}).setdefault("api", {})
+    cloud_key = (api.get("api_key") or "").strip()
+    cloud_url = (api.get("base_url") or "").strip()
+    ok_cloud = bool(cloud_key and cloud_url)
+    # 报告
+    if ok_g:
+        print("   ✅ 本地 GGUF:", gf)
+    if ok_cloud:
+        print("   ✅ 云端 API: %s (%s)" % (cloud_url, api.get("model") or "任意兼容模型"))
+    if ok_g or ok_cloud:
+        if ok_g:
+            print("   ℹ️ 已配本地模型 → 用本地大脑(离线, 不依赖网络)")
+        if ok_cloud:
+            print("   ℹ️ 已配云端 API → 用云端大脑(能力更强, 不占本地显存)")
+        print("   ℹ️ 想换模型: 改 xiaojiao_control.json 的 brain.engine(llama/auto/api) 或 models 列表即可, 型号不写死。")
     else:
-        print("   ✅", gf)
+        print("   ❌ 未检测到任何可用大脑模型")
+        print("   请任选其一:\n     a) 放一个任意 GGUF 到 C:/llama 或本项目目录(会自动识别)\n     b) 在配置里填任意 OpenAI 兼容 API(base_url + key + model, 如 DeepSeek/Qwen/OpenAI 兼容端点)")
+        missing.append("大脑模型(本地GGUF或云端API至少其一)")
 
     # 4) llama-swap
     print("\n[4/11] llama-swap (秒级切换) ...")
@@ -212,6 +237,60 @@ def main():
         print("   ✅", r.stdout.strip() if r.returncode == 0 else "未检测到")
     except Exception:
         print("   ❌ 未检测到 N 卡(视频/加速需要)")
+
+    # 8b) 可选功能依赖（不是硬性必需, 缺哪个=哪个功能用不了, 这里全部补齐告知）
+    print("\n[8b/11] 可选功能依赖 (缺哪个=哪个功能用不了) ...")
+    # N.E.K.O. 猫娘(桌面伙伴, 你下载的开源项目)
+    neko_root = ""
+    for cand in [os.environ.get("XIAOJIAO_NEKO_DIR", ""), r"G:\moxing__xiaojiao\maoniang\N.E.K.O-main", r"G:\模型文件\猫娘\N.E.K.O-main", r"C:\NEKO\N.E.K.O-main"]:
+        if cand and os.path.exists(os.path.join(cand, "launcher.py")):
+            neko_root = cand; break
+    if neko_root:
+        print("   ✅ N.E.K.O. 猫娘:", neko_root)
+    else:
+        print("   → 未找到 N.E.K.O. 猫娘(可跳过): 桌面猫娘伙伴不可用。下载 N.E.K.O. 开源项目(含 launcher.py)后设 XIAOJIAO_NEKO_DIR=其目录。")
+        opt_miss.append("N.E.K.O. 猫娘 → 桌面猫娘伙伴")
+    # Chatterbox(播客配音 TTS) —— 能 import 即已装
+    try:
+        import chatterbox  # noqa
+        print("   ✅ Chatterbox(播客配音) 已装")
+        tts_ok = True
+    except Exception:
+        try:
+            import chattts  # noqa
+            print("   ✅ ChatTTS(播客配音) 已装")
+            tts_ok = True
+        except Exception:
+            print("   → 未装 Chatterbox: 播客配音(TTS)不可用。`pip install chatterbox-tts`(或 chattts)。")
+            opt_miss.append("Chatterbox → 🎙️ 播客配音")
+            tts_ok = False
+    # Diffusers + SD1.5(封面) —— 播客封面/图
+    try:
+        import diffusers  # noqa
+        print("   ✅ Diffusers(SD1.5 封面) 已装")
+        sd_ok = True
+    except Exception:
+        print("   → 未装 diffusers: 播客封面/图像生成不可用。`pip install diffusers transformers accelerate`。")
+        opt_miss.append("Diffusers/SD1.5 → 🎙️ 播客封面")
+        sd_ok = False
+    # ACE-Step(音乐) —— music_service 调它自带 API server :8001
+    ace_dir = os.path.join(ROOT, "music_service")
+    ace_free = os.path.exists(ace_dir) and any(
+        os.path.isfile(os.path.join(ace_dir, f)) for f in os.listdir(ace_dir) if f.lower().endswith((".py", ".json", ".yaml"))
+    )
+    if ace_free:
+        print("   ✅ music_service(ACE-Step 音乐) 脚本就绪")
+    else:
+        print("   → music_service 目录缺失/空: 🎵 音乐生成不可用(需 ACE-Step 的 API server :8001)。")
+        opt_miss.append("ACE-Step 音乐 → 🎵 音乐生成")
+    # jieba(分词), requests, torch 等 pip 已在 1) 装
+    # 简短汇总
+    if opt_miss:
+        print("   ⚠️ 以下功能将不可用(其余全部可用):")
+        for m in opt_miss:
+            print("      -", m)
+    else:
+        print("   🎉 所有可选功能依赖就绪(猫娘/配音/封面/音乐)!")
 
     # 9) 写配置
     print("\n[9/11] 写配置 ...")

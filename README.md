@@ -537,7 +537,7 @@ flowchart TD
 2. 在 DSH 的 **设置 → 模型** → 添加一个模型提供方：
    - Base URL：`http://127.0.0.1:5000/v1`
    - API Key：留空（本地免鉴权）
-   - 模型名：`xiaojiao1.0-4B`
+   - 模型名：填任意名字即可（如 `xiaojiao`、`deepseek`、`coder`…——小焦 `/v1` 兼容 OpenAI，模型名只是标识，实际用哪颗大脑由小焦配置决定）
 3. 在 DSH 里**选这个模型**，就可以用小焦当大脑，跑 DSH 的社区插件 / 工具 / 皮肤。
 
 ### 说明
@@ -589,9 +589,10 @@ flowchart LR
         TOOLS["🔧 工具 + 插件<br/>run_command/write_file<br/>py·js·api·skill"]
     end
 
-    subgraph BRAIN["🧠 大脑（选一个）"]
+    subgraph BRAIN["🧠 大脑（选一个 · 可插拔）"]
         direction TB
-        BIG["聊天大脑 llama-swap:9292<br/>llama-server / xiaojiao1.0-4B"]
+        BIG["本地大模型 ~4B 起<br/>llama-swap:9292 / 任意 GGUF"]
+        CLOUD["云端 API<br/>任意 OpenAI 兼容模型"]
         SMALL["自研小脑 MiniGPT<br/>检索 + 生成"]
     end
 
@@ -640,7 +641,7 @@ flowchart LR
     class U,DSH in;
     class W,A,COST_PAGE web;
     class M,S,TOOLS ag;
-    class BIG,SMALL br;
+    class BIG,CLOUD,SMALL br;
     class VID,COMFY,OUTV gen;
     class LOG,FB,KNOW,TRAIN lrn;
     class NEKO,ST,BR neko;
@@ -691,7 +692,7 @@ flowchart LR
 
     subgraph BRAINS["🧠 大脑们（8G 互斥）"]
         direction TB
-        CHAT["💬 聊天大脑 llama.cpp 4B<br/>llama-swap(9292) 秒级卸载/加载"]
+        CHAT["💬 聊天大脑 本地大模型 ~4B 起<br/>llama-swap(9292) 秒级卸载/加载"]
         VID["🎬 视频大脑 ComfyUI+Wan2.1(8188)<br/>keep_warm 常驻 + 低显存"]
         IMG["🖼️ 图像/推理大脑（可扩展）"]
     end
@@ -750,6 +751,19 @@ flowchart LR
 ## 🗄️ 一键加模型
 设置→模型→「一键加本地GGUF」→填名字/路径/ctx→自动配置(不写代码)。详情见 `docs/coding-brain.md`。
 
+## 🧠 可用哪些模型（最小 → 最大）
+
+小焦的 `/v1` 是 **OpenAI 兼容**的，`brain.engine` 可插拔，**模型不写死**——只要你的模型满足"多轮对话 + 工具调用"就能当小焦的大脑。能选的范围很宽：
+
+| 能力档次 | 用什么 | 最小/最大要求 |
+| --- | --- | --- |
+| 🐣 **最小可用** | 本地 **~4B** 量级 GGUF（如 Qwen/DeepSeek 系小模型）+ llama.cpp 推理 | 4B 起，**8G 显存**可跑；工具调用略弱但能聊 |
+| 🤖 **推荐** | **7B~32B** 大模型（本地 GGUF 或任意 OpenAI 兼容云端 API，如 DeepSeek / Qwen / OpenAI / Claude 兼容端点） | 显存越大越强；工具调用、多步执行更准 |
+| 🚀 **最大可用** | **云端超大模型**（通过 `brain.api` 配任意兼容端点，如 DeepSeek/R1、多模态等） | 只要该端点支持 OpenAI `/chat/completions`，**不占本地显存**，能力最强 |
+| 🧠 **自研小脑** | `brain.engine = xiaojiao` 用蒸馏出的 MiniGPT | 最轻、离线，作为兜底/陪聊 |
+
+> **规则**：`/v1` 兼容 OpenAI —— 你可以把**任意**兼容模型的 `base_url` + `model` 填进小焦配置即可接入，不必是特定型号。本地推理用 llama.cpp/llama-swap 托管，云端走 `brain.api`。想换哪个大模型，改配置就行，人格/工具/记忆都不变。
+
 
 ## 🐱 N.E.K.O. 猫娘桌面伙伴（MVP）
 
@@ -786,21 +800,29 @@ flowchart LR
 ---
 
 
-## 🙏 致谢（核心工具的作者们）
+## 🙏 致谢
 
-小焦能"秒级切换、真生成视频"，站在这些超棒的开源项目肩膀上：
+小焦能"秒级切换、真生成视频/播客/音乐、还能变成一只桌面猫娘"，站在这些超棒的开源项目肩膀上：
 
 | 项目 | 作者 | 贡献 |
 |---|---|---|
 | **llama-swap** | [mostlygeek](https://github.com/mostlygeek/llama-swap) | 多模型热切换(9292)，让聊天大脑**秒级卸载/加载** |
+| **llama.cpp** | [ggerganov](https://github.com/ggerganov/llama.cpp) | 本地大模型推理引擎(llama-server)，**本地离线大脑** |
 | **ComfyUI** | [comfyanonymous](https://github.com/comfyanonymous/ComfyUI) | 视频/图像生成引擎，**进程常驻、低显存** |
 | **ComfyUI-WanVideoWrapper** | [kijai](https://github.com/kijai/ComfyUI-WanVideoWrapper) | Wan 2.1 视频工作流节点 |
 | **ComfyUI-AnyDeviceOffload** | 社区 | GPU/CPU 任意设备 offload 节点 |
-| **llama.cpp** | [ggerganov](https://github.com/ggerganov/llama.cpp) | 本地大模型推理引擎(4B 大脑) |
-| **Wan2.1** | 阿里通义实验室 | 文生视频扩散模型 |
-| **DeepSeek** | DeepSeek | 推理模型 + harness 插件生态思路 |
+| **Wan2.1** | [阿里通义实验室](https://github.com/Wan-Video) | 文生视频扩散模型 |
+| **Chatterbox / ChatTTS** | [2noise](https://github.com/2noise/ChatTTS) · [ResembleAI](https://github.com/resemble-ai/chatterbox) | 🎙️ 播客配音 TTS（中英） |
+| **Diffusers + SD1.5** | [Hugging Face](https://github.com/huggingface/diffusers) · [Stability AI](https://github.com/Stability-AI/stablediffusion) | 播客/视频封面图生成 |
+| **ACE-Step** | [ACE-Step](https://github.com/ace-step/ACE-Step) | 🎵 音乐生成大脑(自带 API) |
+| **N.E.K.O.** | N.E.K.O. 开源项目 | 🐱 桌面 Live2D 猫娘伙伴(你下载的) |
+| **DeepSeek** | [DeepSeek](https://github.com/deepseek-ai) | 推理模型思路 + [DeepSeek Harness](https://github.com/deepseek-ai) 插件生态 / SDK |
+| **PyTorch** | [PyTorch](https://github.com/pytorch/pytorch) | 深度学习框架(训练/推理小模型) |
+| **Flask** | [Pallets](https://github.com/pallets/flask) | Web 服务(5000 / `/v1`) |
+| **jieba** | [fxsjy](https://github.com/fxsjy/jieba) | 中文分词 |
+| **LCCC 语料** | [THUNLP](https://github.com/thunlp/LCCC) | 中文多轮对话语料(自研小模型主食) |
 
-> 也谢谢**你**——愿意花时间陪小焦长大，它才有了这些能力。🐳
+> 也谢谢**你**——愿意花时间陪小焦长大，它才有了这些能力。🐱
 
 ---
 

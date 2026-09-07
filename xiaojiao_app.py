@@ -1703,7 +1703,19 @@ def api_env():
     ls_ok = os.path.exists(ls) or shutil.which(ls) is not None
     add("llama-server(聊天大脑)", ls_ok, "本地大脑引擎" + ("，已装" if ls_ok else "，未找到"), "做法：下载 llama.cpp 便携版 → 解压 → 设环境变量 XIAOJIAO_LLAMA_SERVER=你的路径\\llama-server.exe", "github.com/ggml-org/llama.cpp/releases")
     gf = os.environ.get("XIAOJIAO_LLAMA_GGUF") or _ll.get("gguf") or ""
-    add("聊天模型(xiaojiao1.0-4B)", bool(gf) and exists(gf), ("已放" if gf and exists(gf) else "缺模型: %s" % (gf or "未配置")), "做法：下载 xiaojiao1.0-4B.gguf → 设 XIAOJIAO_LLAMA_GGUF=模型路径", "")
+    # 大脑模型: 本地 GGUF 或 已配云端兼容 API 任一即算有(不写死型号/接口兼容任意 OpenAI 模型)
+    _has_local_gf = bool(gf) and exists(gf)
+    _has_cloud_api = bool((_ap.get("api_key") or "").strip()) and bool((_ap.get("base_url") or "").strip())
+    _model_ok = _has_local_gf or _has_cloud_api
+    if _model_ok:
+        _minfo = ("本地 " + (os.path.basename(gf) if _has_local_gf else "")
+                  + (" + " if _has_local_gf and _has_cloud_api else "")
+                  + ("云端 " + (_ap.get("model") or "兼容模型") if _has_cloud_api else "")) or "已配置"
+        _mneed = ""
+    else:
+        _minfo = "未配置(本地GGUF或云端key)"
+        _mneed = "做法：放任意 GGUF 到 C:/llama(自动识别) 或 配置里填任意 OpenAI 兼容 API(base_url+key+model)"
+    add("对话/工具模型", _model_ok, _minfo, _mneed, "")
     # 大脑在线(llama-swap 端口, 从配置读)
     _bp = 9292
     try:

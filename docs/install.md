@@ -27,6 +27,8 @@
    - `brain.llama.gguf`: 指向你的 `.gguf`
    - 或 `brain.api`: 填外接接口的 base_url/api_key/model
 
+   > **模型不写死，最小→最大都能用**：`.gguf` 任意通用（最小 ~4B 起，8G 显存可跑）；云端的 `brain.api` 填**任一 OpenAI 兼容模型**（DeepSeek / Qwen / OpenAI 端点等，不占本地显存，能力最强）。小焦 `/v1` 兼容 OpenAI，换模型只改配置，人格/工具/记忆不变。
+
 4. **启动**
    ```powershell
    python start_xiaojiao.py
