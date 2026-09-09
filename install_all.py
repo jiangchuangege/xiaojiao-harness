@@ -44,6 +44,187 @@ def is_port_up(port, timeout=1.0):
         return False
 
 
+# ========== 全自动探测：不写死任何路径 ==========
+# 顺序：环境变量 > PATH > 各盘符启发式(一级目录名命中通用关键词才深入，避免全盘慢扫)
+#       > where /r 全盘兜底(启发式漏了也能找到)。目录名/盘符怎么起都行，换机器都能自己找到。
+# 关键词只用"通用词"，不掺任何某台机器的个人目录名。
+DISCOVER_KEYWORDS = ("llama", "comfy", "模型", "大脑", "xiaojiao",
+                     "video", "视频", "ai", "wan", "portable", "下载", "tool", "工具")
+_SKIP_DIRS = {"windows", "system volume information", "$recycle.bin", "programdata",
+              "node_modules", "program files (x86)", "program files", "python", "$windows.~bt"}
+
+
+def _drives():
+    """返回当前存在的盘符根列表（如 C 盘、D 盘）。"""
+    import string
+    out = []
+    for letter in string.ascii_uppercase:
+        r = letter + ":\\"
+        try:
+            if os.path.isdir(r):
+                out.append(r)
+        except Exception:
+            pass
+    return out
+
+
+def _top_dirs(drv):
+    """盘符根下的一级目录名列表（跳过隐藏/系统）。"""
+    try:
+        return [d for d in os.listdir(drv)
+                if os.path.isdir(os.path.join(drv, d)) and not d.startswith(("$", "."))]
+    except Exception:
+        return []
+
+
+def _hit_keyword(name, keywords):
+    n = (name or "").lower()
+    return any((k or "").lower() in n for k in keywords)
+
+
+def _walk_limit(root, maxdepth):
+    """有限深度 os.walk，自动剪掉超大系统目录，产出 (dirpath, dirnames)。"""
+    root = root.rstrip("\\/")
+    base = root.count(os.sep)
+    for dp, dns, _fns in os.walk(root):
+        dns[:] = [d for d in dns if d.lower() not in _SKIP_DIRS and not d.startswith(("$", "."))]
+        if dp.count(os.sep) - base >= maxdepth:
+            dns[:] = []
+            yield dp, dns
+            continue
+        yield dp, dns
+
+
+def _where_search(drv, name, timeout=25):
+    """终极兜底：用系统 where /r 在整盘搜某个特征文件(不管目录叫啥都能找到)。返回完整路径或 None。"""
+    try:
+        r = subprocess.run(["where", "/r", drv, name], capture_output=True, text=True, timeout=timeout)
+        if r.returncode == 0 and r.stdout.strip():
+            for line in r.stdout.splitlines():
+                p = line.strip()
+                if p.lower().endswith(name.lower()):
+                    return p
+    except Exception:
+        pass
+    return None
+
+
+def discover_exe(name, extra_keywords=()):
+    """找可执行文件：PATH → 关键词命中的盘符目录里有限深度扫 → where /r 整盘兜底。返回完整路径或 None。"""
+    w = shutil.which(name)
+    if w:
+        return w
+    kws = tuple(extra_keywords) or (name.split("-")[0].split(".")[0],)
+    for drv in _drives():
+        for t in _top_dirs(drv):
+            if not (_hit_keyword(t, DISCOVER_KEYWORDS) or _hit_keyword(t, kws)):
+                continue
+            base = os.path.join(drv, t)
+            if os.path.exists(os.path.join(base, name)):
+                return os.path.join(base, name)
+            for dp, _dns in _walk_limit(base, 3):
+                if os.path.exists(os.path.join(dp, name)):
+                    return os.path.join(dp, name)
+    # 启发式漏了 → 全盘找(不依赖任何目录名)
+    for drv in _drives():
+        p = _where_search(drv, name)
+        if p:
+            return p
+    return None
+
+
+def discover_gguf():
+    """自动找一个 GGUF 模型文件（优先名字含 xiaojiao 的）。返回路径或 None。"""
+    best = None
+    for drv in _drives():
+        for t in _top_dirs(drv):
+            if not (_hit_keyword(t, DISCOVER_KEYWORDS) or t.lower() in ("downloads", "下载")):
+                continue
+            base = os.path.join(drv, t)
+            for dp, _dns in _walk_limit(base, 3):
+                try:
+                    for f in os.listdir(dp):
+                        if f.lower().endswith(".gguf"):
+                            if "xiaojiao" in f.lower():
+                                return os.path.join(dp, f)   # 官方同名优先
+                            best = best or os.path.join(dp, f)
+                except Exception:
+                    pass
+    return best
+
+
+def discover_comfy():
+    """自动找 ComfyUI 根目录（含 main.py 且路径含 ComfyUI 字样）。返回路径或 None。"""
+    for drv in _drives():
+        for t in _top_dirs(drv):
+            if not (_hit_keyword(t, DISCOVER_KEYWORDS) or "comfy" in t.lower()):
+                continue
+            base = os.path.join(drv, t)
+            for dp, _dns in _walk_limit(base, 4):
+                if os.path.basename(dp).lower().find("comfy") >= 0 and os.path.exists(os.path.join(dp, "main.py")):
+                    return dp
+    return None
+
+
+def discover_video_root():
+    """自动找 Wan 视频模型根目录（含 dit_fp8.safetensors 等）。返回路径或 None。"""
+    for drv in _drives():
+        for t in _top_dirs(drv):
+            if not (_hit_keyword(t, DISCOVER_KEYWORDS) or t.lower() in ("downloads", "下载")):
+                continue
+            base = os.path.join(drv, t)
+            if os.path.exists(os.path.join(base, "dit_fp8.safetensors")):
+                return base
+            for dp, _dns in _walk_limit(base, 3):
+                if os.path.exists(os.path.join(dp, "dit_fp8.safetensors")) and os.path.exists(os.path.join(dp, "vae_fp8.safetensors")):
+                    return dp
+    return None
+
+
+def discover_node_dir(prefix):
+    """在盘符里找一个目录名以 prefix 开头的目录（如 ComfyUI-AnyDeviceOffload-1.0.3）。返回路径或 None。"""
+    for drv in _drives():
+        for t in _top_dirs(drv):
+            if not (_hit_keyword(t, DISCOVER_KEYWORDS) or _hit_keyword(t, (prefix,))):
+                continue
+            base = os.path.join(drv, t)
+            for dp, dns in _walk_limit(base, 3):
+                for d in dns:
+                    if d.lower().startswith(prefix.lower()):
+                        return os.path.join(dp, d)
+                if os.path.basename(dp).lower().startswith(prefix.lower()):
+                    return dp
+    return None
+
+
+def discover_neko():
+    """自动找 N.E.K.O. 猫娘根目录。不猜目录名、不写死路径，识别两种形态:
+      - Steam 版桌面客户端: 目录含 N.E.K.O.exe
+      - 源码克隆版: 目录名含 neko/猫娘 且含 launcher.py
+    启发式找不到时用 where /r 整盘兜底，装在哪都能找到。返回路径或 None。"""
+    for drv in _drives():
+        for t in _top_dirs(drv):
+            base = os.path.join(drv, t)
+            # ① 一级目录直接命中
+            if os.path.exists(os.path.join(base, "N.E.K.O.exe")):
+                return base
+            if _hit_keyword(t, ("neko", "猫娘")) and os.path.exists(os.path.join(base, "launcher.py")):
+                return base
+            # ② 一级目录名命中通用词(steam/neko/模型/xiaojiao 等) → 深入有限层找
+            if _hit_keyword(t, DISCOVER_KEYWORDS) or _hit_keyword(t, ("neko", "steam", "猫娘")):
+                for dp, _dns in _walk_limit(base, 4):
+                    if os.path.exists(os.path.join(dp, "N.E.K.O.exe")):
+                        return dp
+                    if os.path.exists(os.path.join(dp, "launcher.py")) and _hit_keyword(os.path.basename(dp), ("neko", "猫娘")):
+                        return dp
+    # ③ 兜底: 整盘找 N.E.K.O.exe(Steam 版特征, 独一无二)
+    for drv in _drives():
+        p = _where_search(drv, "N.E.K.O.exe")
+        if p:
+            return os.path.dirname(p)
+    return None
+
+
 G = lambda x: "\033[92m" + x + "\033[0m" if os.name != "nt" else x
 R = lambda x: "\033[91m" + x + "\033[0m" if os.name != "nt" else x
 
@@ -103,13 +284,40 @@ def main():
     # 2) llama.cpp (llama-server.exe)
     print("\n[2/11] llama.cpp (聊天大脑引擎) ...")
     ll = c.setdefault("brain", {}).setdefault("llama", {})
-    server = ll.get("server") or "llama-server"
-    ok_s = os.path.exists(server) or shutil.which("llama-server") is not None
-    if not ok_s:
+    server = ll.get("server") or ""
+    # 检测: ①配置文件已有 ②全自动探测(PATH + 各盘符按关键词找)，不用写死路径
+    ok_s = False
+    if server and os.path.exists(server):
+        ok_s = True
+    else:
+        found = discover_exe("llama-server.exe")
+        if found:
+            ok_s = True
+            server = found
+            print("   🔎 自动探测到:", found)
+    if ok_s:
+        ll["server"] = server.replace("/", "\\")
+        print("   ✅", server)
+    else:
         print("   ❌ 未找到 llama-server.exe（必需！）")
         print("   自动下载 llama.cpp 便携版(必需)...")
         dl = os.path.join(ROOT, "llama.cpp-b.zip")
-        ok = download("https://github.com/ggml-org/llama.cpp/releases/download/b4107/llama-b4107-bin-win-cuda-cu12.2-x64.zip", dl, "llama.cpp")
+        ok = False
+        # 动态获取最新版(nightly-tag.txt), 资产名格式随版本变化, 逐个试探(cuda 优先, CPU 兜底)
+        try:
+            import urllib.request as _ur
+            with _ur.urlopen("https://github.com/ggml-org/llama.cpp/releases/latest/download/nightly-tag.txt", timeout=20) as _f:
+                _tag = _f.read().decode().strip()
+            print("   ℹ️ llama.cpp 最新版: %s（自动下载最新，不再写死旧版本号）" % _tag)
+            _base = "https://github.com/ggml-org/llama.cpp/releases/download/%s/" % _tag
+            for _n in ("llama-%s-bin-win-cuda-12.4-x64.zip" % _tag,
+                       "llama-%s-bin-win-cuda-cu12.2-x64.zip" % _tag,
+                       "llama-%s-bin-win-cpu-x64.zip" % _tag):
+                ok = download(_base + _n, dl, "llama.cpp")
+                if ok:
+                    break
+        except Exception as e:
+            print("   ✗ 获取版本失败:", str(e)[:100])
         if ok and unzip(dl, os.path.join(ROOT, "llama.cpp")):
             exe = os.path.join(ROOT, "llama.cpp", "llama-server.exe")
             if os.path.exists(exe):
@@ -118,37 +326,34 @@ def main():
             os.remove(dl)
         except Exception:
             pass
-        missing.append("llama-server.exe")
-    else:
-        print("   ✅", server)
+        if not (ll.get("server") and os.path.exists(ll["server"])):
+            missing.append("llama-server.exe")
 
-    # 3) 大脑模型(不写死: 本地 GGUF 或 云端兼容 API; 统一按"协议连通"检测——真发起请求, 通了才算通过)
-    print("\n[3/11] 大脑模型 (本地 GGUF 或 云端 OpenAI 兼容 key) —— 按协议连通检测 ...")
+    # 3) 大脑模型(不写死: 本地 GGUF 或 云端兼容 API; 真发起请求探测, 通了才算通过)
+    print("\n[3/11] 大脑模型 (本地 GGUF 或 云端 OpenAI 兼容 key) ...")
     api = c.setdefault("brain", {}).setdefault("api", {})
     api_key = (api.get("api_key") or "").strip()
     api_url = (api.get("base_url") or "").strip()
     api_model = (api.get("model") or "").strip()
 
-    # 3a) 先看本地: 是否已有大脑服务在线(llama-swap / llama-server 端口)
+    # 3a) 本地 GGUF: 配置文件 -> 全自动探测(盘符按关键词找, 优先 xiaojiao 名)
     local_port = None
     try:
         from urllib.parse import urlparse
         local_port = urlparse(api_url or "http://127.0.0.1:9292/v1").port or 9292
     except Exception:
         local_port = 9292
-    local_online = is_port_up(local_port)
     gf = ll.get("gguf") or ""
     ok_g_file = bool(gf) and os.path.exists(gf)
     if not ok_g_file:
-        for d in (r"C:/llama", ROOT, os.path.expanduser("~/Downloads"), os.path.expanduser("~")):
-            if os.path.isdir(d):
-                for fn in sorted(os.listdir(d)):
-                    if fn.lower().endswith(".gguf") and os.path.isfile(os.path.join(d, fn)):
-                        gf = os.path.join(d, fn); break
-                if gf: break
-        if gf:
-            ok_g_file = True
-    # 3b) 本地真连通检测: 对着在线的大脑服务发一次 OpenAI 兼容请求
+        auto_gf = discover_gguf()
+        if auto_gf:
+            gf, ok_g_file = auto_gf, True
+            ll["gguf"] = gf.replace("/", "\\")
+            print("   🔎 自动探测到模型:", gf)
+    # 3b) 服务在线探测 + 判定:
+    #     大脑就绪 = 服务在线(协议通) OR (有 llama-server + 有 GGUF)——文件齐了, 启动 start_xiaojiao 会自动拉起
+    local_online = is_port_up(local_port)
     local_ok = False; local_msg = ""
     if local_online:
         try:
@@ -157,8 +362,13 @@ def main():
             local_ok, local_msg = ok, msg
         except Exception as e:
             local_msg = "探测异常: %s" % str(e)[:60]
+    server_ok = bool(ll.get("server")) and os.path.exists(ll["server"])
+    if not local_ok and ok_g_file and server_ok:
+        local_ok = True
+        local_msg = "文件就绪(llama-server + %s)，启动 start_xiaojiao 后自动拉起大脑" % os.path.basename(gf)
     if not local_ok:
-        local_msg = ("大脑服务未在线(端口 %d). 文件%s; 启动 start_xiaojiao 后会自动拉起大脑." % (local_port, ("已找到 " + gf if ok_g_file else "未找到 GGUF")))
+        local_msg = ("大脑服务未在线(端口 %d)%s" % (local_port,
+                     ("；模型文件缺失" if not ok_g_file else "")))
     # 3c) 云端真连通检测: 若配置里有云端 key+url, 实测一次
     cloud_ok = False; cloud_msg = "未配置云端 API"
     if api_key and api_url:
@@ -171,7 +381,7 @@ def main():
 
     # 报告
     if local_ok:
-        print("   ✅ 本地大脑协议通: %s (%s)" % (("http://127.0.0.1:%d/v1" % local_port), local_msg))
+        print("   ✅ 本地大脑可用: %s (%s)" % (("http://127.0.0.1:%d/v1" % local_port), local_msg))
     else:
         print("   ⓘ 本地大脑: %s" % local_msg)
     if cloud_ok:
@@ -220,27 +430,30 @@ def main():
     sw = os.environ.get("XIAOJIAO_LLAMA_SWAP") or ""
     ok_sw = bool(sw) and os.path.exists(sw)
     if not ok_sw:
-        found = []
-        for d in (r"G:\模型文件\大脑秒计切换", os.path.join(ROOT, "llama-swap")):
-            if os.path.isdir(d):
-                for root, _, fs in os.walk(d):
-                    for f in fs:
-                        if f == "llama-swap.exe":
-                            found.append(os.path.join(root, f))
-        if found:
-            sw = found[0]
-            c.setdefault("brain", {})["llama_swap_port"] = 9292
-            print("   ✅ 自动找到:", sw)
-        else:
+        sw = discover_exe("llama-swap.exe")
+        ok_sw = bool(sw)
+        if ok_sw:
+            print("   🔎 自动探测到:", sw)
+    if not ok_sw:
             print("   ❌ 未找到 llama-swap.exe（必需！秒级切换核心）")
             print("   自动下载 llama-swap(必需)...")
             dl = os.path.join(ROOT, "llama-swap.zip")
-            if download("https://github.com/mostlygeek/llama-swap/releases/download/v0.251/llama-swap_0.251_windows_amd64.zip", dl, "llama-swap"):
-                if unzip(dl, os.path.join(ROOT, "llama-swap")):
-                    for root, _, fs in os.walk(os.path.join(ROOT, "llama-swap")):
-                        for f in fs:
-                            if f == "llama-swap.exe":
-                                sw = os.path.join(root, f)
+            ok = False
+            # 动态获取最新版(tag 与资产名格式已变: v255 -> llama-swap_255_windows_amd64.zip)
+            try:
+                import urllib.request as _ur
+                with _ur.urlopen("https://api.github.com/repos/mostlygeek/llama-swap/releases/latest", timeout=20) as _f:
+                    import json as _json
+                    _ver = _json.loads(_f.read().decode()).get("tag_name", "").lstrip("v")
+                print("   ℹ️ llama-swap 最新版: v%s（自动下载最新，不再写死旧版本号）" % _ver)
+                ok = download("https://github.com/mostlygeek/llama-swap/releases/download/v%s/llama-swap_%s_windows_amd64.zip" % (_ver, _ver), dl, "llama-swap")
+            except Exception as e:
+                print("   ✗ 获取版本失败:", str(e)[:100])
+            if ok and unzip(dl, os.path.join(ROOT, "llama-swap")):
+                for root, _, fs in os.walk(os.path.join(ROOT, "llama-swap")):
+                    for f in fs:
+                        if f == "llama-swap.exe":
+                            sw = os.path.join(root, f)
             try:
                 os.remove(dl)
             except Exception:
@@ -258,10 +471,19 @@ def main():
     comfy = os.environ.get("XIAOJIAO_COMFY_DIR") or ""
     ok_comfy = bool(comfy) and os.path.exists(os.path.join(comfy, "main.py"))
     if not ok_comfy:
+        auto = discover_comfy()
+        if auto:
+            comfy = auto
+            ok_comfy = True
+            print("   🔎 自动探测到:", comfy)
+    elif comfy:
+        print("   ✅ ComfyUI:", comfy)
+    if not ok_comfy:
         print("   ❌ 未找到 ComfyUI（较大 ~2GB，脚本不自动下）")
         p = input("   请粘贴 ComfyUI 目录(main.py 所在, 回车跳过): ").strip().strip('"')
         if p and os.path.exists(os.path.join(p, "main.py")):
             comfy = p
+            ok_comfy = True
         else:
             missing.append("ComfyUI")
     if comfy:
@@ -276,16 +498,16 @@ def main():
         if ok_node:
             print("   ✅", node, "已在 custom_nodes")
         else:
-            print("   ❌", node, "未安装(必需)")
-            # 尝试从 大脑秒计切换 目录/zip 复制
-            src_dir = os.path.join(r"G:\模型文件\大脑秒计切换", node) if node == "ComfyUI-AnyDeviceOffload" else ""
+            print("   ❌", node, "未装进 ComfyUI（正在自动寻找本地源码并安装...）")
+            # 全盘自动找该节点源码目录(目录名可能带版本号, 如 ComfyUI-AnyDeviceOffload-1.0.3)
+            src_dir = discover_node_dir(node)
             got = False
-            if cn_dir and src_dir and os.path.isdir(src_dir):
+            if cn_dir and src_dir:
                 try:
                     import shutil as _sh
                     _sh.copytree(src_dir, os.path.join(cn_dir, node), dirs_exist_ok=True)
                     got = os.path.isdir(os.path.join(cn_dir, node))
-                    print("   ✅ 已从 大脑秒计切换 复制:", node)
+                    print("   ✅ 已自动找到并装进 ComfyUI:", src_dir)
                 except Exception as e:
                     print("   ✗ 复制失败:", e)
             if not got:
@@ -295,7 +517,18 @@ def main():
 
     # 6) Wan 视频模型三件套
     print("\n[6/11] Wan2.1 视频模型三件套 ...")
-    vroot = os.environ.get("XIAOJIAO_VIDEO_ROOT") or r"G:\模型文件\视频模型"
+    # 视频模型根目录: 环境变量优先, 否则自动探测(找含 dit_fp8.safetensors 的目录)
+    vroot = os.environ.get("XIAOJIAO_VIDEO_ROOT") or ""
+    if not vroot or not os.path.isdir(vroot):
+        auto_vr = discover_video_root()
+        if auto_vr:
+            vroot = auto_vr
+            print("   🔎 自动探测到视频模型目录:", vroot)
+    if not vroot:
+        # 没探测到已有目录时, 下载到脚本目录下(不写死任何盘符路径)
+        vroot = os.path.join(ROOT, "video_models")
+        print("   ℹ️ 未找到现有视频模型目录, 将下载到:", vroot)
+    os.makedirs(vroot, exist_ok=True)
     ck = os.path.join(vroot, "dit_fp8.safetensors")
     tc = os.path.join(vroot, "umt5_fp8.safetensors")
     va = os.path.join(vroot, "vae_fp8.safetensors")
@@ -331,11 +564,11 @@ def main():
 
     # 8b) 可选功能依赖（不是硬性必需, 缺哪个=哪个功能用不了, 这里全部补齐告知）
     print("\n[8b/11] 可选功能依赖 (缺哪个=哪个功能用不了) ...")
-    # N.E.K.O. 猫娘(桌面伙伴, 你下载的开源项目)
-    neko_root = ""
-    for cand in [os.environ.get("XIAOJIAO_NEKO_DIR", ""), r"G:\moxing__xiaojiao\maoniang\N.E.K.O-main", r"G:\模型文件\猫娘\N.E.K.O-main", r"C:\NEKO\N.E.K.O-main"]:
-        if cand and os.path.exists(os.path.join(cand, "launcher.py")):
-            neko_root = cand; break
+    # N.E.K.O. 猫娘(桌面伙伴, 可选) —— 环境变量优先, 否则全盘自动探测; 支持 Steam 版(N.E.K.O.exe)与源码版(launcher.py)
+    neko_root = os.environ.get("XIAOJIAO_NEKO_DIR") or ""
+    if not (neko_root and (os.path.exists(os.path.join(neko_root, "launcher.py"))
+                           or os.path.exists(os.path.join(neko_root, "N.E.K.O.exe")))):
+        neko_root = discover_neko() or ""
     if neko_root:
         print("   ✅ N.E.K.O. 猫娘:", neko_root)
     else:
