@@ -267,11 +267,24 @@ def load_plugins():
 PLUGINS = load_plugins()   # 插件注册表（设置页可开关）
 
 
+def _tool_result_str(r):
+    """把插件/工具返回统一成字符串（dict/list → JSON；None → 空串），
+    避免下游 result[:n] 切片对非字符串崩溃（如插件返回 {"error": ...} 导致 KeyError/TypeError）。"""
+    if r is None:
+        return ""
+    if isinstance(r, str):
+        return r
+    try:
+        return json.dumps(r, ensure_ascii=False)
+    except Exception:
+        return str(r)
+
+
 def run_plugin(name, params):
-    """调用某个插件（由 LLM/Agent 决定何时用）。支持 py / api / js。"""
+    """调用某个插件（由 LLM/Agent 决定何时用）。支持 py / api / js。始终返回字符串。"""
     p = PLUGINS.get(name)
     if not p or not p.get("on"):
-        return None
+        return ""
     # JS 插件：起 node 子进程执行
     if p.get("type") == "js":
         import subprocess
@@ -279,15 +292,15 @@ def run_plugin(name, params):
             r = subprocess.run(["node", os.path.join("plugins", "plugin_runner.js"), "exec",
                                 p.get("path"), params.get("name"), json.dumps(params.get("params", {}), ensure_ascii=False)],
                                capture_output=True, text=True, timeout=90, encoding="utf-8")
-            return (r.stdout or r.stderr).strip()
+            return (r.stdout or r.stderr or "").strip()
         except Exception as e:
             return f"JS插件执行失败：{e}"
     if "instance" not in p:
-        return None
+        return ""
     try:
-        return p["instance"].execute(params.get("name"), params.get("params", {}))
+        return _tool_result_str(p["instance"].execute(params.get("name"), params.get("params", {})))
     except Exception:
-        return None
+        return ""
 
 
 _TOOL2PLUGIN = {}   # 工具名 -> 插件模块名
@@ -938,7 +951,7 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
             m.append({"role": "assistant", "content": content})
             for name, args in xmlcalls:
                 tname, targs = _map_tool(name, args)
-                result = run_tool(tname, targs)
+                result = _tool_result_str(run_tool(tname, targs))
                 tool_trace.append({"tool": tname, "args": targs, "result": result[:800]})
                 if result.startswith("〔待确认〕"):
                     m.append({"role": "tool", "content": result})
@@ -954,7 +967,7 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
             except Exception:
                 args = {}
             tname, targs = _map_tool(fn.get("name", ""), args)
-            result = run_tool(tname, targs)
+            result = _tool_result_str(run_tool(tname, targs))
             tool_trace.append({"tool": tname, "args": targs, "result": result[:800]})
             if result.startswith("〔待确认〕"):
                 m.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
@@ -1114,7 +1127,7 @@ def agent_run(user_input, lean=False):
             tname, targs = plan_tool(user_input)
             if tname:
                 tname, targs = _map_tool(tname, targs)
-                result = run_tool(tname, targs, force=True)
+                result = _tool_result_str(run_tool(tname, targs, force=True))
                 tool_trace.append({"tool": tname, "args": targs, "result": result[:800]})
                 answer = _summarize_tool(user_input, result, tname)
 
