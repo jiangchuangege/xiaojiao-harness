@@ -688,6 +688,48 @@ class SecurityGuard:
     BLOCKED_SCHEMES = ("file", "ftp", "gopher", "data", "javascript", "about", "chrome", "ws", "wss")
     PRIVATE_HOST_HINTS = ("localhost", "127.", "0.0.0.0", "::1", "metadata.google.internal")
 
+    # ------------------------------------------------------------------
+    # 反 SSRF 绕过：十进制/十六进制/八进制/缩写 IP
+    # ------------------------------------------------------------------
+    # 安全自测发现：`http://2130706433/`（= 127.0.0.1 的十进制写法）能绕过原来的检查 ——
+    # 因为 host 既不是 "127." 开头，socket.getaddrinfo 在本机也解析不了，于是被当成"解析失败放行"。
+    # 但 HTTP 客户端（curl/浏览器）会把它当 IP 用，等于直接打本机。这里显式把各种数值写法还原成 IP 再判定。
+    @staticmethod
+    def _numeric_host_to_ip(host: str) -> Optional[ipaddress._BaseAddress]:
+        if not host:
+            return None
+        h = host.strip().strip("[]").lower()
+        try:
+            # ① 八进制（以 0 开头的多位数字，符合 inet_aton 语义：010 = 8）
+            if len(h) > 1 and h.startswith("0") and not h.startswith("0x") and h.isdigit():
+                return ipaddress.ip_address(int(h, 8))
+            # ② 十六进制：0x7f000001
+            if h.startswith("0x"):
+                return ipaddress.ip_address(int(h, 16))
+            # ③ 纯十进制：2130706433 → 127.0.0.1
+            if h.isdigit():
+                return ipaddress.ip_address(int(h))
+            # ③ 缩写点分（127.1 / 10.1 / 192.168.1）→ 按 IPv4 缺位规则补零
+            parts = h.split(".")
+            if 1 < len(parts) < 4 and all(p.isdigit() for p in parts):
+                nums = [int(p) for p in parts]
+                if len(nums) == 2:
+                    nums = [nums[0], nums[1] >> 16 & 0xFF, nums[1] >> 8 & 0xFF, nums[1] & 0xFF]
+                elif len(nums) == 3:
+                    nums = [nums[0], nums[1], nums[2] >> 8 & 0xFF, nums[2] & 0xFF]
+                return ipaddress.ip_address(".".join(str(n) for n in nums))
+            # ④ 八进制（017700000001）
+            if len(parts) == 1 and h.startswith("0") and len(h) > 1 and h.isdigit():
+                return ipaddress.ip_address(int(h, 8))
+        except Exception as e:
+            LOG.debug("数值型 host 解析失败(交由后续处理): %s / %s", host, e)
+        return None
+
+    @staticmethod
+    def _is_blocked_ip(addr: "ipaddress._BaseAddress") -> bool:
+        return bool(addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
+                    or addr.is_multicast or addr.is_unspecified)
+
     def __init__(self, rate_limit: float = DEFAULT_RATE_LIMIT, allow_robots_skip: bool = False) -> None:
         self.rate_limit = max(0.0, float(rate_limit))
         self.allow_robots_skip = allow_robots_skip
@@ -714,7 +756,11 @@ class SecurityGuard:
             return "URL 缺少主机名"
         if any(host == h or host.startswith(h) for h in self.PRIVATE_HOST_HINTS):
             return "禁止访问本机/内网地址（SSRF 防护）"
-        # 域名解析后再校验一次（防 DNS 指向内网）
+        # ① 数值型 host（十进制/十六进制/八进制/缩写点分）先还原成 IP 再判定 —— 防 `http://2130706433/` 这类绕过
+        num_addr = self._numeric_host_to_ip(host)
+        if num_addr is not None and self._is_blocked_ip(num_addr):
+            return "禁止访问内网/保留地址 %s（SSRF 防护，数值型写法）" % num_addr
+        # ② 域名解析后再校验一次（防 DNS 指向内网）
         try:
             infos = socket.getaddrinfo(host, None)
         except Exception:
@@ -725,8 +771,7 @@ class SecurityGuard:
                 addr = ipaddress.ip_address(ip)
             except Exception:
                 continue
-            if (addr.is_private or addr.is_loopback or addr.is_link_local
-                    or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+            if self._is_blocked_ip(addr):
                 return "禁止访问内网/保留地址 %s（SSRF 防护）" % ip
         return ""
 

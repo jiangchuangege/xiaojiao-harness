@@ -10,6 +10,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from flask import Flask, request, jsonify, render_template_string
 import xiaojiao_app as app_mod
 
+try:
+    from xiaojiao_log import get_logger
+    log = get_logger(__name__)
+except Exception:                      # 独立运行时退化为标准 logging
+    import logging
+    log = logging.getLogger("xiaojiao.tools")
+
 RUN_TOOL = app_mod.run_tool          # 工具执行（force=True 由用户前台调用，视为已授权）
 app = Flask(__name__)
 
@@ -36,7 +43,13 @@ def api_tools():
 def api_run():
     data = request.get_json(force=True, silent=True) or {}
     name = (data.get("name") or data.get("tool") or "").strip()
-    force = bool(data.get("force", True))     # 前台/脚本调用视为授权，跳过危险确认等待
+    # 安全约束：只有**本机回环**来的请求才允许 force（跳过危险命令确认）。
+    # 远程客户端即使传 force=True 也会被降级，走正常确认流程 —— 避免"局域网随便执行命令"。
+    client = (request.remote_addr or "")
+    _loopback = client in ("127.0.0.1", "::1", "localhost")
+    force = bool(data.get("force", True)) and _loopback
+    if not _loopback and data.get("force"):
+        log.warning("拒绝非本机客户端的 force 请求（%s），已降级为需确认", client)
     # 兼容直接传 command / params
     if name.lower() in ("pwsh", "powershell", "cmd", "terminal", "shell", "bash", "sh", "exec", "run", "execute"):
         name = "run_command"
@@ -46,6 +59,7 @@ def api_run():
     try:
         result = RUN_TOOL(name, args, force=force)
     except Exception as e:
+        log.warning("工具 %s 执行异常: %s", name, e)
         result = "工具异常：%s: %s" % (type(e).__name__, e)
     return jsonify({"ok": True, "tool": name, "result": result})
 
@@ -92,12 +106,18 @@ async function runCmd(){const c=document.getElementById('qcmd').value;if(!c)retu
 
 def main():
     port = int(os.environ.get("TOOLS_PORT", 5003))
+    # 安全默认：只监听本机回环地址。
+    # 原因：/api/run 能执行任意命令，且不带鉴权；绑 0.0.0.0 会让**同一局域网内的任何设备**都能执行命令。
+    # 需要给局域网其它机器用时，显式设置 XIAOJIAO_TOOLS_HOST=0.0.0.0，并自行加反向代理鉴权。
+    host = os.environ.get("XIAOJIAO_TOOLS_HOST", "127.0.0.1")
     print("=" * 40)
     print("  小焦 · 工具调用服务")
-    print(f"  http://127.0.0.1:{port}")
+    print(f"  http://127.0.0.1:{port}" + ("（监听 %s —— 注意：非本机地址会暴露命令执行能力）" % host if host != "127.0.0.1" else ""))
     print("  工具接口: POST /api/run  {name, command/path/content,...}")
+    if host != "127.0.0.1":
+        print("  ⚠️ 已监听非本机地址：该服务无鉴权且可执行命令，请确认网络环境可信")
     print("=" * 40)
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    app.run(host=host, port=port, debug=False, use_reloader=False)
 
 
 if __name__ == "__main__":

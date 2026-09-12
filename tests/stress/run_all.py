@@ -35,15 +35,19 @@ def main() -> int:
     print("  小焦抓取插件 · 压力测试（真实调用，禁止模拟）")
     print("=" * 62)
 
-    print("\n[1/2] 离线用例（配置/安全/会话/指标/参数校验）")
+    print("\n[1/3] 离线用例（配置/安全闸门/会话/指标/参数校验/渲染契约）")
     import test_units
     test_units.run(res, mod=mod)
 
+    print("\n[2/3] 安全用例（SSRF/robots/限速/脱敏/UA/穿越/命令端点/无遥测/无明文密钥）")
+    import test_security
+    test_security.run(res, mod=mod)
+
     if args.offline or offline_only():
-        print("\n[2/2] 联网用例 —— 已跳过（--offline 或 XJ_STRESS_OFFLINE=1）")
+        print("\n[3/3] 联网用例 —— 已跳过（--offline 或 XJ_STRESS_OFFLINE=1）")
         res.skip("联网", "全部联网用例", "离线模式")
     else:
-        print("\n[2/2] 联网用例（真实抓取/批量/会话/对抗）")
+        print("\n[3/3] 联网用例（真实抓取/批量/会话/对抗）")
         import test_network
         test_network.run(res, mod=mod, quick=args.quick)
 
