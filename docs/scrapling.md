@@ -139,22 +139,16 @@ This domain is for use in documentation examples without needing permission…
 
 ```mermaid
 flowchart TB
-    Q["🧑 用户：抓一下 xxx / 把这个 PDF 下载下来"] --> DI["① 抓取意图识别<br/>_detect_scrape_intent()"]
-    DI --> SEC["② SecurityGuard<br/>SSRF · robots · 限速 · UA"]
-    SEC --> CB["③ CircuitBreaker<br/>连续失败3次→暂停30s"]
-    CB --> BM["④ BatchManager<br/>去重 · 429退避 · 代理轮换 · 隔离"]
-    BM --> AR["⑤ AsyncRunner<br/>专用事件循环线程"]
-    AR --> MC["⑥ MCPClient<br/>连接池 · 健康检查 · 重连 · 超时"]
-    MC --> IP["inproc 直连（默认）"]
-    MC --> MP["MCP 服务（stdio/http）"]
-    IP --> OUT["产出：正文 / books/*.md / downloads/*.epub / 截图"]
-    MP --> OUT
-    OUT --> TR["⑦ 工具轨迹（一行摘要）"]
-    TR --> EX["⑧ 抓完解读 _explain_content()"]
-    TR --> LE["⑨ 用户使用时学习 _learn_skill()"]
-    LE --> VEC["小脑：tool_skills.txt + 向量库"]
-    VEC -. 检索命中即复用 .-> DI
+    Q["🧑 用户：抓一下 xxx / 把这个 PDF 下载下来"] --> DI["① 抓取意图识别<br/>抓 / 爬 / 下载 + 网址 → 直接选工具"]
+    DI --> SEC["② 安全闸门<br/>SSRF · robots · 同域限速"]
+    SEC --> AR["③ 执行（双通道）<br/>inproc 直连（默认）/ MCP 服务"]
+    AR --> OUT["④ 产出<br/>正文 Markdown · books/ · downloads/ · 截图"]
+    OUT --> EX["⑤ 直接展示 + 📖 解读"]
+    OUT --> LE["⑥ 经验沉淀<br/>成功 = 用法 · 失败 = 反思"]
+    LE -. "下次同类需求直接复用" .-> DI
 ```
+
+> 插件内部的 5 个组件各管一件事：`SecurityGuard`（安全）· `CircuitBreaker`（熔断自愈）· `BatchManager`（批量）· `SelectorManager`（自适应选择器）· `AsyncRunner` + `MCPClient`（双通道）。
 
 ### 4.2 抓取意图直通（为什么不让模型自己选工具）
 
@@ -305,13 +299,11 @@ python start_xiaojiao.py
 
 ---
 
-## 9. 边界与合规（重要）
+## 9. 免责声明
 
-- 🚫 **不绕付费墙、不抓需登录的受限内容、不下载受版权保护的正文**
-  （起点、readnovel 等商业小说站：只取公开信息如书籍简介/目录，**章节正文与 VIP 内容不动**）
-- 🚫 **不抓内网/本机/保留地址**（`127.0.0.1`、`10.x`、`192.168.x`、`169.254.x`、`file://`、`gopher://`…）
-- ✅ 适合：**公版书**（[古腾堡](https://www.gutenberg.org)、[维基文库](https://zh.wikisource.org)、[ctext](https://ctext.org)）、公开文档与论文、新闻与公开数据、你自己的站点/资料
-- 📌 抓取前自动检查 `robots.txt`；请在遵守目标站点条款与当地法律的前提下使用
+> 本功能仅用于抓取**公开可访问**的网页与文件，请自行遵守目标站点条款与当地法律。**请勿**用于绕过付费墙、破解版权内容或任何违法用途 —— 使用产生的后果由使用者自行承担。
+
+> 技术上插件会主动拦掉内网/本机地址（SSRF 防护）并自动检查 `robots.txt`，但这只是安全兜底，不代表你可以用它去抓不该抓的东西。
 
 ---
 

@@ -941,48 +941,43 @@ flowchart LR
 
 > **猫娘和小焦互不依赖**：没有猫娘，小焦一切正常；没有小焦，猫娘照跑。想彻底分开，就答 `n`。
 
-### 🗺️ v1.1.0 改动全景（一张图看完所有改过的文件与原则）
+### 🗺️ v1.1.0 改动全景（原则 → 改动 → 验收）
 
 ```mermaid
-flowchart TB
-    P["🧭 9 条原则（贯穿全部改动）<br/>① 不写死路径 · ② 自己找模型 · ③ 必需/可选分级<br/>④ 先问再拉 · ⑤ 抓完必解读 · ⑥ 用完即学习<br/>⑦ 安全第一 · ⑧ 报错说人话 · ⑨ 边界守规矩"]
+flowchart LR
+    P["🧭 9 条原则<br/>不写死路径 · 自己找模型 · 必需/可选分级<br/>先问再拉 · 抓完必解读 · 用完即学习<br/>安全第一 · 报错说人话 · 边界守规矩"]
 
-    subgraph CHG["🔧 v1.1.0 改动文件"]
-        direction TB
-        F1["install_all.py<br/>分级检测 · 全盘找小脑 · 缺可选不拦启动"]
-        F2["start_xiaojiao.py<br/>ask_start_neko() 猫娘先问 y/N"]
-        F3["xiaojiao_harness.py<br/>_resolve_brain_paths() 三级解析模型"]
-        F4["xiaojiao_app.py<br/>抓取直通 · 正文直显 · 📖解读 · 自动大纲 · 学习落盘"]
-        F5["plugins/scrapling_bridge.py<br/>原生 13 工具 1:1 + 3 增强 = 17 工具<br/>安全闸门 · 熔断 · 批量"]
-        F6["xiaojiao_control.json<br/>brain.xiaojiao + scrapling 两段"]
-        F7["requirements.txt<br/>scrapling[fetchers] · markdownify · mcp"]
-        F8["README.md · docs/scrapling.md<br/>docs/architecture.md · CHANGELOG.md · docs/install.md"]
-        F9["video_service/config.py · podcast_service/podcast_gen.py<br/>视频/配音模型目录自动探测（不写死）"]
-        F10["玩具体检 · 插件 Chrome 探测<br/>xiaojiao_app.py /api/env + scrapling_bridge.py"]
-    end
+    P --> A["🛠️ 安装器<br/>install_all.py<br/>分级检测 · 全盘找小脑"]
+    P --> B["🚀 启动<br/>start_xiaojiao.py<br/>猫娘先问 y/N"]
+    P --> C["🕷️ 抓取<br/>plugins/scrapling_bridge.py<br/>原生 13 + 增强 3 = 17 工具"]
+    P --> D["🧡 小焦壳<br/>xiaojiao_app.py<br/>直通 · 直显 · 解读 · 学习落盘"]
+    P --> E["⚙️ 配置与模型路径<br/>xiaojiao_control.json · xiaojiao_harness.py<br/>video_service · podcast_service"]
 
-    P --> CHG
-    CHG --> V["✅ 验收<br/>17 工具可调 · 抓完有解读 · 模型不写死<br/>猫娘不绑死 · 缺可选不影响启动 · 一次装完就能跑"]
+    A --> V["✅ 验收<br/>17 工具可调 · 抓完有解读 · 模型不写死<br/>猫娘不绑死 · 缺可选不影响启动"]
+    B --> V
+    C --> V
+    D --> V
+    E --> V
 
     classDef p fill:#fef9c3,stroke:#eab308,color:#713f12;
     classDef f fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
     classDef v fill:#ecfdf5,stroke:#34d399,color:#064e3b;
     class P p;
-    class F1,F2,F3,F4,F5,F6,F7,F8,F9,F10 f;
+    class A,B,C,D,E f;
     class V v;
 ```
 
-| 原则 | 落在哪个文件 / 哪个函数 |
-|---|---|
-| ① 不写死路径 | `install_all.py` 全盘发现 · `xiaojiao_harness.py::_resolve_brain_paths()` · `xiaojiao_app.py::_discover_paths()`（ComfyUI/llama-swap/视频模型）· `video_service/config.py` · `podcast_service/podcast_gen.py` · `plugins/scrapling_bridge.py`（Chrome）· `xiaojiao_control.json` |
-| ② 自己找模型 | `discover_brain_all()`（`*.pth` 体积优先 + 跨目录 `vocab*.pkl`） |
-| ③ 必需/可选分级 | `install_all.py` 的 `missing` / `opt_miss` 两组 + 报告分段 |
-| ④ 先问再拉 | `start_xiaojiao.py::ask_start_neko()`（`[Y/n]`，非交互默认不拉） |
-| ⑤ 抓完必解读 | `xiaojiao_app.py::_explain_content()` + 抓取意图直通 `_detect_scrape_intent()` |
-| ⑥ 用完即学习 | `_reflect()` / `_learn_skill()` / `_recall_skills()` → `self_learn/tool_skills.txt` |
-| ⑦ 安全第一 | `scrapling_bridge.py::SecurityGuard`（SSRF/robots/限速/脱敏）+ `CircuitBreaker` |
-| ⑧ 报错说人话 | `_tool_result_str()` 统一出口 + 中文错误 + 降级提示 |
-| ⑨ 边界守规矩 | 不绕付费墙 / 不破版权，仅抓公开可访问内容（见下方边界说明） |
+**9 条原则落在哪**
+
+- **① 不写死路径** —— `install_all.py` 全盘发现 · `xiaojiao_harness.py::_resolve_brain_paths()` · `xiaojiao_app.py::_discover_paths()` · `video_service/config.py` · `podcast_service/podcast_gen.py` · `plugins/scrapling_bridge.py` · `xiaojiao_control.json`
+- **② 自己找模型** —— `discover_brain_all()`：全盘 `*.pth`（体积优先）+ 跨目录 `vocab*.pkl` 配对
+- **③ 必需 / 可选分级** —— `install_all.py` 用 `missing` / `opt_miss` 两组分开报告
+- **④ 先问再拉** —— `start_xiaojiao.py::ask_start_neko()`（`[Y/n]`，非交互默认不拉）
+- **⑤ 抓完必解读** —— `xiaojiao_app.py::_explain_content()` + 抓取意图直通 `_detect_scrape_intent()`
+- **⑥ 用完即学习** —— `_reflect()` / `_learn_skill()` / `_recall_skills()` → `self_learn/tool_skills.txt`
+- **⑦ 安全第一** —— `SecurityGuard`（SSRF / robots / 限速 / 脱敏）+ `CircuitBreaker`（失败自愈）
+- **⑧ 报错说人话** —— `_tool_result_str()` 统一出口 + 全中文错误 + 降级提示
+- **⑨ 边界守规矩** —— 只抓公开内容，见下方「免责声明」
 
 **用法**：双击 `一键安装.bat`（或 `python install_all.py`）→ 看报告里的 **必需 / 可选** 两段 → 缺必需按提示补 → 齐了就 `python start_xiaojiao.py`。装完想换小脑或加抓取配置，改 `xiaojiao_control.json` 即可，不用碰代码。
 
@@ -1009,82 +1004,54 @@ flowchart TB
 | `session_make_request` | 用 HTTP 会话发请求（保持 cookie）|
 | `screenshot` | 页面截图（可整页），存 `media/screenshot/` 返回路径 |
 
-**小焦增强 3 个（原生没有 / 更好用）**
+**小焦增强（3 个工具 + 1 个参数）**
 
 | 工具 | 一句话 |
 | --- | --- |
+| `get` | `make_request` 的中文友好别名（说「抓一下」就走它）|
 | `scrape_with_selector` | 按 CSS 选择器抓取，**自适应防站点改版**（选择器存档 + 相似度找回）|
-| 🆕 `download` | **下载任意文件**（PDF / EPUB / ZIP / 图片 / 音视频…）到 `downloads/` |
-| 🆕 `save_to` 参数 | `get` / `fetch` / `stealthy_fetch` 抓到的正文**直接存文件**到 `books/` |
+| 🆕 `download` | **下载任意文件**（PDF / EPUB / ZIP / 图片 / 音视频…）存到 `downloads/` |
+| 🆕 `save_to` | 抓取时多填一个文件名，正文就**直接存成文件**到 `books/`（长文不占对话）|
 
 > 另有 `browser_session` 作为**聚合入口**保留（一个工具用 `action` 走完 open/fetch/screenshot/close 全流程），方便旧用法与不熟悉多步调用的场景 —— 所以插件对外一共 **17 个工具**。
 
-### 一张图看懂它怎么工作（架构 · 数据流）
+### 一张图看懂它怎么工作
 
 ```mermaid
 flowchart TB
-    subgraph U["🧑 用户"]
-        Q["「抓一下 xxx.com」<br/>「把这个 PDF 下载下来」<br/>「抓这页存成文件」"]
-    end
-
-    subgraph APP["🧡 小焦壳 · xiaojiao_app.py"]
-        direction TB
-        DI["① 抓取意图识别<br/>_detect_scrape_intent()<br/>抓/爬/下载 + 网址 → 自动选工具"]
-        WS["② 上下文装配<br/>记忆 + 联网 + 技能检索 _recall_skills()"]
-        TR["⑥ 工具轨迹<br/>_trace_summary() 压成一行"]
-        EX["⑦ 抓完解读<br/>_explain_content()<br/>是什么 / 要点 / 怎么用"]
-        LE["⑧ 用户使用时学习<br/>_learn_skill()"]
-    end
-
-    subgraph BR["🕷️ plugins/scrapling_bridge.py"]
-        direction TB
-        SEC["SecurityGuard<br/>SSRF 100% 拦截 · robots.txt<br/>同域限速 · UA 合规 · 日志脱敏"]
-        CB["CircuitBreaker<br/>连续失败 3 次 → 暂停 30s → 自愈"]
-        BM["BatchManager<br/>URL 去重 · 429 指数退避<br/>代理轮换(≤5次) · 部分失败隔离"]
-        AR["AsyncRunner<br/>专用事件循环线程<br/>（绝不 asyncio.run）"]
-        MC["MCPClient<br/>连接池 · 健康检查<br/>30s 自动重连 · 超时取消"]
-        SM["SelectorManager<br/>自适应选择器<br/>指纹相似度 + 多候选置信度"]
-    end
-
-    subgraph DUAL["🔀 双通道（mode 可切）"]
-        IP["inproc 直连<br/>scrapling API（默认，错误信息完整）"]
-        MP["MCP 服务<br/>stdio 子进程 / streamable-http"]
-    end
-
-    subgraph OUT["📦 产出"]
-        R1["正文 Markdown<br/>+ 📖 解读"]
-        R2["books/*.md<br/>save_to 存文件"]
-        R3["downloads/*.epub<br/>download 下载"]
-        R4["media/screenshot/*.png<br/>网页截图"]
-    end
-
-    subgraph LR["🧠 小脑（越用越会）"]
-        KF["self_learn/tool_skills.txt<br/>成功=用法 · 失败=反思"]
-        VEC["self_learn/knowledge_vec.json<br/>向量库（语义检索）"]
-    end
-
-    Q --> DI --> SEC
-    WS --> SEC
-    SEC --> CB --> BM --> AR --> MC
-    MC --> IP
-    MC --> MP
-    MC --> SM
-    IP --> R1 & R2 & R3 & R4
-    MP --> R1 & R2 & R3 & R4
-    R1 --> TR --> EX
-    TR --> LE --> KF --> VEC
-    VEC -. "检索命中即复用" .-> WS
+    A["🧑 你说：抓一下 xxx.com / 把这个 PDF 下载下来"] --> B["① 抓取意图识别<br/>识别「抓 / 爬 / 下载 + 网址」→ 直接选工具"]
+    B --> C["② 安全闸门<br/>SSRF 拦截 · robots.txt · 同域限速"]
+    C --> D["③ 开抓<br/>普通 HTTP / 浏览器渲染 / 隐身 · 可批量 · 可带登录态"]
+    D --> E["④ 拿回结果<br/>正文 Markdown · 文件 · 截图"]
+    E --> F["⑤ 直接展示 + 📖 解读<br/>是什么 / 要点 / 怎么用"]
+    E --> G["⑥ 想留存就存本地<br/>books/ 正文 · downloads/ 文件 · media/screenshot/ 截图"]
+    F --> H["⑦ 经验沉淀<br/>成功 = 用法 · 失败 = 反思"]
+    H -. "下次同类需求直接复用" .-> B
 
     classDef u fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
-    classDef app fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
-    classDef br fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    classDef s fill:#fee2e2,stroke:#ef4444,color:#7f1d1d;
     classDef out fill:#ecfdf5,stroke:#34d399,color:#064e3b;
     classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
-    class Q u;
-    class DI,WS,TR,EX,LE app;
-    class SEC,CB,BM,AR,MC,SM,IP,MP br;
-    class R1,R2,R3,R4 out;
-    class KF,VEC lrn;
+    class A u;
+    class C s;
+    class E,F,G out;
+    class H lrn;
+```
+
+**插件内部：5 个组件各管一件事**
+
+```mermaid
+flowchart LR
+    P["🕷️ scrapling_bridge.py"] --> S["SecurityGuard<br/>SSRF · robots · 限速 · 日志脱敏"]
+    P --> C["CircuitBreaker<br/>失败 3 次 → 暂停 30s → 自愈"]
+    P --> B["BatchManager<br/>去重 · 429 退避 · 代理轮换"]
+    P --> M["SelectorManager<br/>自适应选择器（防改版）"]
+    P --> D["双通道<br/>inproc 直连（默认）/ MCP 服务"]
+
+    classDef p fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    classDef c fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    class P p;
+    class S,C,B,M,D c;
 ```
 
 ### 用法（说人话）
@@ -1181,12 +1148,9 @@ python -m pip install "scrapling[fetchers]" markdownify mcp -i https://pypi.tuna
 · `scrapling[fetchers]` 抓取内核｜`markdownify` 正文转 Markdown｜`mcp` 仅 `mode="mcp"` 需要
 · 浏览器渲染需要 Chromium（自备 Chrome 填 `executable_path`，或 `scrapling install`）
 
-### 边界（重要）
+### ⚠️ 免责声明
 
-- 🚫 **不绕付费墙、不抓需登录的受限内容、不下载受版权保护的正文**（商业小说/付费课程等一律只取公开信息）
-- 🚫 **不抓内网/本机地址**（SSRF 防护 100% 拦截，含 `127.0.0.1` / `10.x` / `192.168.x` / `169.254.x` / `file://`）
-- ✅ 适合：公版书（古腾堡/维基文库/ctext）、公开文档与论文、新闻与公开数据、你自己的站点/资料
-- 📌 抓取前会自动检查 `robots.txt`；请在遵守目标站点条款与当地法律的前提下使用
+> 本功能仅用于抓取**公开可访问**的网页与文件，请自行遵守目标站点条款与当地法律。**请勿**用于绕过付费墙、破解版权内容或任何违法用途 —— 使用产生的后果由使用者自行承担。
 
 > 详细原理、测试清单与排错见 [docs/scrapling.md](docs/scrapling.md)。
 
