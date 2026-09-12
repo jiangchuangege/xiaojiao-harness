@@ -6,17 +6,20 @@ CI 用「通过率 < 95% 即失败」当质量闸门。
 ## 怎么跑
 
 ```powershell
-# 全部用例（离线 + 联网，约 1~2 分钟）
+# 全部用例（离线 + 安全 + 联网，约 75 秒）
 python tests/stress/run_all.py
 
-# 只跑离线用例（不联网：配置校验/安全闸门/会话回收/指标/脱敏/JSON 美化/参数校验）
+# 只跑离线 + 安全用例（3 秒，不联网）
 python tests/stress/run_all.py --offline
-$env:XJ_STRESS_OFFLINE=1; python tests/stress/run_all.py      # 等价写法
 
-# 快速模式（跳过并发、熔断自愈等耗时项）
+# 实机验收（需要小焦正在运行）
+python tests/stress/live_check.py
+
+# UI 真渲染检查（需要小焦正在运行 + playwright）
+python tests/stress/ui_check.py --out ui_chat.png
+
+# 快速模式 / 自定义门槛 / 自定义结果文件
 python tests/stress/run_all.py --quick
-
-# 自定义结果文件与门槛
 python tests/stress/run_all.py --json results.json --min-pass-rate 95
 ```
 
@@ -26,6 +29,9 @@ python tests/stress/run_all.py --json results.json --min-pass-rate 95
 
 | 文件 | 组 | 覆盖内容 |
 | --- | --- | --- |
+| `run_all.py` | 编排 | 三套件顺序执行 + 通过率门槛 + 退出码 |
+| `live_check.py` | **实机** | 对**正在运行**的小焦发真实请求（端点/体检/抓取/JSON 展示/SSRF/指标/日志）——发布后的"最后一公里"自检 |
+| `ui_check.py` | **UI 渲染** | 用 Playwright **真开浏览器**：发消息 → 等回答 → 检查 `pre.code`/链接/标题块 → 截图 + 控制台错误 |
 | `test_units.py` | 安全 | SSRF 10 类内网/危险地址 100% 拦截、合法 URL 放行 |
 | | 脱敏 | `sk-…` / `ghp_…` / `AKIA…` / JWT / 键值对，一律打码 |
 | | 展示 | JSON 美化缩进、Markdown 转义修复、超长折叠、非 JSON 原样 |
