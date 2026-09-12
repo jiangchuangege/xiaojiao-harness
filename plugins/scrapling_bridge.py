@@ -1920,6 +1920,9 @@ def _software_from_desc(desc: str) -> str:
             re.compile(r"^(?:In\s+|A\s+)?(?P<n>[A-Z][\w .\-]{2,40}?)\s+(?:is|are)\s+vulnerable\b"),
             # … in OpenSSL before 3.0.7 / through 1.1.1
             re.compile(r"\bin\s+(?P<n>[A-Z][\w .\-]{2,32}?)\s+(?:before|prior to|through)\s+[\dv]"),
+            # MCPHub before 1.0.32 contains an authentication bypass …（真实 NVD 里很常见的句式）
+            re.compile(r"^(?P<n>[A-Z][\w .\-]{2,40}?)\s+(?:before|prior to|through)\s+[\dv][\w.]*\s+"
+                       r"(?:contains|has|is|are|allows|was)\b"),
     ):
         m = pat.search(s)
         if not m:

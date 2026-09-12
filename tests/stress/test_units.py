@@ -282,6 +282,10 @@ def run(res: Results, mod=None) -> Results:
     _guess2 = mod._software_from_desc(
         "The Tutor LMS – eLearning and online course solution plugin for WordPress is vulnerable to SQL Injection.")
     res.check("漏洞聚合", "描述里有破折号说明时只取产品名", _guess2 == "Tutor LMS（WordPress）", _guess2)
+    _guess3 = mod._software_from_desc(
+        "MCPHub before 1.0.32 contains an authentication bypass vulnerability in its embedded OAuth server.")
+    res.check("漏洞聚合", "“X before <版本> contains …” 句式也能摘到（真实 NVD 常见）",
+              _guess3 == "MCPHub", _guess3)
     res.check("漏洞聚合", "描述里没有软件名就不硬编（返回空）",
               mod._software_from_desc("An improper check in some component allows an attacker to cause a crash.") == "",
               mod._software_from_desc("An improper check in some component allows an attacker to cause a crash."))
