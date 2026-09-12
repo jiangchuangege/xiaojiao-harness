@@ -2,11 +2,13 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。所有重要改动都会记录在这。
 
-## [v1.1.0] - 当前
+## [v1.2.0] - 2026-09-12
 
-**🕷️ 网页抓取能力 + 🧠 小脑成为必需项 + 🛠️ 安装器分级与体验修复。**
+**🛠️ 稳定化落地版**：可观测（指标 / 日志）、可回收（会话）、可并发（批量）、可验证（压力测试 + CI），
+并把文档补成「能照着做」的形态。**语义化版本说明**：全部为兼容性新增与内部整改，**无破坏性变更**。
 
 ### Added
+
 - 📐 **架构说明 `ARCHITECTURE.md`**（新增）：设计目标 → 系统总览图 → 进程与端口 → 模块职责表 →
   **一次对话的完整生命周期（时序图）** → 插件机制与契约 → 大脑/小脑协作 → 数据与状态 →
   质量与安全 → **扩展点（改哪里）** → 已知限制（诚实清单）；含 5 张 Mermaid 原理图。
@@ -27,6 +29,21 @@
 - 📊 **指标与观测（MetricsCollector）**：每次工具调用自动记录 `calls / success / fail / total_latency / avg_latency / max_latency / circuit_breaks / last_error`，三种取法：`GET /metrics`（Prometheus 文本，可直接抓取）、`GET /api/scrapling/metrics`（JSON，含活跃会话明细与熔断状态）、`logs/scrapling_metrics.json`（落盘）。安全拦截（SSRF/robots）不计失败；错误信息**脱敏后**入库。实测 **17/17 通过**，`/metrics` 线上返回 200。
 - 🔒 **`sanitize()` 脱敏补强**：原来只认 `key=value` 形式，**裸凭据会原样泄露**（指标自测发现 `sk-xxx` 未被抹掉）。现在额外覆盖 `sk-…` / `ghp_…` / `AKIA…` / `xox…` / JWT / `password=`，日志与指标一律打码。
 - 🧹 **会话自动回收（SessionManager）**：`open_session` 每开一次就真起一个浏览器，忘了 `close_session` 会一直占内存。现在三条规则任一命中即自动回收并真关闭：**TTL**（`session_ttl`，默认 30 分钟）/ **空闲**（`session_idle`，默认 5 分钟）/ **上限**（`max_sessions`，默认 20，超出踢最久未用 LRU）；后台线程每 60 秒巡检；配置非法（0/负数/非数字）回退默认并中文告警。实测 **10/10 通过**（LRU、TTL、空闲、真实会话回收、用户主动关闭从回收表移除）。
+
+### Changed
+
+- 🧹 **消除"静默吞异常"（阶段 2 代码质量）**：静态审计发现 `except: pass` 共 **103 处**、裸 `except:` 19 处 ——
+  出错时无声无息，线上完全无法排障。用 AST 工具批量改为「`LOG.debug("忽略异常(文件:行): 异常")`」，
+  并给裸 `except:` 加上 `Exception` 限定（不再吞掉 `KeyboardInterrupt`）。
+  审计结果：**静默吞异常 103 → 6、裸 except 19 → 14、疑似密钥 0**（剩余均在本地未入库的自用插件里）。
+- 🧹 **清理死代码**：插件加载器里重复的 `elif man.get("tools")` 分支（永远不可达）已删除。
+- 🧹 **行尾一致性**：仓库里 CRLF/LF 混存曾导致"整文件被改"的巨型 diff（`xiaojiao_app.py` 7232 行噪音，真实改动仅 73 行）——
+  已按各文件在 HEAD 中的原始约定对齐并强制重新入库，现在 diff 干净可评审。
+
+## [v1.1.0] - 2026-09-12
+
+### Added
+
 - 🕷️ **内置 Scrapling**（`plugins/scrapling_bridge.py` 桥接插件）：小焦从此**想抓啥抓啥**——网页 / 动态页 / 接口 JSON / 批量列表 / 登录态页面 / 下载任意文件。**Scrapling 原生 13 个工具 1:1 全部暴露（工具名与官方一致）**，另加 3 个小焦增强（`get` 友好别名 / `scrape_with_selector` 自适应选择器 / `download` 任意文件下载），并保留 `browser_session` 聚合入口 → 对外共 **17 个工具**：
   - 原生 13：`make_request` / `bulk_get` / `fetch` / `bulk_fetch` / `stealthy_fetch` / `bulk_stealthy_fetch` / `open_session` / `open_request_session` / `close_session` / `list_sessions` / `session_fetch` / `session_make_request` / `screenshot`
   - 小焦增强 3：`get`（`make_request` 的中文友好别名）/ `scrape_with_selector`（自适应选择器，防站点改版）/ 🆕 `download`（**下载任意文件** PDF/EPUB/ZIP/图片/音视频…，Scrapling 原生没有这个能力）
@@ -41,13 +58,7 @@
 - 📚 文档：README 增加 **🛠️ 一键安装 · 检测分级** 章节（含三张图：**安装必需/可选分级图**、**小脑路径三级解析图**、**v1.1.0 改动全景图**＋原则落地对照表），同样位于**致谢之前**；`docs/architecture.md` 增加插件小节。
 
 ### Changed
-- 🧹 **消除"静默吞异常"（阶段 2 代码质量）**：静态审计发现 `except: pass` 共 **103 处**、裸 `except:` 19 处 ——
-  出错时无声无息，线上完全无法排障。用 AST 工具批量改为「`LOG.debug("忽略异常(文件:行): 异常")`」，
-  并给裸 `except:` 加上 `Exception` 限定（不再吞掉 `KeyboardInterrupt`）。
-  审计结果：**静默吞异常 103 → 6、裸 except 19 → 14、疑似密钥 0**（剩余均在本地未入库的自用插件里）。
-- 🧹 **清理死代码**：插件加载器里重复的 `elif man.get("tools")` 分支（永远不可达）已删除。
-- 🧹 **行尾一致性**：仓库里 CRLF/LF 混存曾导致"整文件被改"的巨型 diff（`xiaojiao_app.py` 7232 行噪音，真实改动仅 73 行）——
-  已按各文件在 HEAD 中的原始约定对齐并强制重新入库，现在 diff 干净可评审。
+
 - 🧠 **小脑改为必需项**（项目核心）：一键安装会检测小脑并明确提示；**路径不写死**（环境变量 → 配置 `brain.xiaojiao.model_path` → 项目目录探测 → **全盘自动探测**，模型与词表可跨目录配对、体积优先），支持换任意自训模型当小脑。
 - 🛠️ **一键安装检测分级**：必需（Python 依赖 / 聊天大脑 llama.cpp / 大脑模型 / llama-swap 秒级切换 / 小脑）与可选（ComfyUI 视频大脑 / 视频节点 / Wan 视频模型 / Node.js / 猫娘 / 配音 / 封面 / 音乐）分开报告。
   - ComfyUI、视频节点、Wan 视频模型、Node.js 由「必需」降级为「可选」，不再阻塞启动。
@@ -56,6 +67,7 @@
 - 🖥️ **抓取结果展示优化**：正文直显（不再被小模型"总结"吃掉）；工具轨迹压成一行摘要（不再刷原始 JSON）；Setext 标题自动转 ATX。
 
 ### Fixed
+
 - 🧪 **全工具极限压力自检修复批次**（17 个工具 × 正常/空参/非法/必失败/连续 + 8 项对抗 + 性能基准，共 4 轮**真实调用**）：
   - 🐞 **`download` 把 404 错误页当文件保存**：目标 404 时插件仍报"已下载（类型 text/html）"并把错误页存成 `.pdf`。现在只有 2xx 才落盘；404/410 直接报"文件不存在，未保存任何文件"；只有 401/403/406/429（WAF 拦 UA）才回退浏览器指纹通道；0 字节、扩展名与内容类型不符也会明确警告。
   - 🐞 **批量 `urls` 传字符串被逐字符拆开**：`"https://a.com"` 被当成 **14 个单字符"网址"**，静默返回 14 条无意义错误。新增 `_norm_urls()`：字符串当 1 个网址、空列表报"urls 为空"、其它类型明确报错。
@@ -83,7 +95,6 @@
   - `plugins/scrapling_bridge.py`：自备 Chrome 改为项目内 + 家目录 + 各盘关键词目录探测。
   - `start_xiaojiao.py`：猫娘（Steam 版按盘扫 `steamapps\common\n.e.k.o` + `discover_neko()` 兜底）、llama-swap 全部改为自动探测。
   - `.gitignore`：补 `books/`、`downloads/`、`test.db` 与个人本地插件，避免抓取产物/自用插件误入库。
-
 ---
 
 ## [v1.0.0] - 首次正式发布
