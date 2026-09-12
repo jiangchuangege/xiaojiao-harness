@@ -143,9 +143,19 @@ def run(res: Results, mod=None, quick: bool = False) -> Results:
         res.check("漏洞聚合", "行内字段齐全（序号/编号/等级/评分/软件/时间/摘要）",
                   len(_cells) == 7 and "CVE-" in _cells[1] and _cells[2] in ("HIGH", "CRITICAL"),
                   str(_cells[:4]))
-        _named = [r for r in _rows[2:] if "未收录" not in r]
-        res.check("漏洞聚合", "受影响软件不是 n/a（至少 3/5 行有软件名）",
-                  "n/a" not in _md and len(_named) >= 3, "有名字的行=%d/5" % len(_named))
+        # 受影响软件列：NVD 有时**确实**没收录产品配置（CVE 记录里没有 CPE），这时小焦会
+        # 如实写「(NVD 未收录产品配置)」。所以不能按"必须有 3 个真名"判（那是**数据**问题，
+        # 不是代码问题，会随当天 CVE 组成飘）；正确的不变量是：**每行都有交代、绝不出现裸 n/a**。
+        _softs = []
+        for _r in _rows[2:]:
+            _cs = [x.strip() for x in _r.split("|")[1:-1]]
+            if len(_cs) >= 7:
+                _softs.append(_cs[4])
+        _real = [s for s in _softs if s and "未收录" not in s]
+        res.check("漏洞聚合", "受影响软件每行都有交代（真名或「未收录」标注），绝不裸 n/a",
+                  len(_softs) == 5 and all(s and s != "n/a" for s in _softs), str(_softs)[:90])
+        res.check("漏洞聚合", "至少 1 行拿到真实软件名（NVD 全未收录时才可能为 0）",
+                  len(_real) >= 1, "有名字的行=%d/5" % len(_real))
         res.check("漏洞聚合", "等级只在要求范围内（HIGH 及以上）",
                   all(("| HIGH |" in r) or ("| CRITICAL |" in r) for r in _rows[2:]), "")
         # 参数夹取与等级放宽在真实接口下也要成立（NVD 限流时跳过，不算失败）

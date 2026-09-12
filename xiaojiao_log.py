@@ -109,6 +109,13 @@ def get_logger(name: str = "xiaojiao") -> logging.Logger:
     setup()
     if name in ("__main__", ""):
         name = "xiaojiao"
-    elif not name.startswith("xiaojiao"):
-        name = "xiaojiao." + name.split(".")[-1]
+    elif not name.startswith("xiaojiao."):
+        if name.startswith("xiaojiao"):
+            # **真实缺陷**：主程序模块名是 `xiaojiao_app`，它以 "xiaojiao" 开头却**不在
+            # `xiaojiao` 这个 logger 的层级里**，于是它的记录全落到真·root logger，
+            # 只被 logging.lastResort 打到控制台（INFO 静默丢弃、文件里一条都没有）。
+            # 结果：小焦自己的日志（含"大脑调用失败"这种关键告警）从来没进 logs/xiaojiao.log。
+            name = "xiaojiao." + name
+        else:
+            name = "xiaojiao." + name.split(".")[-1]
     return logging.getLogger(name)

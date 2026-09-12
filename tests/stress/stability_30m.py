@@ -68,6 +68,8 @@ APP_ENDPOINTS = ["/metrics", "/api/scrapling/metrics", "/api/sessions", "/api/se
 MEM_LIMIT_PCT = 30.0          # 相对涨幅红线
 MEM_LIMIT_ABS_MB = 10.0       # **绝对增量地板**：涨幅再大，只要没涨过这个量就不算泄漏
 SAMPLE_EVERY = 30.0
+# 大脑没应答时整机回的**兜底模板**特征（命中即判这次对话失败，不算 PASS）
+LLM_FALLBACK_MARKS = ("大脑没有应答", "模型调用出错", "需要执行工具操作", "大模型未在线")
 
 
 # ======================================================================
@@ -260,6 +262,7 @@ class State:
         self.peak_sessions = 0
         self.app_sessions_peak = 0
         self.test_sessions = []       # 测试自己建的会话 id（收尾删掉，不留垃圾）
+        self.llm_fallback = []        # 大脑没应答、只回了兜底模板的对话（真实缺陷：这曾经算"成功"）
         self.base_chrome = 0
         self.judge_steady = False
         self.aborted = False
@@ -322,14 +325,23 @@ def sampler(st: State, inst, stop, counter, base):
 # A 层：整个小焦（端到端）
 # ======================================================================
 def app_chat(st: State, base: str, prompt: str, timeout=300, track=True):
-    """打一次真实对话（走完整链路）；返回 (是否成功, 答案, dict)。"""
+    """打一次真实对话（走完整链路）；返回 (是否成功, 答案, dict)。
+
+    **兜底模板不算成功**：大脑（本地/API）没应答时，整机会回一句固定的
+    「模型调用出错（可能是连接超时/限流）…」。以前只判"HTTP 200 + 非空"，
+    于是大脑全挂（如 API Key 失效 401）也能跑出 PASS —— 这是假通过，必须判失败。
+    """
     code, el, d, err = http("POST", base.rstrip("/") + "/api/chat", {"message": prompt}, timeout)
     st.http_codes[code] = st.http_codes.get(code, 0) + 1
     if track:
         st.chat_lat.append(round(el, 2))
     ans = str(d.get("answer") or "")
-    ok = (code == 200 and bool(ans.strip()) and not err)
-    if not ok:
+    hit = next((m for m in LLM_FALLBACK_MARKS if m in ans), "")
+    ok = (code == 200 and bool(ans.strip()) and not err and not hit)
+    if hit:
+        st.llm_fallback.append({"提问": prompt, "答案": ans[:200].replace("\n", " ")})
+        st.err("POST /api/chat", "大脑未应答，只回了兜底模板（命中「%s」）：%s" % (hit, ans[:90].replace("\n", " ")))
+    elif not ok:
         st.err("POST /api/chat", "HTTP %s %s %s" % (code, (err or "")[:80], (ans or "")[:60]))
     return ok, ans, d
 
@@ -681,6 +693,10 @@ def main() -> int:
     if http_err:
         verdict = "SUSPECT" if verdict == "PASS" else verdict
         reasons.append("出现 %d 个非 200 的 HTTP 响应" % http_err)
+    if st.llm_fallback:
+        verdict = "FAIL"
+        reasons.append("有 %d 次对话大脑没应答、只回了兜底模板（大脑/API 不可用，先修它，别当整机没问题）"
+                       % len(st.llm_fallback))
     if do_plugin and counter.counts["熔断触发"] == 0:
         verdict = "SUSPECT" if verdict == "PASS" else verdict
         reasons.append("插件熔断未触发（失败可能没打满阈值）")
@@ -709,6 +725,9 @@ def main() -> int:
           "| 对话延迟 P95 | **%.2fs** | — | — |" % c95,
           "| HTTP 状态分布 | %s | 全部 200 | %s |"
           % (st.http_codes or "无", "✅" if http_err == 0 else "⚠️ %d 个非 200" % http_err),
+          "| **大脑应答真实性** | 兜底模板 **%d 次** / 共 %d 次对话 | 必须 0 次 | %s |"
+          % (len(st.llm_fallback), len(st.chat_lat),
+             "✅ 全部是真回答" if not st.llm_fallback else "❌ 大脑没应答，判定失败"),
           "| **小焦进程内存涨幅** | 涨幅 **%+.1f%%** ｜ 绝对增量 **%+.3f MB** | 增量>10MB 且 涨幅>30%% 才判泄漏 | %s |"
           % (app_ss, st.app_peak_ss - st.app_base_ss if st.app_base_ss else 0.0,
              "✅ 正常" if not any(r[5] for r in mem_rows if r[0] == "小焦进程工作集") else "❌ 疑似泄漏"),
@@ -756,6 +775,12 @@ def main() -> int:
         md.append("无异常（整机与插件真实调用全部有结果）")
     if counter.samples:
         md += ["", "## 七、关键日志留证", "", "```"] + counter.samples + ["```"]
+    if st.llm_fallback:
+        md += ["", "## 七之二、大脑兜底模板留证（判定失败的直接证据）", "",
+               "| 提问 | 整机实际回的兜底模板 |", "|---|---|"]
+        md += ["| %s | %s |" % (r["提问"].replace("|", "\\|")[:60],
+                                r["答案"].replace("|", "\\|")[:160]) for r in st.llm_fallback[:10]]
+        md += ["", "> 修法：先让小焦的大脑真正能用（本地大模型起来 / API Key 有效），再谈整机稳定性。", ""]
     if st.abort_tb:
         md += ["", "## 八、中止原因与报错原文", "", "```", st.abort_reason, st.abort_tb, "```"]
     md += ["", "---", "",
@@ -768,6 +793,7 @@ def main() -> int:
                    "chat_lat_p50": c50, "chat_lat_p95": c95, "chat_calls": len(st.chat_lat),
                    "plugin_lat_p50": p50, "plugin_lat_p95": p95, "plugin_ok_rate": ok_rate,
                    "http_codes": st.http_codes, "app_rss_growth_steady_pct": app_ss,
+                   "llm_fallback_count": len(st.llm_fallback), "llm_fallback": st.llm_fallback[:20],
                    "app_peak_mb": st.app_peak, "app_sessions_peak": st.app_sessions_peak,
                    "heap_growth_steady_pct": heap_ss, "rss_growth_steady_pct": rss_ss,
                    "heap_growth_total_pct": heap_all, "rss_growth_total_pct": rss_all,
@@ -776,8 +802,8 @@ def main() -> int:
 
     print("\n" + "=" * 76)
     print("  判定：%s%s" % (verdict, ("（" + "；".join(reasons) + "）") if reasons else ""))
-    print("  整机：对话 %d 次 ｜ P50 %.2fs / P95 %.2fs ｜ 小焦内存 %s ｜ HTTP %s"
-          % (len(st.chat_lat), c50, c95,
+    print("  整机：对话 %d 次（大脑兜底模板 %d 次）｜ P50 %.2fs / P95 %.2fs ｜ 小焦内存 %s ｜ HTTP %s"
+          % (len(st.chat_lat), len(st.llm_fallback), c50, c95,
              ("%+.1f%%（增量 %+.3f MB，峰值 %.1fMB）" % (app_ss, st.app_peak_ss - st.app_base_ss, st.app_peak)
               if st.app_base_ss else "未采样（未找到小焦进程）"), st.http_codes))
     print("  插件：%d 次 ｜ P50 %.2fs / P95 %.2fs ｜ 熔断 %d 次 ｜ 退避 %d 次 ｜ 会话峰值 %s ｜ 异常 %d 条"

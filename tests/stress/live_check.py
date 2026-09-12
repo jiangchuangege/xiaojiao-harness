@@ -153,9 +153,18 @@ def main() -> int:
               str(cells[:4]))
         check("等级为 HIGH 或 CRITICAL",
               all(("| HIGH |" in ln) or ("| CRITICAL |" in ln) for ln in rows[2:]), "")
-        named = [ln for ln in rows[2:] if "未收录" not in ln]
-        check("受影响软件不是 n/a（至少 3/5 行有软件名）", "n/a" not in a and len(named) >= 3,
-              "有名字的行=%d/5" % len(named))
+        # 判"每行都有交代"而不是"必须有 3 个真名"：NVD 偶尔确实没收录产品配置（无 CPE），
+        # 那时页面写「(NVD 未收录产品配置)」是**正确行为**；按真名数量判会随当天 CVE 组成飘。
+        softs = []
+        for ln in rows[2:]:
+            cs = [x.strip() for x in ln.split("|")[1:-1]]
+            if len(cs) >= 7:
+                softs.append(cs[4])
+        real = [s for s in softs if s and "未收录" not in s]
+        check("受影响软件每行都有交代（真名或「未收录」标注），不出现裸 n/a",
+              len(softs) == 5 and all(s and s != "n/a" for s in softs), str(softs)[:70])
+        check("至少 1 行拿到真实软件名（NVD 全未收录时才可能为 0）", len(real) >= 1,
+              "有名字的行=%d/5" % len(real))
     else:
         check("用例 2 可执行", False, "HTTP %s" % code)
 

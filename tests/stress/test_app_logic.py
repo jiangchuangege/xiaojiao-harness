@@ -88,6 +88,16 @@ def run(res: Results) -> Results:
     res.check("提示词", "铁律禁止功能字当检索词", "禁止把" in sp and "功能字" in sp, "")
     res.check("提示词", "铁律要求漏洞优先 collect_vulnerabilities", "collect_vulnerabilities" in sp, "")
 
+    # ---------- 5b. 铁律只能有一份（真实缺陷：切工具开关会把人设越存越脏） ----------
+    dirty = "你是小焦。" + app._SEARCH_RULES * 5           # 模拟老版本攒出来的脏人设
+    res.check("提示词", "脏人设能被剥成纯人设",
+              app.strip_search_rules(dirty) == "你是小焦。", app.strip_search_rules(dirty)[:40])
+    res.check("提示词", "合成后的人设铁律只有一份",
+              app.compose_system_prompt(dirty).count("[检索铁律]") == 1,
+              "份数=%d" % app.compose_system_prompt(dirty).count("[检索铁律]"))
+    res.check("提示词", "剥铁律是幂等的（反复调用不再累加）",
+              app.strip_search_rules(app.strip_search_rules(dirty)) == "你是小焦。", "")
+
     # ---------- 6. 工具注册（插件新工具能被主程序看到并调用） ----------
     try:
         app._build_tools()
@@ -165,5 +175,46 @@ def run(res: Results) -> Results:
               app._strip_think("<think>想一下</think>你好") == "你好"
               and app._strip_think("</think>你好") == "你好"
               and app._strip_think("<thinking>\n\n</thinking>\n\n正常回答") == "正常回答", "")
+
+    # ---------- 10. 大脑失败必须给出**真实原因** ----------    # 真实缺陷：非 200 直接 return None，401/403 全被静默吞掉，用户只看到
+    # 「模型调用出错（可能是连接超时/限流）」——查都没法查。用户实测就撞上了这个。
+    app._LAST_LLM_ERROR = ""
+    res.check("大脑错误", "没失败过时不乱加提示", app.llm_error_suffix() == "", app.llm_error_suffix())
+    app._note_llm_error("chat", 401, '{"error":{"message":"Invalid token (request id: 20260912141428abc)","type":"AgnesAI_error"}}')
+    _suf = app.llm_error_suffix()
+    res.check("大脑错误", "401 带出状态码 + 中文解释 + 服务端原话",
+              "401" in _suf and "API Key 无效" in _suf and "Invalid token" in _suf, _suf[:70])
+    res.check("大脑错误", "原始 JSON 被收拾成人话（不把 {\"error\":…} 糊给用户）",
+              "{" not in _suf and "request id" not in _suf, _suf[:70])
+    res.check("大脑错误", "顺带告诉用户该怎么办", "怎么" in _suf, "")
+    app._note_llm_error("chat", None, "ConnectTimeout: 连接超时")
+    res.check("大脑错误", "网络异常也如实带出异常类型", "ConnectTimeout" in app.llm_error_suffix(), "")
+    # 假密钥**运行时拼**出来：别在仓库里留一个形似真密钥的字符串（会被自己的密钥扫描器拦下）
+    _fake_key = "sk-" + "a" * 24
+    app._note_llm_error("chat", 401, "Authorization: Bearer " + _fake_key)
+    res.check("大脑错误", "错误信息里的密钥一律打码",
+              _fake_key not in app.llm_error_suffix() and "***" in app.llm_error_suffix(), "")
+    res.check("大脑错误", "给用户的提示里带「真实原因」这段",
+              "真实原因" in app.llm_error_suffix(), "")
+    app._LAST_LLM_ERROR = ""
+
+    # ---------- 11. 选"本地模型"必须真能用（真实缺陷：条目里 engine/model 配错，选了照样不通） ----------
+    res.check("本地大脑", "本机地址被识别为本地（不需要 Key）",
+              app._is_local_base("http://127.0.0.1:9292/v1") and app._is_local_base("http://localhost:8080/v1")
+              and not app._is_local_base("https://apihub.agnes-ai.com/v1"), "")
+    _m, _ids = app._local_served_model("http://127.0.0.1:1/v1", "agnes-2.5-flash")
+    res.check("本地大脑", "本地服务问不到时按原样返回，不误改配置", _m == "agnes-2.5-flash" and _ids == [], "")
+
+    # ---------- 12. 问"含漏洞的 IP/资产"必须正面回答，不能只会复读同一张 NVD 表 ----------
+    # 真实缺陷：只判"漏洞意图"、不判"要的是资产清单"，于是不管怎么问都是同一张表，
+    # 用户看到的就是"他一直发这个模板，一点没变"。
+    res.check("资产问答", "「含这些漏洞的 IP 地址并列表」被识别为资产测绘诉求",
+              app._asks_asset_list("帮我抓取现在网络上的所有包含这几个漏洞的IP地址并列表对应上"), "")
+    res.check("资产问答", "「这些漏洞影响哪些机器」也算资产诉求",
+              app._asks_asset_list("这些漏洞影响哪些机器"), "")
+    res.check("资产问答", "普通漏洞问句不误判",
+              not app._asks_asset_list("抓取最近 7 天的高危漏洞"), "")
+    res.check("资产问答", "zip/clip 这类词不会被当成 ip",
+              not app._asks_asset_list("帮我把这个 zip 包解压一下"), "")
 
     return res

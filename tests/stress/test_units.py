@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import threading
@@ -318,5 +319,27 @@ def run(res: Results, mod=None) -> Results:
                                     "session_id": "x"}, cap=30)
     res.check("兼容入口", "action=fetch 同样过 SSRF 闸门",
               ("SSRF" in _e_bs4) or ("禁止访问" in _e_bs4), _e_bs4[:70])
+
+    # ---------- 12. 日志必须真的落盘（真实缺陷：主程序日志从未进过 logs/xiaojiao.log） ----------
+    # `get_logger(__name__)` 在主程序里拿到的是 "xiaojiao_app"：它以 "xiaojiao" 开头，
+    # 却**不在** `xiaojiao` 这个 logger 的层级里 → 记录落到真·root，只被 lastResort 打到
+    # 控制台（INFO 静默丢弃、文件里一条没有），"大脑调用失败"这种关键告警也一起丢了。
+    from xiaojiao_log import get_logger
+    _lg_app = get_logger("xiaojiao_app")
+    _lg_plg = get_logger("scrapling_bridge")
+    res.check("日志", "主程序 logger 挂在 xiaojiao.* 下（不在就永远不落盘）",
+              _lg_app.name.startswith("xiaojiao."), _lg_app.name)
+    res.check("日志", "插件 logger 同样挂在 xiaojiao.* 下",
+              _lg_plg.name.startswith("xiaojiao."), _lg_plg.name)
+    _seen = []
+    _h = logging.Handler()
+    _h.emit = lambda rec: _seen.append(rec.getMessage())
+    _lg_app.addHandler(_h)
+    try:
+        _lg_app.info("单元测试：这条必须能被 handler 收到")
+    finally:
+        _lg_app.removeHandler(_h)
+    res.check("日志", "主程序写 INFO 能被 xiaojiao 日志器收到（以前被静默丢弃）",
+              any("单元测试" in m for m in _seen), str(_seen[:1]))
 
     return res

@@ -18,6 +18,9 @@ python tests/stress/live_check.py
 # UI 真渲染检查（需要小焦正在运行 + playwright）
 python tests/stress/ui_check.py --out ui_chat.png
 
+# 30 分钟极速压力测试（整机端到端 + 插件直连，需小焦正在运行；自己在终端跑）
+python tests/stress/stability_30m.py --minutes 30
+
 # 快速模式 / 自定义门槛 / 自定义结果文件
 python tests/stress/run_all.py --quick
 python tests/stress/run_all.py --json results.json --min-pass-rate 95
@@ -44,6 +47,39 @@ python tests/stress/run_all.py --json results.json --min-pass-rate 95
 | | 批量 | 去重、部分失败隔离、结果保序、字符串规范化、空列表报错 |
 | | 会话 | `session_fetch` / `session_make_request` / `screenshot` / `list_sessions` + 回收器登记 |
 | | 对抗 | 重定向型 SSRF、参数注入、页面内容注入、10000 字符 URL、特殊字符、超时纪律、5 并发不串数据、熔断触发与 30 秒自愈 |
+| `stability_30m.py` | **长稳** | 30 分钟极速压测，**真实执行、禁止模拟**：整机对话/接口 + 插件工具直连，见下节 |
+
+## 30 分钟极速压力测试（`stability_30m.py`）
+
+用 30 分钟的高密度真实压力，等效替代原 24 小时长跑：覆盖**整机端到端**（默认）与**插件直连**两层。
+
+```powershell
+python tests/stress/stability_30m.py                      # 整机 + 插件，30 分钟
+python tests/stress/stability_30m.py --target app         # 只压整机（不动插件）
+python tests/stress/stability_30m.py --minutes 1 --interval 4 --chat-every 30   # 1 分钟自检
+```
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--target` | `both` | `app` 整机 / `plugin` 插件 / `both` 两者 |
+| `--base` | `http://127.0.0.1:5000` | 小焦地址 |
+| `--minutes` | `30` | 时长 |
+| `--interval` | `10` | 每轮间隔（秒）—— 密度比 24h 方案高 |
+| `--chat-every` | `60` | 每多少秒发一次真实对话 |
+| `--mem-abs-mb` | `10` | 内存判定的绝对增量地板 |
+| `--out` / `--json` | `logs/stability_30m.md` / `.json` | 报告与机读明细 |
+
+**内存泄漏判定（两条同时成立才判泄漏）**：
+
+1. 绝对增量 > **10 MB**（`--mem-abs-mb`）
+2. 相对涨幅 > **30%**
+
+只有「涨得够多」且「涨得够快」才算泄漏 —— 极低基数（如 0.19MB → 0.20MB）不会被百分比放大而误判。
+采样每 30 秒一次，对象为本进程堆/工作集 + 小焦进程工作集；出现真泄漏立即中止并打印原始数据。
+
+**其他自动核对**：HTTP 非 2xx、会话回收、熔断触发 + 30 秒自愈、NVD 退避重试、工具异常。
+测试自建会话，结束（含异常退出）后全部删除，不污染你自己的会话。
+退出码：`0` = PASS，`1` = FAIL。
 
 ## CI
 

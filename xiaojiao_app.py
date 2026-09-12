@@ -32,6 +32,21 @@ LOG = get_logger(__name__)
 CONTROL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json")
 
 
+def strip_search_rules(role):
+    """把人设里被写进去的「检索铁律」剥掉（只留纯人设）。
+
+    **真实缺陷防复发**：`/api/tools_toggle` 与 `_save_control` 曾经把**合成后**的
+    SYSTEM_PROMPT 当人设存回控制文件，于是每切一次工具开关就多存一份铁律 ——
+    线上控制文件里累积到 **11 份**，每轮请求都白背 3.5KB 提示词。
+    这里一次剥干净，且对"界面回传的合成人设"同样有效（幂等）。
+    """
+    s = role or ""
+    cuts = [i for i in (s.find("\n[检索铁律]"), s.find("[检索铁律]")) if i != -1]
+    if cuts:
+        s = s[:min(cuts)]
+    return s.strip()
+
+
 def _load_control():
     c = {"model_name": "xiaojiao1.0-4B", "web_port": 5000,
          "brain": {"engine": "auto",
@@ -52,6 +67,9 @@ def _load_control():
             break
         except Exception as e:
             LOG.debug("忽略异常(%s:%d): %s", __file__, 44, e)
+    # 自愈：老版本把人设写脏了（铁律被反复拼进去）→ 读进来就剥干净，内存里永远是纯人设
+    if isinstance(c.get("role"), str):
+        c["role"] = strip_search_rules(c["role"])
     return c
 
 CONTROL = _load_control()
@@ -83,8 +101,9 @@ def compose_system_prompt(role):
 
     为什么单独立个函数：`reload_control()`（切人设/改配置后调用）原来直接
     `SYSTEM_PROMPT = CONTROL.get("role","")`，把铁律丢了 —— 缺陷会悄悄复发。
+    铁律永远只加**一份**：先剥掉人设里历史遗留的，再拼。
     """
-    return (role or "") + _SEARCH_RULES
+    return strip_search_rules(role) + _SEARCH_RULES
 
 
 SYSTEM_PROMPT = compose_system_prompt(CONTROL.get("role", ""))   # ← 人设/类型，改 control 文件即换模型人格
@@ -975,8 +994,74 @@ def append_msg(role, content):
 
 
 # ================== 大脑：LLM 调用 ==================
+# 最近一次大脑调用失败的真实原因（给用户看 + 落 WARNING 日志）。空串 = 没失败过。
+# **真实缺陷**：原来非 200 直接 `return None`，连一行日志都没有 —— 用户只看到
+# 「模型调用出错（可能是连接超时/限流）」这种猜谜提示；实测 API Key 失效(401)
+# 也照样这么糊过去，查都没法查。现在真实状态码 + 服务端原话一定带出来。
+_LAST_LLM_ERROR = ""
+_LLM_ERR_LOGGED = set()
+
+
+def _scrub_secret(s):
+    """错误信息里可能回显密钥 → 一律打码后再使用。"""
+    return re.sub(r"(sk-|ghp_|Bearer\s+)[A-Za-z0-9\-_]{6,}", r"\1***", s or "")
+
+
+def _llm_error_text(body):
+    """把服务端返回的原始错误**收拾成人话**。
+
+    真实缺陷：原来直接把 `{"error":{"code":"","message":"Invalid token (request id:
+    20260912…)","type":"AgnesAI_error"}}` 整串糊到聊天里 —— 用户看到的就是"乱码/格式乱了"。
+    现在只取一句 message，去掉 request id 这种噪音，并限长。
+    """
+    s = _scrub_secret(str(body or "")).strip()
+    if not s:
+        return ""
+    try:
+        j = json.loads(s)
+        if isinstance(j, dict):
+            err = j.get("error")
+            if isinstance(err, dict):
+                s = str(err.get("message") or err.get("code") or "")
+            elif err:
+                s = str(err)
+            elif j.get("message"):
+                s = str(j["message"])
+    except Exception:  # noqa: silent-ok — 不是 JSON 就按纯文本处理
+        pass
+    s = re.sub(r"\s*\((?:request id|request_id)[^)]*\)", "", s)   # 去掉 request id 噪音
+    s = re.sub(r"\s+", " ", s).strip(" {}[]\"")
+    return s[:80]
+
+
+def _note_llm_error(tag, status=None, body=""):
+    """记下**真实**失败原因：状态码 + 中文解释 + 服务端原话（打码后、收拾成人话）。"""
+    global _LAST_LLM_ERROR
+    msg = _llm_error_text(body)
+    if status is not None:
+        hint = {401: "API Key 无效或已过期", 402: "额度不足", 403: "无权访问该模型",
+                404: "接口地址或模型名不对", 422: "请求参数不被接受", 429: "触发限流",
+                500: "服务端内部错误", 502: "网关错误", 503: "服务暂不可用"}.get(int(status), "")
+        _LAST_LLM_ERROR = "HTTP %s%s%s" % (int(status), (" · %s" % hint) if hint else "",
+                                           ("（服务端说：%s）" % msg) if msg else "")
+    else:
+        _LAST_LLM_ERROR = msg or "未知错误（无响应）"
+    if _LAST_LLM_ERROR not in _LLM_ERR_LOGGED:
+        _LLM_ERR_LOGGED.add(_LAST_LLM_ERROR)
+        LOG.warning("大脑调用失败（%s）：HTTP %s ｜ %s ｜ 接口 %s ｜ 模型 %s",
+                    tag, status if status is not None else "-", _LAST_LLM_ERROR, LLM_BASE, LLM_MODEL)
+
+
+def llm_error_suffix():
+    """把真实原因 + 一句"该怎么办"拼到给用户看的提示后面（没失败过就什么都不加）。"""
+    if not _LAST_LLM_ERROR:
+        return ""
+    tip = "\n👉 怎么办：设置 → 大脑 里换一个可用的 API Key，或直接切「本地大脑」（本地模型不需要 Key）。"
+    return "\n\n🔎 真实原因：%s%s" % (_LAST_LLM_ERROR, tip)
+
+
 def llm_chat(messages):
-    """调用 OpenAI 兼容 /chat/completions。失败返回 None。"""
+    """调用 OpenAI 兼容 /chat/completions。失败返回 None（原因记进 _LAST_LLM_ERROR）。"""
     url = LLM_BASE.rstrip("/") + "/chat/completions"
     headers = {"Content-Type": "application/json"}
     if LLM_KEY:
@@ -987,8 +1072,9 @@ def llm_chat(messages):
         r = requests.post(url, headers=headers, json=payload, timeout=90)
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"].strip()
+        _note_llm_error("chat", r.status_code, r.text)
     except Exception as e:
-        LOG.debug("忽略异常(%s:%d): %s", __file__, 615, e)
+        _note_llm_error("chat", None, "%s: %s" % (type(e).__name__, e))
     return None
 
 
@@ -1345,13 +1431,15 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
                 _t.sleep(2)
                 r = requests.post(url, headers=headers, json=payload, timeout=120)
                 if r.status_code != 200:
+                    _note_llm_error("chat+tools", r.status_code, r.text)   # 真实原因必须留痕
                     return None, tool_trace
             msg = r.json()["choices"][0]["message"]
             try:
                 _record_usage(r.json().get("usage"), LLM_MODEL)
             except Exception as e:
                 LOG.debug("忽略异常(%s:%d): %s", __file__, 958, e)
-        except Exception:
+        except Exception as e:
+            _note_llm_error("chat+tools", None, "%s: %s" % (type(e).__name__, e))
             return None, tool_trace
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
@@ -1683,6 +1771,22 @@ def _summarize_tool(user_input, result, tool):
     return s or ("已完成（%s）。" % tool)
 
 
+def _asks_asset_list(text):
+    """用户是不是在问"资产/IP/主机"（NVD 给不了这类数据，必须当面说清）。
+
+    真实缺陷：不管问"抓一下漏洞"还是"把所有含这些漏洞的 IP 列出来"，回复都是同一张 NVD 表，
+    用户看到的就是"一直是这个模板，一点没变" —— 因为代码只判了"漏洞意图"，没判"要的是资产清单"。
+    """
+    ql = (text or "").lower()
+    if not ql:
+        return False
+    if re.search(r"(?<![a-z])ip(?![a-z])", ql):        # ip / 公网ip / IP地址（避开 zip、clip 这类词）
+        return True
+    if re.search(r"ip\s*地址", ql):
+        return True
+    return any(k in ql for k in ("主机", "资产", "受影响的机器", "哪些机器", "哪些服务器", "网段"))
+
+
 # ================== 智能体 ==================
 def agent_run(user_input, lean=False):
     """全部问题统一走这条流程：记忆 → 联网检索 → 大脑(小焦模型/外接LLM) → 记忆自学习。
@@ -1726,6 +1830,18 @@ def agent_run(user_input, lean=False):
                                    "result": "NVD 漏洞表：%d 行（%s，最近 %d 天）"
                                              % (_rows, _vq["severity"], _vq["days"])})
                 answer = _vbody or ("⚠️ 漏洞查询失败：%s" % (_verr or "接口没有返回内容，请稍后重试"))
+                if _asks_asset_list(user_input):
+                    # **真实缺陷**：用户问的是"含这些漏洞的 IP / 主机 / 资产"，而这条路只会
+                    # 把同一张 NVD 表原样吐回去 —— 于是不管怎么问，看到的都是"那张表，一点没变"。
+                    # NVD 根本没有 IP 数据，必须**正面说清能力边界**，再给能给的部分。
+                    answer = (
+                        "🔎 **先对齐一下能查什么**：你要的是「网络上含这些漏洞的 IP 地址（资产测绘）」，"
+                        "而 NVD 只发布「CVE → 受影响软件/版本(CPE)」，**不发布任何公网 IP** —— "
+                        "这一半我查不到，不是给你复制模板。\n\n"
+                        "要做到「IP ↔ CVE 对应表」，得接一个资产测绘数据源（Shodan / Censys / ZoomEye / Fofa 之类）；"
+                        "小焦目前没接。接法很简单：写成插件（`get_tool_descriptions()` + `execute()` 两件套）"
+                        "丢进 `plugins/`，我这边就能按你要的列成表。\n\n"
+                        "下面是这些漏洞本身（NVD 实时数据，可以先用它筛出**受影响软件与版本**）：\n\n") + _vbody
 
     # 2. 联网检索（受操控文件 capabilities 控制）
     #    检索词必须先过闸门：整句/功能字一律清洗，清洗后为空就干脆不搜（不再拿"用"去搜百科）。
@@ -1859,7 +1975,8 @@ def agent_run(user_input, lean=False):
         return answer, True, info, needs_confirm, tool_trace
 
     # 6. 无任何可用大脑（本地大模型未连接）时的降级（只给一句简洁提示，不瞎输出联网内容）
-    fallback = "🤖 模型调用出错（可能是连接超时/限流）。请稍后重试，或确认已选中的模型（本地大脑/API）配置正确、端口可达。"
+    fallback = ("🤖 大脑没有应答，这一问没答上。请确认已选中的模型（本地大脑/API）配置正确、端口可达。"
+                + llm_error_suffix())
     return fallback, False, [], False, []
 
 
@@ -2723,7 +2840,7 @@ def api_chat():
     # 把占位小焦消息更新为真实回答（含最后那句提示）
     answer_final = answer
     if not answer_final:
-        answer_final = "🤖 模型调用出错（可能是连接超时/限流）。请稍后重试，或确认模型配置正确。"
+        answer_final = "🤖 大脑没有应答，这一问没答上。请确认模型配置正确、端口可达。" + llm_error_suffix()
     s, d = get_current_session()
     for m in s.get("messages", []):
         if m.get("role") == "小焦" and "__pending__" in str(m.get("content", "")):
@@ -2890,11 +3007,9 @@ def api_growth():
 def api_persona():
     """切换人格：把 role 写回控制文件并生效。"""
     d = request.get_json(force=True, silent=True) or {}
-    role = (d.get("role") or "").strip()
+    role = strip_search_rules((d.get("role") or "").strip())   # 合成人设/脏人设 → 只存纯人设
     if not role:
         return jsonify({"ok": False, "error": "人格不能为空"}), 400
-    if _SEARCH_RULES in role:                 # 界面回传的人设可能带着铁律 → 落盘前去掉，避免越存越多
-        role = role.replace(_SEARCH_RULES, "").rstrip()
     try:
         c = json.loads(open(CONTROL_FILE, encoding="utf-8").read())
         c["role"] = role
@@ -2934,7 +3049,9 @@ def api_tools_toggle():
         cap["run_tools"] = new_state
         try:
             saved = {"model_name": MODEL_NAME, "brain": CONTROL.get("brain", {}),
-                     "role": SYSTEM_PROMPT, "capabilities": cap, "behavior": BEH,
+                     # 存**纯人设**，不是合成后的 SYSTEM_PROMPT（否则每切一次开关就多存一份铁律）
+                     "role": strip_search_rules(CONTROL.get("role") or SYSTEM_PROMPT),
+                     "capabilities": cap, "behavior": BEH,
                      "models": _get_models()}
             json.dump(saved, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"),
                       ensure_ascii=False, indent=2)
@@ -2957,7 +3074,9 @@ def _save_control(brain=None, models=None):
     # 若来自 brain 切换等只传部分, 仍保留全部现有 models
     saved = {"model_name": MODEL_NAME,
              "brain": brain if brain else dict(CONTROL.get("brain", {})),
-             "role": SYSTEM_PROMPT, "capabilities": CAP, "behavior": BEH,
+             # 同样只存纯人设（原因见 /api/tools_toggle）
+             "role": strip_search_rules(CONTROL.get("role") or SYSTEM_PROMPT),
+             "capabilities": CAP, "behavior": BEH,
              "models": (merged if merged else existing),
              "dsh": CONTROL.get("dsh", {})}
     json.dump(saved, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"),
@@ -2976,6 +3095,32 @@ def api_models():
     return jsonify({"active": BRAIN_ENGINE, "current": cur, "models": _get_models()})
 
 
+def _is_local_base(url):
+    """base_url 是不是指向本机（本地大脑）。"""
+    u = (url or "").lower()
+    return any(h in u for h in ("127.0.0.1", "localhost", "0.0.0.0", "[::1]", "://::1"))
+
+
+def _local_served_model(base_url, want):
+    """问一下本地服务**真的**提供哪些模型，返回一个能用的 model id（问不到就原样返回 want）。
+
+    真实缺陷：控制文件里的"本地模型"条目曾把 model 存成云端模型名（agnes-2.5-flash）而
+    base_url 指向本机 9292 —— 用户在界面上选了"本地模型"照样不能用（llama-swap 直接 404
+    no router for requested model），还看不出来为什么。这里在切换时对一次账。
+    """
+    try:
+        r = requests.get((base_url or "").rstrip("/") + "/models", timeout=3)
+        if r.status_code == 200:
+            ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
+            if ids and want not in ids:
+                return ids[0], ids
+            if ids:
+                return want, ids
+    except Exception as e:  # noqa: silent-ok — 探测失败就按原样用，绝不因对账而挡住切换
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 3075, e)
+    return want, []
+
+
 @app.route("/api/model/select", methods=["POST"])
 def api_model_select():
     """切换当前大脑到某个已配置模型。"""
@@ -2984,15 +3129,28 @@ def api_model_select():
     for m in _get_models():
         if m.get("name") == name:
             brain = dict(CONTROL.get("brain", {}))
-            brain["engine"] = m.get("engine", "auto")
-            if m.get("engine") == "api":
-                brain["api"] = {"base_url": m.get("base_url", ""), "api_key": m.get("api_key", ""),
-                                "model": m.get("model", "")}
-            elif m.get("engine") == "llama":
-                brain["api"] = {"base_url": m.get("base_url", "http://127.0.0.1:8080/v1"),
-                                "api_key": "", "model": m.get("model", "xiaojiao1.0-4B")}
+            engine = m.get("engine", "auto")
+            base = m.get("base_url", "")
+            model = m.get("model", "")
+            note = ""
+            # 指向本机的一律按本地大脑处理：本地服务不需要 Key，而条目里存的 engine
+            # 可能是当初加模型时随手填的 "api"（那样会把本地地址当云端用，必失败）。
+            if _is_local_base(base):
+                engine = "llama"
+                if engine != m.get("engine"):
+                    note = "已按本地大脑接入（本地服务不需要 API Key）"
+            brain["engine"] = engine
+            if engine == "llama":
+                model, ids = _local_served_model(base or "http://127.0.0.1:9292/v1", model)
+                if ids and model != (m.get("model") or ""):
+                    note = (note + "；" if note else "") + "本地服务实际提供 %s，已改用 %s" % ("/".join(ids), model)
+                brain["api"] = {"base_url": base or "http://127.0.0.1:9292/v1",
+                                "api_key": "", "model": model or "xiaojiao"}
+            else:
+                brain["api"] = {"base_url": base, "api_key": m.get("api_key", ""), "model": model}
             _save_control(brain=brain)
-            return jsonify({"ok": True, "engine": brain["engine"], "name": name})
+            return jsonify({"ok": True, "engine": brain["engine"], "name": name,
+                            "model": brain["api"]["model"], "note": note})
     return jsonify({"ok": False, "error": "模型不存在"}), 404
 
 
@@ -3188,7 +3346,9 @@ def api_settings_get():
         "control": {
             "model_name": MODEL_NAME,
             "brain": CONTROL.get("brain", {}),
-            "role": SYSTEM_PROMPT,
+            # 回**纯人设**：铁律由 compose_system_prompt 每轮自动拼，界面里不用背它，
+            # 否则用户点一次保存就把铁律又存进控制文件（老版本就是这么攒到 11 份的）。
+            "role": strip_search_rules(CONTROL.get("role") or SYSTEM_PROMPT),
             "capabilities": CAP,
             "behavior": BEH,
         },
@@ -3217,7 +3377,7 @@ def api_settings_post():
     saved = {
         "model_name": got.get("model_name", cur.get("model_name", MODEL_NAME)),
         "brain": brain,
-        "role": got.get("role", cur.get("role", SYSTEM_PROMPT)),
+        "role": strip_search_rules(got.get("role") or cur.get("role") or SYSTEM_PROMPT),
         "capabilities": {**cur.get("capabilities", {}), **(got.get("capabilities") or {})},
         "behavior": {**cur.get("behavior", {}), **(got.get("behavior") or {})},
         "models": _get_models(),
