@@ -1064,6 +1064,10 @@ _SCRAPE_TOOL_HINTS = [
 _SCRAPE_URL_RE = re.compile(r"https?://[^\s，。；、）)\]\"']+")
 _SCRAPE_DOMAIN_RE = re.compile(r"\b([a-z0-9][a-z0-9\-]*\.(?:com|cn|org|net|io|dev|gov|edu|ai|co|me|app)"
                                r"(?:/[^\s，。；、）)\]\"']*)?)", re.I)
+# 用户显式要求忽略 robots.txt（默认严格遵守，只有明确说了才放行）
+_SCRAPE_IGNORE_ROBOTS_HINTS = ("忽略robots", "忽略 robots", "无视robots", "无视 robots",
+                               "不管robots", "不管 robots", "不看robots", "跳过robots",
+                               "ignore robots")
 
 
 def _detect_scrape_intent(q):
@@ -1086,10 +1090,18 @@ def _detect_scrape_intent(q):
             urls = ["https://" + m.group(1)]
     if not urls:
         return None
+    # 用户显式说"忽略 robots / 不管robots / 无视robots" → 本次放行（默认仍严格遵守）
+    ignore = any(k in ql for k in _SCRAPE_IGNORE_ROBOTS_HINTS)
     if len(urls) > 1:      # 多个网址 → 批量工具
         bulk = {"get": "bulk_get", "fetch": "bulk_fetch", "stealthy_fetch": "bulk_stealthy_fetch"}[tool]
-        return bulk, {"urls": urls[:20]}
-    return tool, {"url": urls[0]}
+        args = {"urls": urls[:20]}
+        if ignore:
+            args["ignore_robots"] = True
+        return bulk, args
+    args = {"url": urls[0]}
+    if ignore:
+        args["ignore_robots"] = True
+    return tool, args
 
 
 def _trace_summary(res: str) -> str:

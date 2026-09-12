@@ -83,6 +83,10 @@ MCP_RECONNECT_WINDOW: float = 30.0      # 崩溃后 30 秒内自动重连
 STEALTH_MIN_GAP: float = 2.0            # 隐身模式连续请求最小间隔（秒）
 HEALTH_CHECK_INTERVAL: float = 5.0      # 连接健康检查间隔
 ROBOTS_CACHE_TTL: float = 3600.0        # robots.txt 缓存有效期
+ROBOTS_TIMEOUT: float = 8.0             # robots.txt 拉取超时（秒）
+ROBOTS_MAX_BYTES: int = 256 * 1024      # robots.txt 最大读取字节（防超大文件）
+ROBOTS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SELECTOR_STORE = os.path.join(SCRIPT_DIR, ".scrapling_selectors.json")
 CONTROL_FILE = os.path.join(os.path.dirname(SCRIPT_DIR), "xiaojiao_control.json")
@@ -501,7 +505,7 @@ class SecurityGuard:
         self.rate_limit = max(0.0, float(rate_limit))
         self.allow_robots_skip = allow_robots_skip
         self._last_hit: Dict[str, float] = {}
-        self._robots: Dict[str, Tuple[float, Optional[urllib.robotparser.RobotFileParser]]] = {}
+        self._robots: Dict[str, Tuple[float, Optional[urllib.robotparser.RobotFileParser], str]] = {}
         self._lock = threading.Lock()
 
     # ---------- SSRF ----------
@@ -540,8 +544,37 @@ class SecurityGuard:
         return ""
 
     # ---------- robots.txt ----------
-    def robots_allowed(self, url: str, user_agent: str = "*") -> Tuple[bool, str]:
-        """检查 robots.txt。返回 (是否允许, 原因)。"""
+    def _fetch_robots(self, root: str) -> Tuple[Optional[List[str]], str]:
+        """自己拉 robots.txt 并返回 (行列表 or None, 说明)。
+
+        为什么不用 urllib.robotparser 的 read()：
+          · read() 遇到 401/403 会直接设 disallow_all=True → **整站被当成禁止抓取**；
+            而现实里大量站点的 WAF 只是把 robots.txt 请求(默认 Python-urllib UA) 403 掉，
+            站上根本没有 robots.txt（用浏览器 UA 去看是 404）。
+          · 按 RFC 9309：4xx（含 401/403）与 5xx 都表示 robots.txt **不可用** → 不应阻塞抓取。
+        所以这里显式区分「有规则」与「拿不到规则」两种情况。
+        """
+        url = root + "/robots.txt"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": ROBOTS_UA,
+                                                       "Accept": "text/plain,*/*"})
+            with urllib.request.urlopen(req, timeout=ROBOTS_TIMEOUT) as r:
+                raw = r.read(ROBOTS_MAX_BYTES)
+            return raw.decode("utf-8", "ignore").splitlines(), ""
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                return None, "robots.txt 被 WAF 拦(%d，按 RFC 9309 视为不可用) → 放行" % e.code
+            return None, "该站没有 robots.txt(%d) → 放行" % e.code
+        except Exception as e:
+            return None, "robots.txt 拉取失败(%s) → 放行" % type(e).__name__
+
+    def robots_allowed(self, url: str, user_agent: str = "*", ignore: bool = False) -> Tuple[bool, str]:
+        """检查 robots.txt。返回 (是否允许, 原因)。
+
+        ignore=True 表示**用户显式要求忽略**（单次生效，用于"这站我有权限抓"的场景）。
+        """
+        if ignore:
+            return True, "用户显式要求忽略 robots.txt（本次放行）"
         try:
             p = urllib.parse.urlparse(url)
             root = "%s://%s" % (p.scheme, p.netloc)
@@ -551,24 +584,28 @@ class SecurityGuard:
         with self._lock:
             cached = self._robots.get(root)
             if cached and now - cached[0] < ROBOTS_CACHE_TTL:
-                rp = cached[1]
+                rp, note = cached[1], cached[2]
             else:
-                rp = None
-                try:
-                    rp = urllib.robotparser.RobotFileParser()
-                    rp.set_url(root + "/robots.txt")
-                    rp.read()
-                except Exception:
-                    rp = None
-                self._robots[root] = (now, rp)
+                rp, note = None, ""
+                lines, note = self._fetch_robots(root)
+                if lines is not None:
+                    try:
+                        rp = urllib.robotparser.RobotFileParser()
+                        rp.parse(lines)
+                    except Exception:
+                        rp, note = None, "robots.txt 解析失败 → 放行"
+                self._robots[root] = (now, rp, note)
         if rp is None:
-            return True, ""          # 拉不到 robots.txt 视为不限制
+            return True, note          # 没有规则 / 拿不到规则 → 不阻塞
         try:
             if rp.can_fetch(user_agent, url):
                 return True, ""
             if self.allow_robots_skip:
-                return True, "robots.txt 禁止但已配置忽略"
-            return False, "robots.txt 禁止抓取该地址（已按规则跳过）"
+                return True, "robots.txt 禁止但已配置忽略（allow_robots_skip=true）"
+            host = urllib.parse.urlparse(url).netloc
+            return False, ("robots.txt 明确禁止抓取 %s 的这个地址 —— 若你确认有权抓取，"
+                           "可在 xiaojiao_control.json 的 scrapling 段设 allow_robots_skip=true，"
+                           "或直接说「忽略 robots 抓一次」" % host)
         except Exception:
             return True, ""
 
@@ -685,7 +722,7 @@ class BatchManager:
             self._proxy_uses[p] = self._proxy_uses.get(p, 0) + 1
             return p
 
-    def prepare(self, urls: Sequence[str]) -> Tuple[List[str], List[Dict[str, Any]]]:
+    def prepare(self, urls: Sequence[str], ignore_robots: bool = False) -> Tuple[List[str], List[Dict[str, Any]]]:
         """去重 + 安全校验。返回 (可抓列表, 被拦截项列表)。"""
         clean = self.dedupe(urls)[:BULK_MAX_URLS]
         allowed, blocked = [], []
@@ -694,7 +731,7 @@ class BatchManager:
             if reason:
                 blocked.append({"status": 0, "url": u, "content": "", "error": reason})
                 continue
-            ok, why = self.guard.robots_allowed(u, USER_AGENT)
+            ok, why = self.guard.robots_allowed(u, USER_AGENT, ignore_robots)
             if not ok:
                 blocked.append({"status": 0, "url": u, "content": "", "error": why})
                 continue
@@ -1190,11 +1227,12 @@ class ScraplingBridge:
         S_SID = {"type": "string", "description": "session_id: 会话ID(open 后返回)"}
         S_STYPE = {"type": "string", "description": "session_type: dynamic 或 stealthy，默认 dynamic"}
         S_FULL = {"type": "boolean", "description": "full_page: 是否整页截图，默认否"}
+        S_IGN = {"type": "boolean", "description": "ignore_robots: 忽略robots.txt(默认否，仅在你确认有权抓取时用)"}
 
         return [
             # ---------- Scrapling 原生 13 个工具（1:1 暴露，名字与官方一致）----------
             T("make_request", "原生名·抓普通网页(纯HTTP，最快)。等同 get",
-              {"url": S_URL, "timeout": S_TO, "save_to": S_SAVE}, ["url"]),
+              {"url": S_URL, "timeout": S_TO, "save_to": S_SAVE, "ignore_robots": S_IGN}, ["url"]),
             T("open_session", "开浏览器会话(登录态用)。开完用 session_fetch 抓",
               {"session_type": S_STYPE, "session_id": S_SID}, []),
             T("open_request_session", "开HTTP会话(保持 cookie)。开完用 session_make_request",
@@ -1202,29 +1240,39 @@ class ScraplingBridge:
             T("close_session", "关闭会话并释放资源。参数: session_id 必填", {"session_id": S_SID}, ["session_id"]),
             T("list_sessions", "列出当前所有会话", {}, []),
             T("session_fetch", "用已开会话抓页面(保持登录态/已过验证)",
-              {"url": S_URL, "session_id": S_SID, "wait_selector": S_WAIT}, ["url", "session_id"]),
+              {"url": S_URL, "session_id": S_SID, "wait_selector": S_WAIT, "ignore_robots": S_IGN},
+              ["url", "session_id"]),
             T("session_make_request", "用HTTP会话发请求(保持 cookie)",
-              {"url": S_URL, "session_id": S_SID}, ["url", "session_id"]),
+              {"url": S_URL, "session_id": S_SID, "ignore_robots": S_IGN}, ["url", "session_id"]),
             T("screenshot", "给页面截图(可整页)，存 media/screenshot/ 并返回路径",
-              {"url": S_URL, "session_id": S_SID, "full_page": S_FULL}, ["url", "session_id"]),
+              {"url": S_URL, "session_id": S_SID, "full_page": S_FULL, "ignore_robots": S_IGN},
+              ["url", "session_id"]),
             # ---------- 小焦增强（原生没有 / 更好用）----------
-            T("get", "抓取网页(普通HTTP，快)。参数: url 必填", {"url": S_URL, "stealth": S_STEALTH, "timeout": S_TO, "save_to": S_SAVE}, ["url"]),
-            T("bulk_get", "批量抓多个网页(普通HTTP，快)。参数: urls 必填", {"urls": S_URLS, "stealth": S_STEALTH}, ["urls"]),
-            T("fetch", "用浏览器渲染抓取(能抓动态页面)", {"url": S_URL, "wait_selector": S_WAIT, "timeout": S_TO, "save_to": S_SAVE}, ["url"]),
-            T("bulk_fetch", "批量用浏览器渲染抓取多个页面", {"urls": S_URLS}, ["urls"]),
+            T("get", "抓取网页(普通HTTP，快)。参数: url 必填",
+              {"url": S_URL, "stealth": S_STEALTH, "timeout": S_TO, "save_to": S_SAVE, "ignore_robots": S_IGN}, ["url"]),
+            T("bulk_get", "批量抓多个网页(普通HTTP，快)。参数: urls 必填",
+              {"urls": S_URLS, "stealth": S_STEALTH, "ignore_robots": S_IGN}, ["urls"]),
+            T("fetch", "用浏览器渲染抓取(能抓动态页面)",
+              {"url": S_URL, "wait_selector": S_WAIT, "timeout": S_TO, "save_to": S_SAVE, "ignore_robots": S_IGN}, ["url"]),
+            T("bulk_fetch", "批量用浏览器渲染抓取多个页面",
+              {"urls": S_URLS, "ignore_robots": S_IGN}, ["urls"]),
             T("stealthy_fetch", "隐身抓取(绕Cloudflare)。仅在普通请求失败时用，开销大",
-              {"url": S_URL, "timeout": S_TO, "save_to": S_SAVE}, ["url"]),
-            T("bulk_stealthy_fetch", "批量隐身抓取(开销大，≤20个)", {"urls": S_URLS}, ["urls"]),
+              {"url": S_URL, "timeout": S_TO, "save_to": S_SAVE, "ignore_robots": S_IGN}, ["url"]),
+            T("bulk_stealthy_fetch", "批量隐身抓取(开销大，≤20个)",
+              {"urls": S_URLS, "ignore_robots": S_IGN}, ["urls"]),
             T("scrape_with_selector", "按选择器抓取内容，自适应防改版",
-              {"url": S_URL, "selector": S_SEL, "adaptive": S_ADAPT, "name": S_NAME}, ["url", "selector"]),
+              {"url": S_URL, "selector": S_SEL, "adaptive": S_ADAPT, "name": S_NAME, "ignore_robots": S_IGN},
+              ["url", "selector"]),
             T("browser_session", "会话+截图的聚合入口(一个工具走完全流程):登录态抓取/整页截图",
               {"action": {"type": "string",
                           "description": "action: open/open_http/close/list/fetch/request/screenshot"},
                "url": S_URL, "session_id": {"type": "string", "description": "session_id: 会话ID"},
                "session_type": {"type": "string", "description": "session_type: dynamic或stealthy"},
-               "full_page": {"type": "boolean", "description": "full_page: 是否整页截图"}},
+               "full_page": {"type": "boolean", "description": "full_page: 是否整页截图"},
+               "ignore_robots": S_IGN},
               ["action"]),
-            T("download", "下载任意文件(PDF/EPUB/ZIP/图片/音视频等)存本地，返回路径", {"url": S_URL, "filename": S_FN}, ["url"]),
+            T("download", "下载任意文件(PDF/EPUB/ZIP/图片/音视频等)存本地，返回路径",
+              {"url": S_URL, "filename": S_FN, "ignore_robots": S_IGN}, ["url"]),
         ]
 
     # ------------------------------------------------------------------
@@ -1281,16 +1329,17 @@ class ScraplingBridge:
     # 各工具实现
     # ------------------------------------------------------------------
     def _single(self, tool: str, url: str, extra: Dict[str, Any], stealth: bool = False,
-                save_to: str = "") -> str:
+                save_to: str = "", ignore_robots: bool = False) -> str:
         """单个 URL 抓取：SSRF/robots 校验 → 限速 → 调 MCP/inproc → 统一结果。
 
         save_to 非空时把正文存成本地文件（长文/连载章节直接落盘，不塞满对话）。
+        ignore_robots=True 表示用户显式要求忽略 robots.txt（单次生效）。
         """
         url = (url or "").strip()
         reason = _GUARD.check_ssrf(url)
         if reason:
             return fmt_result(0, url, "", reason)
-        ok, why = _GUARD.robots_allowed(url, USER_AGENT)
+        ok, why = _GUARD.robots_allowed(url, USER_AGENT, ignore_robots)
         if not ok:
             return fmt_result(0, url, "", why)
         _GUARD.wait_rate_limit(url)
@@ -1323,14 +1372,16 @@ class ScraplingBridge:
     def _do_get(self, p: Dict[str, Any]) -> str:
         return self._single("make_request", p.get("url", ""),
                             {"method": "GET", "impersonate": _random_impersonate()},
-                            stealth=bool(p.get("stealth")), save_to=(p.get("save_to") or ""))
+                            stealth=bool(p.get("stealth")), save_to=(p.get("save_to") or ""),
+                            ignore_robots=bool(p.get("ignore_robots")))
 
     # ---- fetch ----
     def _do_fetch(self, p: Dict[str, Any]) -> str:
         extra: Dict[str, Any] = {"headless": self._cfg.headless}
         if p.get("wait_selector"):
             extra["wait_selector"] = p["wait_selector"]
-        return self._single("fetch", p.get("url", ""), extra, save_to=(p.get("save_to") or ""))
+        return self._single("fetch", p.get("url", ""), extra, save_to=(p.get("save_to") or ""),
+                            ignore_robots=bool(p.get("ignore_robots")))
 
     # ---- stealthy_fetch ----
     def _do_stealthy_fetch(self, p: Dict[str, Any]) -> str:
@@ -1343,7 +1394,8 @@ class ScraplingBridge:
             "google_search": True,
         }
         return self._single("stealthy_fetch", p.get("url", ""), extra, stealth=True,
-                            save_to=(p.get("save_to") or ""))
+                            save_to=(p.get("save_to") or ""),
+                            ignore_robots=bool(p.get("ignore_robots")))
 
     def _download_via_scrapling(self, url: str):
         """用 Scrapling 的浏览器指纹抓原始字节（应对 WAF 拒绝普通 UA 的场景）。
@@ -1386,7 +1438,7 @@ class ScraplingBridge:
         reason = _GUARD.check_ssrf(url)
         if reason:
             return fmt_result(0, url, "", reason)
-        ok, why = _GUARD.robots_allowed(url, USER_AGENT)
+        ok, why = _GUARD.robots_allowed(url, USER_AGENT, bool(p.get("ignore_robots")))
         if not ok:
             return fmt_result(0, url, "", why)
         _GUARD.wait_rate_limit(url)
@@ -1444,12 +1496,13 @@ class ScraplingBridge:
             fp, got / 1048576.0, ctype or "未知"), "")
 
     # ---- 批量（统一走 BatchManager：去重/限速/退避/代理轮换/失败隔离） ----
-    def _bulk(self, tool: str, urls: Sequence[str], extra: Dict[str, Any], stealth: bool = False) -> str:
+    def _bulk(self, tool: str, urls: Sequence[str], extra: Dict[str, Any], stealth: bool = False,
+              ignore_robots: bool = False) -> str:
         # 批量内部逐 URL 调用"单个"抓取工具：这样才能做去重/限速/退避/代理轮换/失败隔离；
         # 直接调 Scrapling 的 bulk_* 会一次性并发出去，上述控制全部失效。
         _single_of = {"bulk_get": "make_request", "bulk_fetch": "fetch", "bulk_stealthy_fetch": "stealthy_fetch"}
         base_tool = _single_of.get(tool, tool)
-        allowed, blocked = _BATCH.prepare(urls)
+        allowed, blocked = _BATCH.prepare(urls, ignore_robots)
         items: List[Dict[str, Any]] = list(blocked)
         used = 0
         for u in allowed:
@@ -1498,16 +1551,19 @@ class ScraplingBridge:
 
     def _do_bulk_get(self, p: Dict[str, Any]) -> str:
         return self._bulk("bulk_get", p.get("urls") or [],
-                          {"impersonate": _random_impersonate()}, stealth=bool(p.get("stealth")))
+                          {"impersonate": _random_impersonate()}, stealth=bool(p.get("stealth")),
+                          ignore_robots=bool(p.get("ignore_robots")))
 
     def _do_bulk_fetch(self, p: Dict[str, Any]) -> str:
-        return self._bulk("fetch", p.get("urls") or [], {"headless": self._cfg.headless})
+        return self._bulk("fetch", p.get("urls") or [], {"headless": self._cfg.headless},
+                          ignore_robots=bool(p.get("ignore_robots")))
 
     def _do_bulk_stealthy_fetch(self, p: Dict[str, Any]) -> str:
         urls = (p.get("urls") or [])[:20]      # 隐身开销大，限制 20 个
         return self._bulk("stealthy_fetch", urls,
                           {"headless": self._cfg.headless, "solve_cloudflare": bool(self._cfg.solve_cloudflare),
-                           "hide_canvas": True, "block_webrtc": True}, stealth=True)
+                           "hide_canvas": True, "block_webrtc": True}, stealth=True,
+                          ignore_robots=bool(p.get("ignore_robots")))
 
     # ---- browser_session：会话管理 + 登录态抓取 + 截图（一个入口覆盖 7 个 MCP 会话工具）----
     def _session_call(self, tool: str, args: Dict[str, Any]) -> str:
@@ -1555,7 +1611,7 @@ class ScraplingBridge:
         reason = _GUARD.check_ssrf(url)
         if reason:
             return fmt_result(0, url, "", reason)
-        ok, why = _GUARD.robots_allowed(url, USER_AGENT)
+        ok, why = _GUARD.robots_allowed(url, USER_AGENT, bool(p.get("ignore_robots")))
         if not ok:
             return fmt_result(0, url, "", why)
         _GUARD.wait_rate_limit(url)
@@ -1621,7 +1677,7 @@ class ScraplingBridge:
         reason = _GUARD.check_ssrf(url)
         if reason:
             return fmt_result(0, url, "", reason)
-        ok, why = _GUARD.robots_allowed(url, USER_AGENT)
+        ok, why = _GUARD.robots_allowed(url, USER_AGENT, bool(p.get("ignore_robots")))
         if not ok:
             return fmt_result(0, url, "", why)
         _GUARD.wait_rate_limit(url)
