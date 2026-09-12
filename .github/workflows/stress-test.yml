@@ -116,7 +116,9 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path tests/stress/results.json) {
-            $r = Get-Content tests/stress/results.json -Raw | ConvertFrom-Json
+            # 必须显式 -Encoding utf8：Windows 上不指定会按 ANSI 解码，中文被误解码后
+            # 连 JSON 都解析不了（ConvertFrom-Json 报 "':' or '}' expected"），摘要就静默变成空值。
+            $r = Get-Content tests/stress/results.json -Raw -Encoding utf8 | ConvertFrom-Json
             @"
           ## 抓取插件压力测试结果
 
