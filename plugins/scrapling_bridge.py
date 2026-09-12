@@ -23,12 +23,13 @@ HTTP 请求 / Playwright 浏览器渲染 / 隐身绕过 Cloudflare。
 【小焦内置 Scrapling 抓取能力】想抓啥抓啥：
   网页正文 / 动态渲染页 / 接口 JSON / 批量列表 / 登录态页面 / 下载任意文件（PDF/EPUB/ZIP/图片…）
 
-【对小焦暴露 17 个工具】= Scrapling 原生 13 个（1:1，名字与官方一致）+ 3 个增强 + 1 个兼容入口
+【对小焦暴露 18 个工具】= Scrapling 原生 13 个（1:1，名字与官方一致）+ 4 个增强 + 1 个兼容入口
   原生 13: make_request / bulk_get / fetch / bulk_fetch / stealthy_fetch / bulk_stealthy_fetch
            open_session / open_request_session / close_session / list_sessions
            session_fetch / session_make_request / screenshot
-  增强 3 : get（make_request 的中文友好别名）/ scrape_with_selector（自适应选择器）
+  增强 4 : get（make_request 的中文友好别名）/ scrape_with_selector（自适应选择器）
            / download（下载任意文件，Scrapling 原生没有）
+           / collect_vulnerabilities（NVD 漏洞时间窗查询，插件层直接产出 Markdown 表格）
   兼容 1 : browser_session（用 action 一个工具走完 open/fetch/screenshot/close）
 
 【设计要点】
@@ -50,6 +51,7 @@ import ipaddress
 import json
 import logging
 import os
+import queue
 import random
 import re
 import socket
@@ -588,7 +590,7 @@ class BridgeConfig:
                     try:
                         setattr(cfg, k, v)
                     except Exception as e:
-                        LOG.debug("忽略异常(%s:561): %s", __file__, 561, e)
+                        LOG.debug("忽略异常(%s:%d): %s", __file__, 561, e)
         # 环境变量覆盖（部署/调试更方便）
         env_map = {
             "XIAOJIAO_SCRAPLING_MODE": "mode",
@@ -611,7 +613,7 @@ class BridgeConfig:
                     else:
                         setattr(cfg, attr, v)
                 except Exception as e:
-                    LOG.debug("忽略异常(%s:584): %s", __file__, 584, e)
+                    LOG.debug("忽略异常(%s:%d): %s", __file__, 584, e)
         if not cfg.executable_path:
             # 兜底探测：项目内 / 家目录 / 各盘关键词目录找 chrome.exe（不写死盘符与目录名）
             _here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -629,7 +631,7 @@ class BridgeConfig:
                             cands.append(os.path.join(_b, "chrome.exe"))
                             cands.append(os.path.join(_b, "chrome-win64", "chrome.exe"))
             except Exception as e:
-                LOG.debug("忽略异常(%s:602): %s", __file__, 602, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 602, e)
             for cand in cands:
                 if os.path.exists(cand):
                     cfg.executable_path = cand
@@ -674,7 +676,7 @@ class AsyncRunner:
             try:
                 self._loop.close()
             except Exception as e:
-                LOG.debug("忽略异常(%s:647): %s", __file__, 647, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 647, e)
 
     def run(self, coro, timeout: float = DEFAULT_TIMEOUT):
         """提交协程并等待结果；超时抛 TimeoutError（由上层转成中文错误）。"""
@@ -692,7 +694,7 @@ class AsyncRunner:
             if self._loop and self._loop.is_running():
                 self._loop.call_soon_threadsafe(self._loop.stop)
         except Exception as e:
-            LOG.debug("忽略异常(%s:665): %s", __file__, 665, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 665, e)
 
 
 # =====================================================================
@@ -1502,7 +1504,7 @@ class MCPClient:
         with self._lock:
             self._next_id += 1
             rid = self._next_id
-            self._pending[rid] = __import__("queue").Queue()
+            self._pending[rid] = queue.Queue()
         self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}})
         try:
             msg = self._pending[rid].get(timeout=timeout)
@@ -1731,7 +1733,7 @@ class MCPClient:
                 except Exception:
                     self._proc.kill()
         except Exception as e:
-            LOG.debug("忽略异常(%s:1652): %s", __file__, 1652, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1652, e)
 
 
 # =====================================================================
@@ -1771,11 +1773,285 @@ def _random_impersonate() -> str:
     return random.choice(["chrome", "chrome110", "chrome116", "chrome120", "chrome124"])
 
 
+# =====================================================================
+# NVD 漏洞聚合（collect_vulnerabilities）
+# ---------------------------------------------------------------------
+# 真实缺陷复盘（用户实测发现）：
+#   让小焦"抓最近 7 天的高危漏洞"时，它自己拼的 URL 是
+#       https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=5
+#   三个问题一次暴露：① 没带时间窗 → 拿到的是 1999 年的历史数据；
+#                    ② 原始 JSON 交给模型 → 5 条只总结了 1 条；
+#                    ③ 受影响软件要模型自己从 configurations[].cpeMatch 里推 → 全显示 n/a。
+# 修法：把「拼 URL（强制带 lastModStartDate/lastModEndDate）+ 挑字段 + 压成 Markdown 表格」
+#       全部收进插件层，模型只负责"调用"，不负责"提取"。
+# =====================================================================
+NVD_API: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+NVD_WINDOW_MAX_DAYS: int = 120          # NVD 官方限制：lastMod 时间窗最长 120 天
+NVD_PAGE_SIZE: int = 50                 # 单页条数；窗口超大时取"首尾各一页"保证拿到最新
+_SEV_ORDER: Dict[str, int] = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+# CPE 里全是小写，缩写要还原成大写（apache:http_server → Apache HTTP Server），否则软件名很难看
+_CPE_ACRONYMS: Dict[str, str] = {
+    "http": "HTTP", "https": "HTTPS", "httpd": "HTTPD", "api": "API", "sql": "SQL", "xss": "XSS",
+    "csrf": "CSRF", "rce": "RCE", "dos": "DoS", "ddos": "DDoS", "ftp": "FTP", "ssh": "SSH",
+    "ssl": "SSL", "tls": "TLS", "dns": "DNS", "smtp": "SMTP", "ldap": "LDAP", "nfs": "NFS",
+    "json": "JSON", "xml": "XML", "html": "HTML", "css": "CSS", "js": "JS", "php": "PHP",
+    "cms": "CMS", "pdf": "PDF", "usb": "USB", "vpn": "VPN", "ui": "UI", "os": "OS", "ip": "IP",
+    "io": "IO", "ide": "IDE", "gpu": "GPU", "cpu": "CPU", "vm": "VM", "ad": "AD", "db": "DB",
+    "openssl": "OpenSSL", "nginx": "Nginx", "graphql": "GraphQL", "oauth": "OAuth", "saml": "SAML",
+    "jwt": "JWT", "tcp": "TCP", "udp": "UDP", "imap": "IMAP", "pop3": "POP3", "rdp": "RDP",
+}
+
+
+def _clamp_int(v: Any, default: int, lo: int, hi: int) -> int:
+    """把外部传来的"天数/条数"这类数字夹到合法区间（脏输入一律回落默认值）。"""
+    try:
+        n = int(float(str(v).strip()))
+    except Exception:
+        return default
+    return max(lo, min(hi, n))
+
+
+def _title_token(word: str) -> str:
+    """CPE 单词 → 展示用单词：http_server → HTTP Server。"""
+    w = (word or "").strip()
+    if not w:
+        return ""
+    return _CPE_ACRONYMS.get(w.lower(), w.capitalize())
+
+
+def cpe_to_software(criteria: str) -> str:
+    """CPE 2.3 → 人话软件名。
+
+    例：cpe:2.3:a:apache:http_server:1.0:*:*:*:*:*:*:* → "Apache HTTP Server 1.0"
+    非 CPE / 通配（* -）版本一律不显示，避免出现 "n/a"、"-" 这种没法看的字段。
+    """
+    c = (criteria or "").strip()
+    if not c.startswith("cpe:2.3:"):
+        return ""
+    parts = c.split(":")
+    if len(parts) < 6:
+        return ""
+
+    def _clean(x: str) -> str:
+        return "" if x in ("*", "-") else x
+
+    vendor, product, version = _clean(parts[3]), _clean(parts[4]), _clean(parts[5])
+    name = " ".join(t for t in (_title_token(w) for w in product.split("_")) if t)
+    vname = _title_token(vendor)
+    # 产品名已含厂商名就不再重复（linux + linux_kernel → Linux Kernel）
+    if vname and name and not name.lower().startswith(vname.lower()):
+        name = vname + " " + name
+    elif vname and not name:
+        name = vname
+    if version:
+        name = (name + " " + version).strip()
+    return name
+
+
+def _sev_from_score(score: float) -> str:
+    """CVSS v2 没有 baseSeverity 字段，按官方分段区间补一个等级。"""
+    if score >= 9.0:
+        return "CRITICAL"
+    if score >= 7.0:
+        return "HIGH"
+    if score >= 4.0:
+        return "MEDIUM"
+    if score > 0:
+        return "LOW"
+    return ""
+
+
+def _cvss_of(cve: Dict[str, Any]) -> Tuple[str, float]:
+    """取最权威的一条 CVSS：v4.0 → v3.1 → v3.0 → v2，返回 (等级, 评分)。"""
+    m = cve.get("metrics") or {}
+    for key in ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+        arr = m.get(key) or []
+        if not isinstance(arr, list):
+            continue
+        for item in arr:                       # 主源(NVD)一般排第一，但拿不到分就继续找
+            if not isinstance(item, dict):
+                continue
+            d = item.get("cvssData") or {}
+            score = d.get("baseScore")
+            if score is None:
+                continue
+            try:
+                fscore = float(score)
+            except Exception:
+                continue
+            sev = str(d.get("baseSeverity") or item.get("baseSeverity") or "").upper()
+            if sev not in _SEV_ORDER:
+                sev = _sev_from_score(fscore)
+            return sev, fscore
+    return "", 0.0
+
+
+_SW_TIDY_STOP = {"the", "this", "a", "an", "it", "its", "all", "some", "these", "those", "there"}
+
+
+def _tidy_sw_name(name: str) -> str:
+    """把描述里摘出来的软件名收拾干净（去掉" – 说明"、" for 平台"、逗号后的杂项）。"""
+    n = re.sub(r"\s+", " ", str(name or "")).strip(" .,:;–—-")
+    n = re.sub(r"^(?:the|a|an)\s+", "", n, flags=re.I)      # 描述里的冠词不算产品名
+    n = re.split(r"\s+[–—]\s+|\s+-\s+|,|\s+for\s+", n, maxsplit=1)[0].strip(" .,:;–—-")
+    if len(n) < 2 or n.lower() in _SW_TIDY_STOP or not n[0].isupper():
+        return ""
+    return n[:40]
+
+
+def _software_from_desc(desc: str) -> str:
+    """兜底：NVD 还没收录 CPE 时，从 CVE 描述里**保守地**摘出软件名。
+
+    为什么需要：刚公布的 CVE（vulnStatus=Received/Awaiting Analysis）在 NVD 里
+    configurations 是空的，只显示 CPE 就会出现一整列"未收录"——用户看到的还是"没有软件名"。
+    这里只认几种固定英文句式，摘到就在单元格里标注"（描述推断）"，摘不到就如实说未收录，
+    **绝不臆造**。
+    """
+    s = re.sub(r"\s+", " ", str(desc or "")).strip()
+    if not s:
+        return ""
+    _KIND = r"(?:plugin|theme|module|component|library|package|extension|add-?on|firmware|appliance)"
+    for pat in (
+            # The GEO my WP plugin for WordPress is vulnerable to …
+            re.compile(r"(?P<n>[A-Z][^.]{1,60}?)\s+" + _KIND +
+                       r"\s+for\s+(?P<h>[A-Z][\w .\-]{1,28}?)\s+(?:is|are|allows|was)\b"),
+            # The X plugin / X theme is vulnerable to …
+            re.compile(r"(?P<n>[A-Z][^.]{1,60}?)\s+" + _KIND + r"\s+(?:is|are|allows|was)\b"),
+            re.compile(r"^(?:In\s+|A\s+)?(?P<n>[A-Z][\w .\-]{2,40}?)\s+(?:is|are)\s+vulnerable\b"),
+            # … in OpenSSL before 3.0.7 / through 1.1.1
+            re.compile(r"\bin\s+(?P<n>[A-Z][\w .\-]{2,32}?)\s+(?:before|prior to|through)\s+[\dv]"),
+    ):
+        m = pat.search(s)
+        if not m:
+            continue
+        name = _tidy_sw_name(m.group("n"))
+        if not name:
+            continue
+        host = _tidy_sw_name(m.groupdict().get("h") or "")
+        if host and host.lower() not in name.lower():
+            name = "%s（%s）" % (name, host)
+        return name
+    return ""
+
+
+def _nvd_row(cve: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """把一条 NVD CVE 压成表格要用的字段（id/等级/评分/受影响软件/时间/摘要）。"""
+    cid = str(cve.get("id") or "").strip()
+    if not cid:
+        return None
+    if str(cve.get("vulnStatus") or "").strip().lower() == "rejected":
+        return None                            # 被撤销的 CVE 不是真漏洞，不进表
+    sev, score = _cvss_of(cve)
+    software: List[str] = []
+    for conf in (cve.get("configurations") or []):
+        if not isinstance(conf, dict):
+            continue
+        for node in (conf.get("nodes") or []):
+            if not isinstance(node, dict):
+                continue
+            for cm in (node.get("cpeMatch") or []):
+                if not isinstance(cm, dict):
+                    continue
+                name = cpe_to_software(str(cm.get("criteria") or ""))
+                if name and name not in software:
+                    software.append(name)
+    desc = ""
+    for d in (cve.get("descriptions") or []):
+        if isinstance(d, dict) and str(d.get("lang", "")).lower().startswith("en"):
+            desc = str(d.get("value") or "")
+            break
+    desc = re.sub(r"\s+", " ", desc).strip()
+    return {"id": cid, "severity": sev, "score": score, "software": software,
+            "software_guess": "" if software else _software_from_desc(desc),
+            "published": str(cve.get("published") or ""),
+            "modified": str(cve.get("lastModified") or ""),
+            "summary": desc}
+
+
+def _md_cell(s: str, limit: int = 90) -> str:
+    """表格单元格：压掉换行、转义竖线、超长省略（否则 Markdown 表格会被撑破）。"""
+    s = re.sub(r"\s+", " ", str(s or "")).replace("|", "\\|").strip()
+    return s[:limit] + ("…" if len(s) > limit else "")
+
+
+def _loads_nvd(body: str) -> Optional[Dict[str, Any]]:
+    """解析 NVD 响应（extraction_type=markdown 会给 JSON 加上 `\\_` 之类转义，需要兜底清洗）。"""
+    s = (body or "").strip()
+    if not s:
+        return None
+    if not s.startswith("{"):
+        i = s.find("{")
+        if i < 0:
+            return None
+        s = s[i:]
+    for cand in (s, _unescape_md_json(s)):
+        try:
+            obj = json.loads(cand)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def build_vuln_markdown(rows: List[Dict[str, Any]], sev_label: str, days: int,
+                        start_iso: str, end_iso: str, total: int, scanned: int,
+                        skipped_unscored: int, limit: int,
+                        notes: Optional[List[str]] = None) -> str:
+    """把筛选后的漏洞行渲染成**可直接贴给用户**的 Markdown（不经过任何模型）。
+
+    表头如实交代：时间窗、数据源、抽样范围（NVD 分页限制下实际扫了多少条）、命中条数，
+    以及任何"没拿到全量"的情况（notes）——不许把不完整的结果说得像完整的。
+    """
+    head = ["## 🛡️ NVD 漏洞速览 · %s · 最近 %d 天" % (sev_label, days),
+            "- **时间窗**：%s → %s（UTC，按 lastModified 过滤）" % (start_iso, end_iso),
+            "- **数据源**：NVD API 2.0（`lastModStartDate` / `lastModEndDate` 强制限定，非新闻搜索）"]
+    if total > 0:
+        if scanned >= total:
+            head.append("- **扫描范围**：时间窗内共 %d 条记录，已全部扫描" % total)
+        else:
+            head.append("- **扫描范围**：时间窗内共 %d 条记录，本次实际扫描 %d 条"
+                        "（NVD 单页上限 %d，取最新一页 + 最早一页）" % (total, scanned, NVD_PAGE_SIZE))
+    head.append("- **命中**：%d 条符合「%s」" % (len(rows), sev_label))
+    if rows and len(rows) < limit:
+        head.append("- ℹ️ 你要了 %d 条，但本次扫描到的符合等级的**确实只有 %d 条**（没有少给，也没有凑数）"
+                    % (limit, len(rows)))
+    if skipped_unscored:
+        head.append("- ℹ️ 另有 %d 条记录没有 CVSS 评分，无法判定等级，未计入" % skipped_unscored)
+    for n in (notes or []):
+        head.append("- ⚠️ %s" % n)
+    if not rows:
+        head.append("- ⚠️ 本次扫描范围内没有符合「%s」的漏洞。可放宽等级（severity=ANY）"
+                    "或扩大天数（days=30）再试。" % sev_label)
+        return "\n".join(head)
+
+    table = ["", "| # | CVE 编号 | 等级 | 评分 | 受影响软件 | 发布时间 | 摘要 |",
+             "|---|----------|------|------|------------|----------|------|"]
+    for i, r in enumerate(rows, 1):
+        sw = r.get("software") or []
+        if sw:
+            sw_txt = "、".join(sw[:3]) + (" 等 %d 项" % len(sw) if len(sw) > 3 else "")
+        elif r.get("software_guess"):
+            # CPE 未收录时用描述推断，并**明确标注**是推断（不冒充权威字段）
+            sw_txt = "%s（描述推断）" % r["software_guess"]
+        else:
+            sw_txt = "（NVD 未收录产品配置）"          # 如实说明缺失，不写 n/a
+        pub = str(r.get("published") or "")[:10] or "—"
+        score = r.get("score") or 0.0
+        table.append("| %d | [%s](https://nvd.nist.gov/vuln/detail/%s) | %s | %.1f | %s | %s | %s |"
+                     % (i, r.get("id", ""), r.get("id", ""), r.get("severity") or "—", float(score),
+                        _md_cell(sw_txt, 60), pub, _md_cell(r.get("summary") or "")))
+    table.append("")
+    table.append("> 想换条件：`collect_vulnerabilities(days=30, severity=\"CRITICAL\", limit=10)`；"
+                 "severity 支持 LOW / MEDIUM / HIGH / CRITICAL / ANY（单写一个等级=该等级及以上）。")
+    return "\n".join(head + table)
+
+
 class ScraplingBridge:
     """小焦插件：Scrapling MCP 桥接。
 
-    对外暴露 17 个工具（原生 13 个 1:1 + 3 个增强 + 1 个兼容入口，把复杂度全部封装在内），
-    4B 模型只需决定"抓哪个 URL"，不需要懂指纹/退避/代理/熔断。
+    对外暴露 18 个工具（原生 13 个 1:1 + 4 个增强 + 1 个兼容入口，把复杂度全部封装在内），
+    4B 模型只需决定"抓哪个 URL"或"查几天漏洞"，不需要懂指纹/退避/代理/熔断。
     """
 
     def __init__(self) -> None:
@@ -1853,6 +2129,12 @@ class ScraplingBridge:
               ["action"]),
             T("download", "下载任意文件(PDF/EPUB/ZIP/图片/音视频等)存本地，返回路径",
               {"url": S_URL, "filename": S_FN, "ignore_robots": S_IGN}, ["url"]),
+            T("collect_vulnerabilities", "查最近漏洞(CVE)：自动带时间窗，直接返回漏洞表格(编号/等级/评分/受影响软件)",
+              {"days": {"type": "integer", "description": "days: 最近几天，默认7，最大120"},
+               "severity": {"type": "string",
+                            "description": "severity: HIGH/MEDIUM/LOW/CRITICAL/ANY，默认HIGH(及以上)"},
+               "limit": {"type": "integer", "description": "limit: 返回条数，默认5，最大50"}},
+              []),
         ]
 
     # ------------------------------------------------------------------
@@ -1920,6 +2202,7 @@ class ScraplingBridge:
                 "bulk_stealthy_fetch": self._do_bulk_stealthy_fetch,
                 "scrape_with_selector": self._do_scrape_selector,
                 "download": self._do_download,
+                "collect_vulnerabilities": self._do_collect_vulnerabilities,
                 # 原生会话/截图 7 个：1:1 直通
                 "open_session": lambda q: self._do_native_session("open_session", q),
                 "open_request_session": lambda q: self._do_native_session("open_request_session", q),
@@ -2067,7 +2350,7 @@ class ScraplingBridge:
                 try:
                     ct = (r.headers.get("content-type") or "").split(";")[0].strip()
                 except Exception as e:
-                    LOG.debug("忽略异常(%s:1984): %s", __file__, 1984, e)
+                    LOG.debug("忽略异常(%s:%d): %s", __file__, 1984, e)
                 return body, getattr(r, "status", 0), ct
         try:
             return _RUNNER.run(_get(), timeout=self._cfg.timeout)
@@ -2076,6 +2359,168 @@ class ScraplingBridge:
             return None, 0, ""
 
     # ---- download：下载任意文件（PDF/EPUB/TXT/ZIP/图片/音视频…）----
+    def _fetch_raw(self, url: str, timeout: float = 0.0) -> Tuple[str, str, str]:
+        """抓取并返回**未整形、未截断**的原始响应，供结构化接口（如 NVD JSON）解析。
+
+        为什么不走 Scrapling 的抓取链路（两个真实缺陷，均已复现）：
+          ① `_single` 会经 fmt_result 美化 + 截断到 3500 字/120 行 —— 接口 JSON 的字段会被截掉；
+          ② Scrapling 的 extraction 会做 Markdown/HTML 转换：9MB 的 NVD 响应被加上 `\\_` 转义、
+             长文本里甚至被改写成非法 JSON（实测 json.loads 直接失败）。
+        所以这里对"结构化接口"走原始 HTTP；安全校验（SSRF / robots / 同域限速）照旧一步不少。
+        返回 (status, body, error)。
+        """
+        url = (url or "").strip()
+        reason = _GUARD.check_ssrf(url)
+        if reason:
+            return "", "", reason
+        ok, why = _GUARD.robots_allowed(url, USER_AGENT, False)
+        if not ok:
+            return "", "", why
+        _GUARD.wait_rate_limit(url)
+        try:
+            to = float(timeout or 0) or self._cfg.timeout
+        except Exception:
+            to = self._cfg.timeout
+        try:
+            import requests as _rq
+        except ImportError:                       # 极端环境（无 requests）→ 退回 Scrapling 原始通道
+            args = {"url": url, "extraction_type": _EXTRACT_TYPE, "timeout": to, "retries": 1}
+            res = _CLIENT.call_tool("make_request", args,
+                                    timeout=_bound_client_timeout("get", to, self._cfg.timeout), clip=False)
+            if res.get("error"):
+                return str(res.get("status", 0)), "", str(res["error"])
+            return str(res.get("status", 0)), (res.get("content") or ""), ""
+        try:
+            r = None
+            for _attempt in range(2):                 # NVD 无密钥时限流很严（429 常见）→ 退避重试一次
+                try:
+                    r = _rq.get(url, headers={"User-Agent": USER_AGENT,
+                                              "Accept": "application/json, text/plain, */*",
+                                              "Accept-Language": "en-US,en;q=0.9"}, timeout=to)
+                except Exception as e:
+                    if _attempt == 0:
+                        time.sleep(1.0)
+                        continue
+                    return "", "", "网络请求失败：%s" % sanitize(e)[:120]
+                if r.status_code in (429, 500, 502, 503, 504) and _attempt == 0:
+                    _wait = 6.0
+                    try:
+                        _wait = max(1.0, min(float(str(r.headers.get("Retry-After") or "").strip()), 10.0))
+                    except Exception:  # noqa: silent-ok — 没有 Retry-After 就用默认 6 秒退避
+                        pass
+                    logger.info("NVD/接口返回 %d，%.0f 秒后重试一次", r.status_code, _wait)
+                    time.sleep(_wait)
+                    continue
+                break
+        except Exception as e:
+            return "", "", "网络请求失败：%s" % sanitize(e)[:120]
+        body = r.text or ""
+        if r.status_code >= 400:
+            _why = {403: "被拒绝或已限流", 404: "地址不存在", 429: "请求过于频繁（限流）"}.get(
+                r.status_code, "请求失败")
+            return str(r.status_code), body, "目标返回 HTTP %d（%s）" % (r.status_code, _why)
+        if len(body) > 32 * 1024 * 1024:          # 兜底：异常巨大的响应不往内存里吃
+            return str(r.status_code), "", "响应体过大（%.1f MB），已放弃解析" % (len(body) / 1048576.0)
+        return str(r.status_code), body, ""
+
+    def _do_collect_vulnerabilities(self, p: Dict[str, Any]) -> str:
+        """抓 NVD 最近漏洞，并在插件层压平成 Markdown 表格。
+
+        参数：days（默认 7，上限 120，NVD 官方限制）、severity（默认 HIGH，单写=该等级及以上）、
+              limit（默认 5，上限 50）。
+        输出：带时间窗说明 + 表格（CVE 编号/等级/评分/受影响软件/发布时间/摘要），模型无需再提取。
+        """
+        days = _clamp_int(p.get("days"), 7, 1, NVD_WINDOW_MAX_DAYS)
+        limit = _clamp_int(p.get("limit"), 5, 1, 50)
+        sev_raw = (str(p.get("severity") or "HIGH").strip().upper()) or "HIGH"
+        want: set = set()
+        if sev_raw not in ("ANY", "ALL", "*", "全部", "不限"):
+            for tok in re.split(r"[,\s/|]+", sev_raw):
+                tok = tok.strip().upper()
+                if tok in _SEV_ORDER:
+                    want.add(tok)
+                elif tok in ("严重", "致命"):
+                    want.add("CRITICAL")
+                elif tok in ("高", "高危"):
+                    want.add("HIGH")
+                elif tok in ("中", "中危"):
+                    want.add("MEDIUM")
+                elif tok in ("低", "低危"):
+                    want.add("LOW")
+        if not want:                                    # 不限等级
+            sev_label = "全部等级"
+            keep: Callable[[str], bool] = lambda s: True
+        elif len(want) > 1:                             # 明确列了多个等级 → 精确匹配
+            sev_label = " / ".join(sorted(want, key=lambda s: -_SEV_ORDER[s]))
+            _w = set(want)
+            keep = lambda s: s in _w
+        else:                                           # 只给一个等级 → 该等级及以上（"高危"含严重）
+            _lvl = next(iter(want))
+            _th = _SEV_ORDER[_lvl]
+            sev_label = "%s 及以上" % _lvl
+            keep = lambda s, th=_th: _SEV_ORDER.get(s, 0) >= th
+
+        now = time.time()
+        _fmt = "%Y-%m-%dT%H:%M:%S.000"
+        start_iso = time.strftime(_fmt, time.gmtime(now - days * 86400.0)) + "+00:00"
+        end_iso = time.strftime(_fmt, time.gmtime(now)) + "+00:00"
+        window = ("lastModStartDate=%s&lastModEndDate=%s"
+                  % (urllib.parse.quote(start_iso, safe=""), urllib.parse.quote(end_iso, safe="")))
+        first = "%s?%s&resultsPerPage=%d&startIndex=0" % (NVD_API, window, NVD_PAGE_SIZE)
+        try:
+            _to = float(p.get("timeout") or 0)
+        except Exception:
+            _to = 0.0
+        status, body, err = self._fetch_raw(first, timeout=_to)
+        if err:
+            return fmt_result(0, first, "", "NVD 接口请求失败：%s（稍等几分钟再试，NVD 无密钥时限流较严）"
+                              % _humanize_error(err)[:120])
+        data = _loads_nvd(body)
+        if data is None:
+            return fmt_result(status, first, "",
+                              "NVD 返回内容不是合法 JSON（status=%s，多半是被限流了，请稍后重试）" % status)
+        vulns = [v for v in (data.get("vulnerabilities") or []) if isinstance(v, dict)]
+        total = _clamp_int(data.get("totalResults"), len(vulns), 0, 10 ** 9)
+        notes: List[str] = []
+        if total > NVD_PAGE_SIZE:
+            # 窗口内记录超一页：再取最后一页，保证"最新几条"确实落在手里
+            tail = "%s?%s&resultsPerPage=%d&startIndex=%d" % (
+                NVD_API, window, NVD_PAGE_SIZE, max(0, total - NVD_PAGE_SIZE))
+            _s2, body2, err2 = self._fetch_raw(tail, timeout=_to)
+            _d2 = _loads_nvd(body2) if not err2 else None
+            if _d2:
+                vulns += [v for v in (_d2.get("vulnerabilities") or []) if isinstance(v, dict)]
+            else:
+                # 拉不到第二页就如实说，不能把"只扫了一半"讲成"扫完了"
+                notes.append("第二页（最早一页）没拉到（%s），本次只扫描了最新 %d 条"
+                             % (_humanize_error(err2)[:60] if err2 else "返回内容不是合法 JSON",
+                                NVD_PAGE_SIZE))
+
+        rows, seen, scanned, unscored = [], set(), 0, 0
+        for item in vulns:
+            cve = item.get("cve")
+            if not isinstance(cve, dict):
+                continue
+            _cid = str(cve.get("id") or "")
+            if _cid and _cid in seen:          # 首尾两页在窗口很小时会重叠，去重后再计数
+                continue
+            if _cid:
+                seen.add(_cid)
+            scanned += 1
+            row = _nvd_row(cve)
+            if not row:
+                continue
+            if not row["severity"]:
+                unscored += 1
+                continue
+            if not keep(row["severity"]):
+                continue
+            rows.append(row)
+        rows.sort(key=lambda r: (r.get("modified") or r.get("published") or ""), reverse=True)
+        md = build_vuln_markdown(rows[:limit], sev_label, days, start_iso, end_iso,
+                                 total, scanned, unscored, limit, notes=notes)
+        return fmt_result(status or 200, NVD_API, md, "")
+
     def _do_download(self, p: Dict[str, Any]) -> str:
         """把 URL 指向的**文件**下载到本地 downloads/ 目录，返回保存路径与大小。
 
@@ -2149,7 +2594,7 @@ class ScraplingBridge:
                         try:
                             os.remove(fp)
                         except OSError as e:
-                            LOG.debug("忽略异常(%s:2066): %s", __file__, 2066, e)
+                            LOG.debug("忽略异常(%s:%d): %s", __file__, 2066, e)
                         return fmt_result(0, url, "", "文件超过 %d MB 上限，已中止（可先确认文件大小）" % MAX_DOWNLOAD_MB)
         except OSError as e:
             return fmt_result(0, url, "", "写入失败（磁盘空间/权限）：%s" % sanitize(e)[:100])
@@ -2160,7 +2605,7 @@ class ScraplingBridge:
             try:
                 os.remove(fp)
             except OSError as e:
-                LOG.debug("忽略异常(%s:2077): %s", __file__, 2077, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 2077, e)
             return fmt_result(0, url, "", "下载失败：目标返回空内容（0 字节），未保存文件")
         _want_bin = os.path.splitext(name)[1].lower() in (".pdf", ".epub", ".zip", ".mobi", ".exe", ".apk", ".mp4", ".mp3")
         if ctype == "text/html" and _want_bin:
@@ -2483,7 +2928,7 @@ def _humanize_error(msg: str) -> str:
         try:
             sid = m.split("'")[1]
         except Exception as e:
-            LOG.debug("忽略异常(%s:2400): %s", __file__, 2400, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 2400, e)
         return ("会话 %s 不存在（可能已被关闭或服务重启过）—— 先调用 list_sessions 看有哪些会话，"
                 "或重新 open_session / open_request_session 开一个" % (sid or "该"))
     if "input should be 'dynamic'" in low or "type=literal_error" in low or "validation error" in low:
@@ -2524,7 +2969,7 @@ def _sid_of(out: str) -> str:
         if isinstance(body, dict):
             return str(body.get("session_id") or "")
     except Exception as e:
-        LOG.debug("忽略异常(%s:2441): %s", __file__, 2441, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 2441, e)
     return ""
 
 

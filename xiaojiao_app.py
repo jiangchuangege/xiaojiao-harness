@@ -27,9 +27,12 @@ LOG = get_logger(__name__)
 
 # ================== 配置（读取「操控文件」xiaojiao_control.json） ==================
 # 你想让小焦成为什么类型的模型、用什么大脑、开哪些工具，全部由这个文件决定。
+# 操控文件的**绝对路径**（模块级）：以前这个路径只是 _load_control() 里的局部变量 _CFG，
+# 而 /api/persona 却直接引用 _CFG → 切人格一定 NameError 500（真实缺陷，ruff F821 抓出来的）。
+CONTROL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json")
+
+
 def _load_control():
-    import os as _os
-    _CFG = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "xiaojiao_control.json")
     c = {"model_name": "xiaojiao1.0-4B", "web_port": 5000,
          "brain": {"engine": "auto",
                    "api": {"base_url": os.environ.get("LLM_BASE_URL", "http://127.0.0.1:8080/v1"),
@@ -40,12 +43,15 @@ def _load_control():
                   "不要机械复读，要自然接话。"),
          "capabilities": {"web_search": True, "memory": True, "context_len": 20, "auto_deep_think": True},
          "behavior": {"temperature": 0.7, "max_tokens": 2048}}
-    p = "xiaojiao_control.json"
-    if os.path.exists(p):
+    # 优先读"模块所在目录"的操控文件（不受启动目录影响）；没有就退回相对路径，保持老行为
+    for p in (CONTROL_FILE, "xiaojiao_control.json"):
+        if not os.path.exists(p):
+            continue
         try:
             c.update(json.load(open(p, encoding="utf-8")))
+            break
         except Exception as e:
-            LOG.debug("忽略异常(%s:40): %s", __file__, 40, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 44, e)
     return c
 
 CONTROL = _load_control()
@@ -58,7 +64,28 @@ BRAIN_ENGINE = BRAIN.get("engine", "auto")          # auto | llama | xiaojiao | 
 LLM_BASE = BRAIN.get("api", {}).get("base_url", "http://127.0.0.1:8080/v1")
 LLM_KEY = BRAIN.get("api", {}).get("api_key", "")
 LLM_MODEL = BRAIN.get("api", {}).get("model", MODEL_NAME)
-SYSTEM_PROMPT = CONTROL.get("role", "")             # ← 人设/类型，改 control 文件即换模型人格
+# 检索铁律：写死在代码里，而不是只写在 control 文件里 —— 用户换人设/换模型也不会把这条规矩弄丢。
+# 真实缺陷防复发：小焦曾把功能字「用」当关键词去搜，搜回来的是"用（汉语汉字）"百科词条。
+_SEARCH_RULES = (
+    "\n[检索铁律] "
+    "① 调用 web_search 时，query 只能是**内容关键词**（如「最近的漏洞 CVE」「2026 年 AI 新闻」），"
+    "禁止把「用/搜/找/抓/看/搞/请/帮」这类功能字、语气词或整句话当检索词；"
+    "② 漏洞/CVE/高危 类问题**优先**调用 collect_vulnerabilities(days=7, severity=\"HIGH\", limit=5)，"
+    "不要用新闻搜索代替；"
+    "③ 用户没说清要搜什么时，先反问「请告诉我你要搜索的具体关键词」，绝不用单个字去搜。"
+)
+
+
+def compose_system_prompt(role):
+    """人设 + 检索铁律。**所有**给人设赋值的地方都必须走这里。
+
+    为什么单独立个函数：`reload_control()`（切人设/改配置后调用）原来直接
+    `SYSTEM_PROMPT = CONTROL.get("role","")`，把铁律丢了 —— 缺陷会悄悄复发。
+    """
+    return (role or "") + _SEARCH_RULES
+
+
+SYSTEM_PROMPT = compose_system_prompt(CONTROL.get("role", ""))   # ← 人设/类型，改 control 文件即换模型人格
 CAP = CONTROL.get("capabilities", {})
 FULL_ACCESS = CONTROL.get("capabilities", {}).get("full_access", True)  # True=全权限(危险命令也不询问直接执行)；False=只读(每次执行都询问)
 BEH = CONTROL.get("behavior", {})
@@ -83,7 +110,7 @@ def reload_control():
     LLM_BASE = BRAIN.get("api", {}).get("base_url", "http://127.0.0.1:8080/v1")
     LLM_KEY = BRAIN.get("api", {}).get("api_key", "")
     LLM_MODEL = BRAIN.get("api", {}).get("model", MODEL_NAME)
-    SYSTEM_PROMPT = CONTROL.get("role", "")
+    SYSTEM_PROMPT = compose_system_prompt(CONTROL.get("role", ""))   # 走统一合成，别把检索铁律丢掉
     CAP = CONTROL.get("capabilities", {})
     BEH = CONTROL.get("behavior", {})
     MAX_HISTORY = int(CAP.get("context_len", 20))
@@ -344,7 +371,7 @@ def _find_tts_model_dir():
                 if _ia._hit_keyword(_t, _kws) or _ia._hit_keyword(_t, ("downloads", "下载")):
                     cands.append(os.path.join(_drv, _t))
     except Exception as e:
-        LOG.debug("忽略异常(%s:344): %s", __file__, 344, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 344, e)
     for c in cands:
         try:
             subs = [c] + [os.path.join(c, x) for x in os.listdir(c) if os.path.isdir(os.path.join(c, x))]
@@ -381,7 +408,7 @@ def _record_usage(usage, model=""):
             day["local_tokens"] += pt + ct
         json.dump(d, open(_COST_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     except Exception as e:
-        LOG.debug("忽略异常(%s:381): %s", __file__, 381, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 381, e)
 
 
 def _build_tools():
@@ -448,8 +475,136 @@ def _clean_html(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
+# ================== 检索词清洗（真实缺陷：小焦曾把功能字「用」当关键词去搜） ==================
+# 复盘：用户说"用搜索工具找漏洞" —— 模型把整句/单个功能字直接丢给 web_search，
+# 搜出来的是"用（汉语汉字）"这种百科词条，完全跑偏。
+# 修法：① 代码层强制清洗（不管模型/上层给的是什么）；② 清洗后仍无内容 → 反问用户要关键词，绝不用单字硬搜。
+_SEARCH_CMD_MARKERS = ("搜", "查", "找", "抓", "爬", "检索", "联网", "上网", "搜索", "工具")
+_SEARCH_FILLERS = (
+    "用搜索工具", "搜索工具", "联网搜索", "联网查一下", "联网查", "上网搜一下", "上网搜", "网上搜",
+    "帮我搜一下", "帮我搜", "帮忙搜", "帮我查一下", "帮我查", "帮忙查", "帮我找一下", "帮我找",
+    "给我搜", "给我查", "给我找", "搜索一下", "搜一下", "查一下", "找一下", "抓一下", "爬一下",
+    "搜索", "检索", "联网", "上网", "网上", "帮我", "帮忙", "请问", "麻烦", "谢谢", "一下",
+    "一个", "一些", "给我", "来个", "给出", "列一下", "看看", "瞧瞧", "找找", "找一找",
+)
+# 单字功能/语气词：只在"开头或两侧带空格"时算噪声，避免误伤"未来/在线/用户"这类真词
+_SEARCH_FUNC_CHARS = "用搜找抓查看搞请帮要想来去呗吧的了呢吗啊呀把给让我你它他她是个些就都还很这那与和在有"
+_SEARCH_MEANINGLESS = set(_SEARCH_FUNC_CHARS)
+SEARCH_KEYWORD_HINT = "请告诉我你要搜索的具体关键词（例如：最近的漏洞 CVE、2026 年 AI 新闻）。"
+
+
+def _has_search_marker(s):
+    """句子里有没有"检索动作词" —— 有才是命令式（可以大胆删功能字），没有就当裸关键词保守处理。"""
+    return any(m in s for m in _SEARCH_CMD_MARKERS)
+
+
+def extract_search_keywords(text):
+    """把「用联网搜一下最近的漏洞」这类口语指令清洗成真正能用的检索关键词。
+
+    · 命令式（含 搜/查/找/抓/联网/工具…）：删掉动作词、语气词、标点 → "漏洞"；
+    · 裸关键词（用户直接甩词，如"看雪安全"）：只做保守清洗，绝不删词内的字（不能变成"雪安全"）。
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"[，。！？；：、,.!?;:\"'“”‘’（）()\[\]【】<>《》~]+", " ", s)
+    for w in sorted(_SEARCH_FILLERS, key=len, reverse=True):
+        s = s.replace(w, " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    if _has_search_marker(text or ""):
+        s = re.sub(r"(^|\s)[%s]+" % _SEARCH_FUNC_CHARS, r"\1", s)                    # 开头的成串功能字
+        s = re.sub(r"(^|\s)[%s](?=\s|$)" % _SEARCH_FUNC_CHARS, r"\1", s)            # 独立成词的功能字
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _is_meaningless_query(q):
+    """清洗后的关键词是不是"根本没内容"（空 / 单个功能字 / 全是标点）。"""
+    q = (q or "").strip()
+    if not q:
+        return True
+    if len(q) == 1 and q in _SEARCH_MEANINGLESS:
+        return True
+    return all((ch in _SEARCH_MEANINGLESS) or (not ch.isalnum()) for ch in q)
+
+
+def resolve_search_query(text):
+    """检索统一闸门：返回 (可用关键词, 错误提示)。关键词为空时**必须**提示用户，不许硬搜。"""
+    raw = (text or "").strip()
+    q = extract_search_keywords(raw)
+    if _is_meaningless_query(q):
+        LOG.warning("检索词无效，已拒绝搜索（原文=%r，清洗后=%r）", raw[:60], q[:60])
+        return "", SEARCH_KEYWORD_HINT
+    if _is_vuln_query(q) and "cve" not in q.lower():
+        q = (q + " CVE").strip()          # 漏洞类检索自动带上 CVE，避免搜出无关新闻
+    return q, ""
+
+
+# ================== 漏洞查询直通（NVD 结构化数据，不让模型"看新闻猜漏洞"） ==================
+# 复盘：以前"抓最近 7 天的高危漏洞"拿到的是 1999 年数据、受影响软件全是 n/a、5 条只总结 1 条。
+# 现在改为：识别到"要漏洞清单"的意图 → 直接调插件 collect_vulnerabilities → 表格原样给用户。
+_VULN_WORDS = ("漏洞", "cve-", "cve ", "cve编号", "cve编号", "0day", "零日", "exploit",
+               "安全公告", "补丁公告", "高危")
+_VULN_DATA_HINTS = ("搜", "查", "找", "抓", "看", "要", "给", "列", "汇总", "统计", "整理", "总结",
+                    "最新", "最近", "近期", "今日", "今天", "本周", "这周", "本月", "这个月",
+                    "这几天", "近几天", "天", "条", "高危", "严重", "紧急", "级别", "等级")
+
+
+def _is_vuln_query(text):
+    t = (text or "").lower()
+    return any(w in t for w in _VULN_WORDS)
+
+
+def detect_vulnerability_query(text):
+    """识别"要看漏洞清单"的意图 → 返回 collect_vulnerabilities 的参数；识别不到返回 None。
+
+    只认"要数据"的说法（含 搜/查/找/抓/最新/最近/高危/N天…）；
+    纯概念提问（"什么是漏洞"）不拦，仍交给大脑正常回答。
+    """
+    raw = (text or "").strip()
+    low = raw.lower()
+    if not _is_vuln_query(raw) or not any(h in low for h in _VULN_DATA_HINTS):
+        return None
+    days = 7
+    m = re.search(r"(\d+)\s*天", raw)
+    if m:
+        days = int(m.group(1))
+    elif any(k in raw for k in ("今天", "今日", "当日")):
+        days = 1
+    elif any(k in raw for k in ("昨天", "昨日")):
+        days = 2
+    elif any(k in raw for k in ("一个月", "本月", "这个月", "近一月")):
+        days = 30
+    elif any(k in raw for k in ("一周", "本周", "这周", "七天", "7 天")):
+        days = 7
+    days = max(1, min(days, 120))                     # NVD 官方限制：时间窗 ≤ 120 天
+    severity = "HIGH"
+    if any(k in low for k in ("严重", "致命", "critical", "紧急")):
+        severity = "CRITICAL"
+    elif any(k in low for k in ("高危", "high")):
+        severity = "HIGH"
+    elif any(k in low for k in ("中危", "medium")):
+        severity = "MEDIUM"
+    elif any(k in low for k in ("低危", "low")):
+        severity = "LOW"
+    elif any(k in low for k in ("全部", "所有", "不限", "any")):
+        severity = "ANY"
+    limit = 5
+    m2 = re.search(r"(\d+)\s*(条|个|项|款)", raw)
+    if m2:
+        limit = int(m2.group(1))
+    return {"days": days, "severity": severity, "limit": max(1, min(limit, 50))}
+
+
 def web_search(query, num=6):
-    """免密钥 Bing/Sogou 中文搜索，返回 [(标题, 内容)]。"""
+    """免密钥 Bing/Sogou 中文搜索，返回 [(标题, 链接, 内容)]。
+
+    注意：这里**再清洗一次**检索词（双保险）—— 上层（模型 tool_call / 自动检索）可能把
+    "用搜索工具找漏洞"这种整句、甚至单个功能字丢进来，直接搜会得到完全跑偏的结果。
+    """
+    query = extract_search_keywords(query)
+    if _is_meaningless_query(query):
+        LOG.warning("检索词无效，已跳过搜索：%r", str(query)[:60])
+        return []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     engines = [("https://cn.bing.com/search?q=", r'<li class="b_algo"[^>]*>(.*?)</li>'),
                ("https://www.sogou.com/web?query=", r'<div class="vrwrap"[^>]*>(.*?)</div>'),
@@ -503,7 +658,7 @@ def save_memory(mem):
     try:
         json.dump(mem, open(MEMORY_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     except Exception as e:
-        LOG.debug("忽略异常(%s:503): %s", __file__, 503, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 503, e)
 
 
 def _key(text):
@@ -554,7 +709,7 @@ def save_history(hist):
         json.dump(hist[-MAX_HISTORY:], open(HISTORY_FILE, "w", encoding="utf-8"),
                   ensure_ascii=False)
     except Exception as e:
-        LOG.debug("忽略异常(%s:554): %s", __file__, 554, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 554, e)
 
 
 # ================== 会话存储（每个新对话一个会话，可切换） ==================
@@ -567,7 +722,7 @@ def _sessions():
         if isinstance(d, dict) and "sessions" in d:
             return d
     except Exception as e:
-        LOG.debug("忽略异常(%s:567): %s", __file__, 567, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 567, e)
     default = {"id": "default", "title": "新对话", "messages": []}
     return {"current": "default", "sessions": [default]}
 
@@ -576,7 +731,7 @@ def _save_sessions(d):
     try:
         json.dump(d, open(SESSIONS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     except Exception as e:
-        LOG.debug("忽略异常(%s:576): %s", __file__, 576, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 576, e)
 
 
 def get_current_session():
@@ -615,7 +770,7 @@ def llm_chat(messages):
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        LOG.debug("忽略异常(%s:615): %s", __file__, 615, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 615, e)
     return None
 
 
@@ -633,7 +788,7 @@ def llm_online():
         if requests.get("http://" + host + "/health", timeout=3).status_code == 200:
             return True
     except Exception as e:
-        LOG.debug("忽略异常(%s:633): %s", __file__, 633, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 633, e)
     # 2) 端口连通(外部API如deepseek可能无/health, 但端口可达)
     try:
         h, _, pt = host.rpartition(":")
@@ -688,6 +843,10 @@ TOOLS = [
 DANGEROUS_CMD = re.compile(r"\b(rm|del|rd|format|shutdown|reboot|mkfs|dd|reg\s+delete|taskkill\s+/f|net\s+user|netsh|icacls|takeown|chkdsk\s+/f|tskill|vssadmin)\b", re.I)
 SAFE_ROOT = os.path.abspath(os.getcwd())
 PENDING = None          # 待用户确认的危险动作 (name, args)
+# 语音模型全局缓存（懒加载）。**必须定义在这里**：以前 `api_voice_warm` 里没写 `global`，
+# 模型加载完就丢进局部变量被回收 —— 预热等于白热，而且 `or _asr_model is None` 还可能抛 UnboundLocalError。
+_asr_model = None       # Whisper（语音识别）
+_tts_model = None       # Chatterbox（语音合成）
 
 
 def is_dangerous(name, args):
@@ -730,11 +889,18 @@ def run_tool(name, args, force=False):
     PENDING = None
     try:
         if name == "web_search":
-            q = args.get("query", ""); n = int(args.get("num", 5))
+            raw_q = str(args.get("query", "") or ""); n = int(args.get("num", 5))
+            if not raw_q.strip():
+                return SEARCH_KEYWORD_HINT
+            q, hint = resolve_search_query(raw_q)      # 强制清洗：功能字/整句都不许直接拿去搜
             if not q:
-                return "缺少查询词"
+                return hint
             res = web_search(q, num=n)
-            return "\n".join("%s%s：%s" % (t, (" [%s]" % u) if u else "", c) for t, u, c in res[:n]) or "(无结果)"
+            _head = ""
+            if q != raw_q.strip():                     # 清洗过就如实说明，方便用户核对
+                _head = "（已把「%s」清洗成检索关键词「%s」）\n" % (raw_q.strip()[:40], q)
+            return _head + ("\n".join("%s%s：%s" % (t, (" [%s]" % u) if u else "", c) for t, u, c in res[:n])
+                            or "(无结果)")
         if name == "check_env":
             items = (args.get("items") or "python,git,node,ffmpeg")
             out = []
@@ -752,7 +918,7 @@ def run_tool(name, args, force=False):
                             if vr.stdout.strip():
                                 ver = vr.stdout.strip().split("\n")[0][:40]; break
                         except Exception as e:
-                            LOG.debug("忽略异常(%s:752): %s", __file__, 752, e)
+                            LOG.debug("忽略异常(%s:%d): %s", __file__, 752, e)
                     if r.returncode == 0:
                         out.append("✅ %s 已安装%s" % (it, ("，版本: " + ver) if ver else ""))
                     else:
@@ -863,7 +1029,7 @@ def run_tool(name, args, force=False):
                                 if len(hits) >= 30:
                                     break
                     except Exception as e:
-                        LOG.debug("忽略异常(%s:863): %s", __file__, 863, e)
+                        LOG.debug("忽略异常(%s:%d): %s", __file__, 863, e)
                     if len(hits) >= 30:
                         break
                 if len(hits) >= 30:
@@ -938,7 +1104,7 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
             _other = "xiaojiao" if LLM_MODEL == "coder" else "coder"
             _ms._llama_swap_unload(_other)
     except Exception as e:
-        LOG.debug("忽略异常(%s:938): %s", __file__, 938, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 938, e)
     m = list(messages)
     tool_trace = []
     for _ in range(max_rounds):
@@ -958,7 +1124,7 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
             try:
                 _record_usage(r.json().get("usage"), LLM_MODEL)
             except Exception as e:
-                LOG.debug("忽略异常(%s:958): %s", __file__, 958, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 958, e)
         except Exception:
             return None, tool_trace
         tool_calls = msg.get("tool_calls")
@@ -1051,7 +1217,7 @@ def _llm_ask_raw(prompt):
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        LOG.debug("忽略异常(%s:1051): %s", __file__, 1051, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 1051, e)
     return ""
 
 
@@ -1242,12 +1408,12 @@ def _learn_skill(user_input: str, tool: str, args, ok: bool, detail: str) -> Non
             import vstore
             vstore.add(line, tag="tool_skill")
         except Exception as e:
-            LOG.debug("忽略异常(%s:1242): %s", __file__, 1242, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1242, e)
     except Exception as e:
         try:
             print("学习沉淀失败(不影响使用): %s" % str(e)[:80])
         except Exception as e:
-            LOG.debug("忽略异常(%s:1247): %s", __file__, 1247, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1247, e)
 
 
 def _recall_skills(query: str, k: int = 3) -> str:
@@ -1279,7 +1445,7 @@ def plan_tool(user_input):
             if isinstance(j, dict) and j.get("tool"):
                 return j["tool"], j.get("args", {})
         except Exception as e:
-            LOG.debug("忽略异常(%s:1279): %s", __file__, 1279, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1279, e)
     return None, None
 
 
@@ -1307,20 +1473,50 @@ def agent_run(user_input, lean=False):
         mem = recall(user_input)
         mem_text = "\n".join(f"- {m['q']}：{m['know'][0]}" for m in mem[:2]) if mem else ""
 
+    # 1b. 漏洞查询直通（结构化数据）：NVD 表格直接给用户看，不让模型再"提取"一遍
+    #     真实缺陷防复发：走这条路就不会出现"1999 年数据 / 受影响软件 n/a / 5 条只总结 1 条"。
+    answer = None
+    tool_trace = []
+    if CAP.get("run_tools", True):
+        _vq = detect_vulnerability_query(user_input)
+        if _vq:
+            try:
+                _build_tools()          # 填充 _TOOL2PLUGIN，确保插件工具可被调用
+            except Exception as e:
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 1465, e)
+            _vres = _tool_result_str(run_tool("collect_vulnerabilities", _vq, force=True))
+            try:
+                _vj = json.loads(_vres)
+            except Exception:
+                _vj = {}
+            _vbody = str((_vj or {}).get("content") or "").strip()
+            _verr = str((_vj or {}).get("error") or "").strip()
+            if not _vbody and not _verr and "未知工具" in _vres:
+                LOG.warning("漏洞查询不可用：抓取插件未加载，回退常规检索")
+            else:
+                _rows = max(0, sum(1 for _l in _vbody.splitlines() if _l.startswith("|")) - 2)
+                tool_trace.append({"tool": "collect_vulnerabilities", "args": _vq,
+                                   "result": "NVD 漏洞表：%d 行（%s，最近 %d 天）"
+                                             % (_rows, _vq["severity"], _vq["days"])})
+                answer = _vbody or ("⚠️ 漏洞查询失败：%s" % (_verr or "接口没有返回内容，请稍后重试"))
+
     # 2. 联网检索（受操控文件 capabilities 控制）
+    #    检索词必须先过闸门：整句/功能字一律清洗，清洗后为空就干脆不搜（不再拿"用"去搜百科）。
     info = []
-    if CAP.get("web_search", True):
-        info = web_search(user_input, num=5)
+    if CAP.get("web_search", True) and answer is None:
+        _q, _qhint = resolve_search_query(user_input)
+        if _q:
+            info = web_search(_q, num=5)
+        elif _qhint:
+            LOG.info("跳过自动检索：%s", _qhint)
     web_text = "\n".join((f"{t}：{c}" if len(t)==3 else f"{t}：{c}") for t, c in [ (x[0],x[2]) for x in info[:4] ]) if info else ""
 
     # 3. 大脑回答：遵循操控文件的 brain.engine
-    answer = None
-    tool_trace = []
     want_llm = llm_online() if BRAIN_ENGINE == "auto" else (BRAIN_ENGINE in ("llama", "api"))
     has_llm = want_llm and llm_online()
 
     # ① 优先让大模型自己“想”并调用工具（原生 function calling / <tool_call> XML）
-    if has_llm:
+    if has_llm and answer is None:
         home = os.path.expanduser("~")
         desktop = os.path.join(home, "Desktop")
         path_ctx = ("\n[环境] 当前工作目录：%s；用户主目录：%s；桌面：%s。"
@@ -1359,7 +1555,7 @@ def agent_run(user_input, lean=False):
             try:
                 _build_tools()          # 填充 _TOOL2PLUGIN，确保插件工具可被调用
             except Exception as e:
-                LOG.debug("忽略异常(%s:1359): %s", __file__, 1359, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 1538, e)
             _tn, _ta = _sc
             _res = _tool_result_str(run_tool(_tn, _ta, force=True))
             tool_trace.append({"tool": _tn, "args": _ta, "result": _trace_summary(_res)})
@@ -1406,7 +1602,7 @@ def agent_run(user_input, lean=False):
                 answer = _summarize_tool(user_input, result, tname)
 
     # ③ 大模型不在线但有执行类操作 → 明确提示，不胡诌
-    if not has_llm and CAP.get("run_tools", True):
+    if not has_llm and answer is None and CAP.get("run_tools", True):
         it = detect_tool_intent(user_input)
         if it:
             answer = ("⚠️ 需要执行工具操作「%s」，但当前没有可用的智能大脑（本地大模型未启动）。"
@@ -1427,7 +1623,7 @@ def agent_run(user_input, lean=False):
             _bad = any(k in _r for k in ("失败", "错误", "Error", "error", "禁止", "超时", "不可用"))
             _learn_skill(user_input, _t.get("tool", ""), _t.get("args"), not _bad, _r)
     except Exception as e:
-        LOG.debug("忽略异常(%s:1427): %s", __file__, 1427, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 1427, e)
 
     # 5. 落地上下文
     if answer:
@@ -1455,6 +1651,44 @@ def _no_cache(resp):
 # ================== Agent 预设切换（presets/） ==================
 _PRESETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
 
+# 插件生成失败时的**兜底模板**（真实缺陷：这里原来写的是未定义变量 TPL，
+# 于是"模型生成失败 → 给你一个模板"这条兜底路径一进去就 NameError 500）。
+# 模板契约与 /api/plugin/generate 的提示词一致：get_tool_descriptions() + execute() + get_plugin()。
+_PLUGIN_TPL = '''# -*- coding: utf-8 -*-
+"""{desc_short} —— 小焦插件模板（自动生成）
+
+改法：把 execute() 里的 TODO 换成你的真实逻辑，重启小焦即生效。
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+
+class MyPlugin:
+    """插件契约：get_tool_descriptions() 声明工具，execute(tool_name, params) 执行。"""
+
+    def get_tool_descriptions(self) -> List[Dict[str, Any]]:
+        return [{{
+            "name": "{tname}",
+            "description": "TODO：一句话说明这个工具干什么（≤60 字，4B 模型才好选）",
+            "parameters": {{"type": "object",
+                           "properties": {{"text": {{"type": "string", "description": "text: 输入"}}}},
+                           "required": []}},
+        }}]
+
+    def execute(self, tool_name: str, params: Dict[str, Any]) -> str:
+        params = params or {{}}
+        if tool_name != "{tname}":
+            return "未知工具：%s" % tool_name
+        text = str(params.get("text") or "").strip()
+        # TODO: 在这里实现你的逻辑；异常请自己接住并返回**中文可读**的说明
+        return "收到：%s（模板占位，请在 plugins/{fname} 里实现）" % (text or "（空）")
+
+
+def get_plugin():
+    return MyPlugin()
+'''
+
 
 def _list_preset_files():
     if not os.path.isdir(_PRESETS_DIR):
@@ -1474,6 +1708,7 @@ def api_pet():
 def api_voice_warm():
     """语音通话预热: 启动即加载 聊天脑(4B) + 识别(whisper) + 发声(chatterbox) 到内存, 保证首次交互快。
     用户主要用语音, 所以语音优先; 切到别的才换。"""
+    global _asr_model, _tts_model          # 不声明 global 的话，模型会被丢进局部变量、预热白做
     import os as _os
     warm = {"chat": False, "asr": False, "tts": False, "err": ""}
     # ① 聊天脑 4B 加载(llama-swap 预热, 保持加载不卸载)
@@ -1488,7 +1723,7 @@ def api_voice_warm():
     try:
         _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
         from faster_whisper import WhisperModel
-        if "_asr_model" not in globals() or _asr_model is None:
+        if _asr_model is None:
             _asr_model = WhisperModel("base", device="cpu", compute_type="int8")
         warm["asr"] = True
     except Exception as e:
@@ -1501,7 +1736,7 @@ def api_voice_warm():
         from chatterbox import ChatterboxTTS
         from pathlib import Path
         _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-        if "_tts_model" not in globals() or _tts_model is None:
+        if _tts_model is None:
             _mdir = _find_tts_model_dir()
             _tts_model = ChatterboxTTS.from_local(Path(_mdir), device="cuda") if _mdir else ChatterboxTTS.from_pretrained(device="cuda")
         warm["tts"] = True
@@ -1522,7 +1757,7 @@ def api_asr():
         import os as _osenv
         _osenv.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")  # 国内镜像, 下模型不走外网
         from faster_whisper import WhisperModel
-        if "_asr_model" not in globals() or _asr_model is None:
+        if _asr_model is None:
             _asr_model = WhisperModel("base", device="cpu", compute_type="int8")  # CPU避开cuBLAS12缺失; 短句够快
         tmp = tempfile.NamedTemporaryFile(suffix=".webm", delete=False)
         f.save(tmp.name)
@@ -1531,7 +1766,7 @@ def api_asr():
         try:
             os.remove(tmp.name)
         except Exception as e:
-            LOG.debug("忽略异常(%s:1531): %s", __file__, 1531, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1531, e)
         return jsonify({"ok": True, "text": text})
     except Exception as e:
         return jsonify({"ok": False, "error": "识别失败: " + str(e)[:120]}), 500
@@ -1551,7 +1786,7 @@ def api_tts():
         return jsonify({"ok": False, "error": "需 pip install chatterbox-tts torchaudio", "need_install": True})
     try:
         global _tts_model
-        if "_tts_model" not in globals() or _tts_model is None:
+        if _tts_model is None:
             import perth as _perth
             if getattr(_perth, "PerthImplicitWatermarker", None) is None:
                 _perth.PerthImplicitWatermarker = _perth.DummyWatermarker  # 用水印占位, 跳过模型, 照常出音
@@ -1699,7 +1934,7 @@ def api_plugin_generate():
     except Exception:
         code = ""
     if not code:
-        code = TPL.format(fname=name, tname=tname, desc_short=desc[:40])
+        code = _PLUGIN_TPL.format(fname=name, tname=tname, desc_short=desc[:40])
     fp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins", name)
     try:
         open(fp, "w", encoding="utf-8").write(code)
@@ -1709,7 +1944,7 @@ def api_plugin_generate():
         global PLUGINS
         PLUGINS = load_plugins()
     except Exception as e:
-        LOG.debug("忽略异常(%s:1709): %s", __file__, 1709, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 1709, e)
     return jsonify({"ok": True, "name": name.split(".py")[0], "file": "plugins/" + name, "note": "已生成并注册，设置->插件 可开关"})
 
 
@@ -1894,7 +2129,7 @@ def api_workspace():
                 sz = ""
             out.append({"name": name, "type": typ, "size": sz})
     except Exception as e:
-        LOG.debug("忽略异常(%s:1894): %s", __file__, 1894, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 1894, e)
     return jsonify(out)
 
 
@@ -1980,7 +2215,7 @@ def _discover_probe():
         d["video_root"] = _ia.discover_video_root() or ""
         d["swap"] = _ia.discover_exe("llama-swap.exe", ("llama-swap", "swap", "秒切")) or ""
     except Exception as e:
-        LOG.debug("忽略异常(%s:1980): %s", __file__, 1980, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 1980, e)
     _DISCOVER_CACHE.update(d)
 
 
@@ -1996,7 +2231,7 @@ def _discover_paths(kick=True):
         try:
             threading.Thread(target=_discover_probe, daemon=True).start()
         except Exception as e:
-            LOG.debug("忽略异常(%s:1996): %s", __file__, 1996, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1996, e)
     root = os.path.dirname(os.path.abspath(__file__))
     try:
         with open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8") as f:
@@ -2051,7 +2286,7 @@ def api_env():
     try:
         _cfg = _j.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), encoding="utf-8"))
     except Exception as e:
-        LOG.debug("忽略异常(%s:2051): %s", __file__, 2051, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 2051, e)
     _ll = _cfg.get("brain", {}).get("llama", {}) or {}
     _ap = _cfg.get("brain", {}).get("api", {}) or {}    # Python
     add("Python", True, "v" + __import__("sys").version.split()[0], "已装", "")
@@ -2144,7 +2379,7 @@ def api_env():
         if r2.returncode == 0:
             gpu = r2.stdout.strip()
     except Exception as e:
-        LOG.debug("忽略异常(%s:2144): %s", __file__, 2144, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 2144, e)
     add("NVIDIA GPU + 显存", bool(gpu), gpu or "未检测到", "需 N 卡", "")
     missing = [i for i in items if not i["ok"]]
     return jsonify({"items": items, "missing": [i["name"] for i in missing], "ok": not missing})
@@ -2337,7 +2572,7 @@ def api_brain():
             if r.get("corrected_reply"):
                 corr += 1
     except Exception as e:
-        LOG.debug("忽略异常(%s:2329): %s", __file__, 2329, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 2329, e)
     try:
         import sys as _s, os as _o
         _s.path.insert(0, os.path.join(root, "self_learn"))
@@ -2379,7 +2614,7 @@ def api_growth():
             if r.get("corrected_reply"):
                 corr += 1
     except Exception as e:
-        LOG.debug("忽略异常(%s:2371): %s", __file__, 2371, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 2371, e)
     return jsonify({"know": know, "logs": logs, "good": good, "bad": bad, "corr": corr})
 
 
@@ -2390,10 +2625,12 @@ def api_persona():
     role = (d.get("role") or "").strip()
     if not role:
         return jsonify({"ok": False, "error": "人格不能为空"}), 400
+    if _SEARCH_RULES in role:                 # 界面回传的人设可能带着铁律 → 落盘前去掉，避免越存越多
+        role = role.replace(_SEARCH_RULES, "").rstrip()
     try:
-        c = json.loads(open(_CFG, encoding="utf-8").read())
+        c = json.loads(open(CONTROL_FILE, encoding="utf-8").read())
         c["role"] = role
-        json.dump(c, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        json.dump(c, open(CONTROL_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
         reload_control()
         return jsonify({"ok": True})
     except Exception as e:
@@ -2416,7 +2653,7 @@ def api_access():
         control["capabilities"] = cap
         json.dump(control, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     except Exception as e:
-        LOG.debug("忽略异常(%s:2408): %s", __file__, 2408, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 2408, e)
     return jsonify({"ok": True, "full_access": FULL_ACCESS})
 
 
@@ -2537,7 +2774,7 @@ def api_model_addlocal():
             return jsonify({"ok": True, "model_id": mid, "name": name,
                             "note": "已写入配置；但没找到 llama-swap.exe，请手动重启它（或设 XIAOJIAO_LLAMA_SWAP）"})
     except Exception as e:
-        LOG.debug("忽略异常(%s:2529): %s", __file__, 2529, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 2529, e)
     return jsonify({"ok": True, "model_id": mid, "name": name, "note": "llama-swap 正在重启, 约10秒后可用"})
 
 
@@ -2608,7 +2845,7 @@ def _growth_html():
             if r.get("corrected_reply"):
                 corr += 1
     except Exception as e:
-        LOG.debug("忽略异常(%s:2600): %s", __file__, 2600, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 2600, e)
     bar = min(100, int(know / 5))
     try:
         import sys as _s, os as _o
@@ -2622,7 +2859,7 @@ def _growth_html():
         ls = [x.strip() for x in open(os.path.join(root, "self_learn", "little_brain_knowledge.txt"), encoding="utf-8") if x.strip()]
         lessons = ls[-8:][::-1]
     except Exception as e:
-        LOG.debug("忽略异常(%s:2614): %s", __file__, 2614, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 2614, e)
     lhtml = "".join("<div class='bli'>" + (l[:64] + ("…" if len(l) > 64 else "")) + "</div>" for l in lessons) or "<div class='bli think'>还没学到东西，多聊几轮、点几个👍吧</div>"
     return ("""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>小焦成长报告</title>
 <style>*{box-sizing:border-box}body{margin:0;font-family:'Segoe UI',sans-serif;background:linear-gradient(160deg,#0e1116,#141a2e);color:#e8ebf3;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:32px 16px}
@@ -3631,7 +3868,7 @@ def main():
         _discover_paths(kick=True)
         print("  🔎 路径自动探测已在后台预热(ComfyUI / llama-swap / 视频模型)")
     except Exception as e:
-        LOG.debug("忽略异常(%s:3608): %s", __file__, 3608, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 3608, e)
     threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 

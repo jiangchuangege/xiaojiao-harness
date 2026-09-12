@@ -2,6 +2,80 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。所有重要改动都会记录在这。
 
+## [v1.2.4] - 2026-09-12
+
+**🛡️ 修掉用户实测的两个真缺陷：漏洞查询不走时间窗（拿到 1999 年数据、受影响软件全 `n/a`、5 条只总结 1 条）+ 把功能字「用」当检索关键词（搜出"用（汉语汉字）"）。**
+
+### Added
+
+- 🆕 **插件工具 `collect_vulnerabilities(days=7, severity="HIGH", limit=5)`**（`plugins/scrapling_bridge.py`，工具数 17 → 18）：
+  漏洞查询不再让模型自己拼接口，**「拼 URL + 挑字段 + 排版」全部收进插件层**。
+  - **强制时间窗**：`lastModStartDate` / `lastModEndDate`（UTC，`days` 默认 7、上限 120 = NVD 官方限制）；
+  - **取数**：单页 50 条；窗口内记录多于一页时取「最新一页 + 最早一页」，保证最新几条一定在手里；
+  - **等级**：CVSS 取值优先级 v4.0 → v3.1 → v3.0 → v2，v2 无 `baseSeverity` 时按官方分段补等级；
+    `severity=HIGH` 表示 **HIGH 及以上**（含 CRITICAL），也支持 `HIGH,CRITICAL` 精确集合与 `ANY`；
+  - **受影响软件**：从 CPE 还原人话（`cpe:2.3:a:apache:http_server:1.0` → `Apache HTTP Server 1.0`）；
+    新 CVE 尚未收录 CPE 时，从英文描述里**保守摘取**并标注「（描述推断）」，摘不到就写「（NVD 未收录产品配置）」——
+    **既不再出现 `n/a`，也不臆造**；
+  - **直接返回 Markdown 表格**：`序号 / CVE 编号 / 等级 / 评分 / 受影响软件 / 发布时间 / 摘要`，
+    表头带时间窗、数据源、**实际扫描范围**、命中条数；**抽样不完整 / 无 CVSS 评分都会如实标注**，不把不完整讲成完整。
+- 🧩 **主程序新增检索词清洗闸门**（`xiaojiao_app.py`）：`extract_search_keywords()` / `resolve_search_query()` /
+  `detect_vulnerability_query()` —— 命令式口语（"用联网搜一下最近的漏洞"）会被清洗成真关键词并补 `CVE`
+  （→「最近的漏洞 CVE」）；只有功能字/语气词时**直接反问答不出关键词**，绝不用单字去搜。
+- ✅ **新增测试**：应用逻辑套件 `tests/stress/test_app_logic.py`（36 项：检索词清洗 / 漏洞意图 / 提示词铁律 /
+  工具注册 / 配置热重载不丢铁律 / 切人设接口回归）、漏洞聚合离线 24 项 + 联网 8 项、
+  实机 `live_check.py` 新增两个用户实测缺陷的回归用例（第 9、10 节）、
+  `ui_check.py` 新增 `--vuln` 场景（真浏览器里数 `<table>`）。
+
+### Fixed
+
+- 🔴 **漏洞查询不走时间窗**：模型自己拼的是 `…/cves/2.0?resultsPerPage=5&cvssV3Severity=HIGH`（**没有日期过滤**）→
+  拿回 1999 年的历史数据；原始 JSON 丢给模型 → 5 条只总结了 1 条；受影响软件要模型自己从
+  `configurations[].nodes[].cpeMatch[].criteria` 推 → 全部 `n/a`。现在漏洞/CVE/高危类问题**优先走
+  `collect_vulnerabilities`**，实测「抓取最近 7 天的高危漏洞」→ 时间窗 `2026-09-05 → 2026-09-12`、
+  7 行表格（表头+分隔+5 行）、等级全为 HIGH/CRITICAL、**4/5 行有真实软件名**、耗时约 3.4 秒。
+- 🔴 **把功能字「用」当检索词**：用户说「用搜索工具找漏洞」，模型把「用」/整句当 query 丢给 `web_search`，
+  搜回来的是"用（汉语汉字）"百科词条。现在 `web_search` 入口**强制清洗**（命令式删动作词、裸关键词保守不动，
+  避免"看雪安全"被误伤成"雪安全"），清洗后无内容则返回中文提示「请告诉我你要搜索的具体关键词」；
+  提示词里同时写明**检索铁律**（写进代码，换人设也不会丢）。
+- 🐞 **潜在缺陷：漏洞聚合取原始响应用错了工具名**：`_fetch_raw` 里用了小焦的别名 `get`，而 inproc 路径按
+  Scrapling **原生工具名**白名单分发 → 报「不支持的抓取动作：get」。改为原生名 `make_request`。
+- 🐞 **潜在缺陷：统一日志的脱敏过滤器会打断所有 `%d` 型日志**：`_ScrubFilter` 原来把 `record.args` 每个参数
+  `str()` 化，于是 `logger.warning("…连续失败 %d 次…")` 在 emit 时抛 `TypeError: %d format: a real number is required`，
+  日志变成「--- Logging error ---」堆栈（**熔断告警就是这么被打掉的**）。现在改为「先把消息渲染成最终文本、再脱敏」，
+  既不破坏格式化，也保证脱敏的是最终要写出去的那串字。
+- 🐞 **结构化接口不再走 Markdown 转换**：9MB 的 NVD 响应经 Scrapling 的 extraction 后会被加上 `\_` 转义、
+  长文本甚至被改写成**非法 JSON**（`json.loads` 直接失败，已复现）。现在 `_fetch_raw` 走原始 HTTP
+  （SSRF / robots / 同域限速一步不少），并对 NVD 429 退避重试一次。
+- 🐞 **用 ruff 的真 bug 级规则（`--select E9,F63,F7,F82`）又扫出 5 处潜在崩溃，全部修掉**：
+  `brain_manager._llama_cfg()` / `_comfy_dir()` **根本没有定义**（`_start_llama` 一进来就 NameError，
+  被 `except: return False` 吞掉 → **多脑"唤醒"永远静默失败**、切大脑形同虚设）；
+  `/api/persona` 引用未定义的 `_CFG`（`_CFG` 只是 `_load_control()` 的局部变量）→ **界面切人设必然 500**；
+  `api_voice_warm` 缺 `global _asr_model/_tts_model` → 模型加载完就丢进局部变量被回收（**预热白做**）；
+  插件生成失败时的兜底模板 `TPL` 未定义 → 兜底路径 500（现在有了真正的 `_PLUGIN_TPL` 模板）；
+  `ScraplingBridge._pending` 注解引用了未 import 的 `queue`（顺手把 `__import__("queue")` 改成正常导入）。
+- 🐞 **99 处日志格式参数不匹配**（`tools/fix_silent_except.py` 注入的 `忽略异常(%s:行号): %s` 多传了一个行号参数）
+  → 每次 emit 都抛 `TypeError: not all arguments converted...`，日志变成「--- Logging error ---」堆栈。
+  统一改为 `忽略异常(%s:%d): %s`（17 个文件、99 处），并修正注入工具本身，避免以后再犯。
+- 🐞 **配置热重载会丢掉检索铁律**：`reload_control()` 原来直接 `SYSTEM_PROMPT = role`，
+  现在统一走 `compose_system_prompt()`（人设 + 铁律），并且 `/api/persona` 落盘前会去掉界面回传的铁律，避免重复叠加。
+
+### Changed
+
+- 🔎 **实机验收新增两节**：第 9 节验证「用搜索工具找漏洞」不再把「用」当主题、第 10 节验证漏洞表的时间窗/行数/等级/软件名；
+  实机验收 **29/29 通过**。
+- 📚 文档同步：`docs/scrapling.md`（新增 2.5 节讲清漏洞聚合设计 + 验收清单 11/12 条 + 排错两条）、
+  `README.md` / `ARCHITECTURE.md` / `docs/architecture.md` / `docs/testing-report.md` / `docs/landing-report.md`
+  工具数与测试数据一并更新；按你的要求**删除 `docs/acceptance-report.md`**（验收内容改为在对话里直接给）。
+
+### Verified
+
+- 全量压力套件 **172/172 通过 · 通过率 100% · 92.4s**（离线单元 84 + 应用逻辑 36 + 安全 18 + 联网 34）；
+- 实机验收 **29/29 通过**（真服务、真 HTTP、真 NVD）；
+- 真浏览器渲染检查：漏洞表格渲染成真 HTML `<table>`，**控制台 0 错误**；
+- Mermaid 原理图 42 张 **0 问题**；静态审计：已跟踪文件里**静默吞异常 0 / 裸 except 0 / 明文密钥 0**；
+- `ruff --select E9,F63,F7,F82`（真 bug 级规则）**All checks passed**（整改前有 5 处未定义名）。
+
 ## [v1.2.3] - 2026-09-12
 
 **📄 完整落地报告 + Web UI 可读性优化。**
