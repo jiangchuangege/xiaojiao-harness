@@ -94,7 +94,7 @@ python start_xiaojiao.py        # 一键拉起（自动探测大脑 / 小脑 / �
 ## ⚠️ 已知限制
 
 - 视频 / 播客 / 音乐链路依赖 GPU 与外部模型，未纳入 CI
-- 24 小时长跑脚本已备（`tests/stress/stability_24h.py`），需在长跑环境执行
+- 稳定性压测用 `tests/stress/stability_30m.py`（30 分钟无头压测，纯插件、不消耗任何大模型 Token）
 - NVD 无 API Key 时限流较严（5 次/30 秒），偶发限流会自动退避重试一次
 - ruff 目前只把**真 bug 级规则**纳入门槛，风格类规则未清零
 

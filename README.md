@@ -331,7 +331,7 @@ xiaojiao-harness/
 | [插件](docs/PLUGINS.md) | 写插件指南 |
 | [抓取插件详解](docs/scrapling.md) | 18 工具 / 原理 / 配置 / 指标 / 排错 |
 | [**安全审计报告**](docs/security-audit.md) | SSRF/robots/限速/穿越/脱敏/命令端点 的审计结论与修复记录 |
-| [**测试与稳定性报告**](docs/testing-report.md) | 覆盖矩阵、通过率、**未覆盖项清单**、24h 长跑方法 |
+| [**测试与稳定性报告**](docs/testing-report.md) | 覆盖矩阵、通过率、**未覆盖项清单**、30 分钟无头压测方法 |
 | [**完整落地报告**](docs/landing-report.md) | 架构实况、**功能全清单**、**Web UI 设计审查**、测试与安全数据、后续路线 |
 | [发版与回滚](docs/release-and-rollback.md) | 怎么发版、怎么回滚、网络被墙怎么办 |
 | [压力测试](tests/stress/README.md) | 怎么跑、覆盖什么、CI 门槛 |

@@ -262,7 +262,7 @@ flowchart TB
 2. **会话表脏数据需重启清理**：非法 `session_type` 会产生脏会话（已加前置校验，历史脏数据需重启进程）。
 3. **浏览器内核**：默认靠自备 Chrome；无 Chrome 时需 `python -m scrapling install`（CI 里已自动安装）。
 4. **资源统计**：指标只覆盖抓取插件；CPU/内存未做全进程侧写（受限环境读不到 RSS）。
-5. **24 小时长跑**：目前以「连续调用 + 堆增长 + 熔断自愈」抽样替代，长跑需独立环境。
+5. **稳定性压测**：`tests/stress/stability_30m.py`（30 分钟无头压测：内存/会话回收/熔断退避，纯插件不烧 Token）。
 6. **个人自用插件不入库**：`plugins/db_helper.py` 等在你本地存在但被 gitignore，不属于本架构。
 
 ---

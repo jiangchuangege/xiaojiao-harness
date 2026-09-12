@@ -15,7 +15,7 @@
 | 安全 | 无未修复高危项；SSRF（含数值型绕过 / 重定向）、目录穿越、日志脱敏、命令端点加固均已实测 |
 | 文档 | README + ARCHITECTURE + CONTRIBUTING + 7 份 docs + **42 张 Mermaid 图（0 语法问题）** |
 | 健康度 | **8.8 / 10**（治理前 5.0）|
-| 遗留 | 重依赖模块（视频/播客/音乐/安装器）未进 CI；24h 长跑需独立环境；ruff 风格类规则未清零（真 bug 级规则已 0） |
+| 遗留 | 重依赖模块（视频/播客/音乐/安装器）未进 CI；ruff 风格类规则未清零（真 bug 级规则已 0） |
 
 ---
 
@@ -213,7 +213,7 @@ flowchart TB
 | `ARCHITECTURE.md` | 模块职责 · 请求生命周期时序图 · 插件契约 · 扩展点 · 已知限制（5 图）|
 | `CONTRIBUTING.md` | 分支提交规范 + 8 条硬性约束 + 插件模板 |
 | `docs/security-audit.md` | 安全结论 + 3 个问题根因修复 + 控制点流程图 |
-| `docs/testing-report.md` | 覆盖矩阵 + 未覆盖清单 + 24h 长跑方法 |
+| `docs/testing-report.md` | 覆盖矩阵 + 未覆盖清单 + 30 分钟无头压测方法 |
 | `docs/release-and-rollback.md` | 五步发版 + 6 种回滚场景 + 网络被墙时 API 发布兜底 |
 | `docs/landing-report.md` | **本报告** |
 | `docs/scrapling.md` | 抓取插件 18 工具 / 原理 / 配置 / 指标 / 排错 |
@@ -249,7 +249,7 @@ flowchart TB
 | 1 | 根目录字面量 `~`（**120GB 家目录副本，含 `.ssh`**）| 已 gitignore，**未删**（误删毁数据），请你确认后处理 |
 | 2 | `capabilities.full_access` 默认 `true` | 本地危险命令不二次确认；是否改 `false` 属产品取舍 |
 | 3 | lint 工具未跑（ruff/black/mypy/pytest）| pip 需联网；命令已备好 |
-| 4 | 24 小时长跑未执行 | 脚本 `tests/stress/stability_24h.py` 已备并冒烟通过 |
+| 4 | 30 分钟无头压测由你自行执行 | 脚本 `tests/stress/stability_30m.py` 已备（纯插件、不烧 Token）|
 | 5 | 视频/播客/音乐/安装器未进 CI | 依赖 GPU 与外部模型 |
 | 6 | 移动端适配、长回答折叠等 UI 优化 | 见 4.4，需你确认视觉方向 |
 | 7 | AtomGit 未发布 | 未配置该平台凭据 |
@@ -277,7 +277,7 @@ flowchart TB
 flowchart LR
     A["P0 已完成<br/>四项改进 + 展示修复 + 安全修复"] --> B["P1 建议<br/>UI 体验（折叠/移动端/表格滚动）"]
     B --> C["P2 建议<br/>重依赖模块测试通道（视频/播客/音乐/安装器）"]
-    C --> D["P3 建议<br/>24h 长跑 + pip-audit 依赖扫描进 CI"]
+    C --> D["P3 建议<br/>30 分钟无头压测 + pip-audit 依赖扫描进 CI"]
     D --> E["P4 建议<br/>公网部署能力（WSGI + 鉴权 + TLS）"]
 ```
 

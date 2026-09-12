@@ -196,9 +196,10 @@
   限速 / 目录穿越 / 日志脱敏 / UA / 命令端点 / 无遥测 / 无明文密钥 的逐项结论与复现命令；
   附带安全控制点流程图。**本轮审计发现并修复 2 个真实问题**（见 Fixed）。
 - 🧪 **测试与稳定性报告 `docs/testing-report.md`**（新增）：测试资产清单、执行结果、**覆盖矩阵**、
-  4 项未覆盖清单、24 小时长跑方法与判定规则。
-- ⏱️ **24 小时稳定性脚本 `tests/stress/stability_24h.py`**（新增）：每小时一轮抓取，记录成功率 / P50 / P95 /
-  Python 堆增长；自动判定 PASS / SUSPECT / FAIL 并产出 `stability_report.json` + Markdown 摘要。
+  4 项未覆盖清单、稳定性压测方法与判定规则。
+- ⏱️ **稳定性压测脚本 `tests/stress/stability_30m.py`**（新增）：30 分钟无头压测 —— 高频抓取 / 连开会话不关闭 /
+  必失败 URL 打熔断退避，每 30 秒采一次内存与会话；**直接调用插件的 `execute()`，不经过大脑、不消耗任何大模型
+  Token**；自动判定 PASS / SUSPECT / FAIL 并产出 `logs/stability_30m.md` + `logs/stability_30m.json`。
 - 🔐 **安全用例套件 `tests/stress/test_security.py`**（新增，18 项，已接入 `run_all.py`）：SSRF 21 种写法矩阵、
   robots RFC 9309 三种分支、同域限速计时、日志脱敏**回读文件验证**、UA 合规、目录穿越、命令端点源码契约、
   无遥测埋点、已跟踪文件无明文密钥。

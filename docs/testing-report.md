@@ -17,7 +17,7 @@
 | `tests/stress/run_all.py` | 编排 | — | 四套件顺序执行 + 通过率门槛（默认 95%）+ 退出码 |
 | `tests/stress/live_check.py` | 实机 | ✅ | 对**正在运行**的服务发真实请求（含两个用户实测缺陷的回归用例）|
 | `tests/stress/ui_check.py` | 浏览器 | ✅ | Playwright 真渲染：表格/代码块/控制台错误数 |
-| `tests/stress/stability_24h.py` | 长跑 | ✅ | 每小时一轮抓取，监控崩溃/堆增长/延迟衰减 |
+| `tests/stress/stability_30m.py` | 压测 | ✅ | 30 分钟无头压测：高频抓取/会话回收/熔断退避，监控内存与异常（**不使用任何大模型 API**）|
 | `.github/workflows/stress-test.yml` | CI | ✅ | 每天 03:00 / 手动 / 变更触发；图校验 + 压力测试；产物 artifact |
 
 ---
@@ -95,9 +95,9 @@
 - **会话回收**：TTL/空闲/LRU 三规则生效，**浏览器会话不会无限堆积**。
 - **5 并发**：无崩溃、无数据串扰。
 
-### 24 小时长跑（脚本已备，需你在长跑环境执行）
+### 30 分钟无头压测（脚本已备，自己在终端跑）
 ```powershell
-python tests/stress/stability_24h.py --hours 24 --per-round 10 --interval 3600
+python tests/stress/stability_30m.py --minutes 30 --interval 10
 ```
 - 每小时抓 10 个 URL，记录：成功率、P95 延迟、Python 堆增长、异常/崩溃
 - 结束输出 `stability_report.json` + Markdown 摘要，并对"P95 是否衰减/堆是否持续增长"给出结论
@@ -137,5 +137,5 @@ CI：`.github/workflows/stress-test.yml`（每天 03:00；通过率 <95% 直接�
 **建议优先级**：
 1. 给小脑推理与记忆检索补最小单测（改动最频繁、回归代价最高）。
 2. 安装器加 `--dry-run` 模式后纳入 CI。
-3. 在长跑环境执行 24 小时稳定性脚本，把结果写回本报告。
+3. 跑一次 30 分钟无头压测（`stability_30m.py`）把结果写回本报告。
 4. 给 NVD 漏洞聚合配一个免费 API Key（`XIAOJIAO_NVD_API_KEY`），彻底摆脱 5 次/30 秒的限流。
