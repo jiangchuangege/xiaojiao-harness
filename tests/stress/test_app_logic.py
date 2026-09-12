@@ -196,7 +196,17 @@ def run(res: Results) -> Results:
               _fake_key not in app.llm_error_suffix() and "***" in app.llm_error_suffix(), "")
     res.check("大脑错误", "给用户的提示里带「真实原因」这段",
               "真实原因" in app.llm_error_suffix(), "")
+    # 偶发 vs 持续失败要说清楚（实测 Agnes 网关忽好忽坏：同一个 Key 会 [401,200,401,…]）
+    app._LAST_LLM_ERROR = "HTTP 401 · API Key 无效或已过期"
+    app._LLM_STAT["recent"] = [0, 0, 0, 0, 0, 0]
+    res.check("大脑错误", "连续被拒时说清「更像服务商侧问题」，别让用户以为自己填错",
+              "全部被拒" in app.llm_error_suffix() and "控制台" in app.llm_error_suffix(),
+              app.llm_error_suffix()[:80])
+    app._LLM_STAT["recent"] = [1, 0, 1, 0, 0, 1]
+    res.check("大脑错误", "忽好忽坏时说「网关偶发拒签、已重试」",
+              "偶发拒签" in app.llm_error_suffix(), "")
     app._LAST_LLM_ERROR = ""
+    app._LLM_STAT["recent"] = []
 
     # ---------- 11. 选"本地模型"必须真能用（真实缺陷：条目里 engine/model 配错，选了照样不通） ----------
     res.check("本地大脑", "本机地址被识别为本地（不需要 Key）",

@@ -1000,6 +1000,8 @@ def append_msg(role, content):
 # 也照样这么糊过去，查都没法查。现在真实状态码 + 服务端原话一定带出来。
 _LAST_LLM_ERROR = ""
 _LLM_ERR_LOGGED = set()
+# 云端调用成败流水（最近 20 次）：用来区分"偶发拒签"和"持续拒签"，好告诉用户到底是谁的问题
+_LLM_STAT = {"ok": 0, "fail": 0, "recent": []}
 # 本次请求是不是"云端授权失败、自动改用本地大脑"答的（回答里会如实说明）
 _USED_LOCAL_FALLBACK = {"on": False, "model": ""}
 _LOCAL_PROBE = {"at": 0.0, "model": ""}
@@ -1052,8 +1054,40 @@ def _llm_headers(t):
 
 
 def _fallback_worthy(status):
-    """这些失败值得换本地大脑再试（授权/路由/限流/网络），而不是直接放弃。"""
+    """这些失败值得再试 / 值得换本地大脑（授权/路由/限流/网络），而不是直接放弃。"""
     return status in (400, 401, 402, 403, 404, 429, 500, 502, 503)
+
+
+def _llm_post(target, payload, timeout=90, tries=4):
+    """往某个大脑目标 POST 一次（带重试）。返回 (response 或 None, 最后一次的状态码, 正文)。
+
+    **为什么必须重试**：实测 Agnes 网关**同一个 Key、同一个请求**连打 10 次，结果是
+    [401, 200, 401, 401, 401, 401, 200, 401, 401, 200] —— 3 成成功、7 成回 "Invalid token"。
+    这是**网关偶发拒签**，不是用户 Key 填错。原来只试一次：运气不好就回一句"模型调用出错"，
+    或者干脆切本地大脑 —— 白白丢掉三成成功率。
+    """
+    import time as _t
+    resp = None
+    for i in range(max(1, tries)):
+        try:
+            resp = requests.post(target["url"], headers=_llm_headers(target), json=payload, timeout=timeout)
+            if resp.status_code == 200:
+                _llm_stat(True)
+                return resp, 200, ""
+            if not _fallback_worthy(resp.status_code):
+                _llm_stat(False)
+                return resp, resp.status_code, resp.text
+            _llm_stat(False)
+        except Exception as e:
+            resp = None
+            _llm_stat(False)
+            if i == tries - 1:
+                return None, None, "%s: %s" % (type(e).__name__, str(e)[:120])
+        if i < tries - 1:
+            _t.sleep(0.7 * (i + 1))                 # 0.7s / 1.4s / 2.1s 退避，别把网关打爆
+    if resp is None:
+        return None, None, "无响应"
+    return resp, resp.status_code, resp.text
 
 
 def _scrub_secret(s):
@@ -1106,20 +1140,48 @@ def _note_llm_error(tag, status=None, body=""):
                     tag, status if status is not None else "-", _LAST_LLM_ERROR, LLM_BASE, LLM_MODEL)
 
 
+def _llm_stat_note():
+    """区分"偶发拒签"和"持续被拒"，好让用户知道到底是谁的问题（自己的 Key 还是服务商）。"""
+    _rec = _LLM_STAT["recent"]
+    _n, _k = len(_rec), sum(_rec)
+    if _n < 4:
+        return ""
+    if _k == 0:
+        return ("\n📉 最近 %d 次云端调用**全部被拒** —— 这更像服务商那边的问题（额度/密钥状态/网关），"
+                "不是你填错了。建议去 Agnes 控制台看一眼密钥与额度，或过一会儿再试。" % _n)
+    if _k < _n:
+        return "\n📈 最近 %d 次云端调用成功 %d 次（忽好忽坏＝服务商网关偶发拒签），已自动重试过。" % (_n, _k)
+    return ""
+
+
 def llm_error_suffix():
-    """把真实原因 + 一句"该怎么办"拼到给用户看的提示后面（没失败过就什么都不加）。"""
+    """把真实原因 + 一句"该怎么办"拼到给用户看的提示后面（没失败过就什么都不加）。
+
+    还会说清"这是**偶发**还是**持续**"：实测 Agnes 网关同一个 Key 会出现
+    [401,200,401,401,200,…] 这种忽好忽坏（/chat 更是连打 10 次全 401）——
+    不区分的话，用户只会以为"我 Key 填错了"，然后在配置里瞎改。
+    """
     if not _LAST_LLM_ERROR:
         return ""
     tip = "\n👉 怎么办：设置 → 大脑 里换一个可用的 API Key，或直接切「本地大脑」（本地模型不需要 Key）。"
-    return "\n\n🔎 真实原因：%s%s" % (_LAST_LLM_ERROR, tip)
+    return "\n\n🔎 真实原因：%s%s%s" % (_LAST_LLM_ERROR, _llm_stat_note(), tip)
+
+
+def _llm_stat(ok):
+    """记录一次云端调用成败（最近 20 次），用于区分偶发/持续失败。"""
+    _LLM_STAT["ok" if ok else "fail"] += 1
+    _rec = _LLM_STAT["recent"]
+    _rec.append(1 if ok else 0)
+    del _rec[:-20]
 
 
 def llm_fallback_note():
     """云端挂了、这次是本地大脑顶上时，回答末尾如实标注一句（别让用户以为是云端答的）。"""
     if not _USED_LOCAL_FALLBACK["on"]:
         return ""
-    return ("\n\n---\n\nℹ️ 本次回答由**本地大脑**（%s）完成：你选的云端大脑调用失败（%s）。"
-            "要恢复云端：设置 → 大脑 里更新 API Key。" % (_USED_LOCAL_FALLBACK["model"], _LAST_LLM_ERROR))
+    return ("\n\n---\n\nℹ️ 本次回答由**本地大脑**（%s）完成：你选的云端大脑调用失败（%s）。%s"
+            "要恢复云端：设置 → 大脑 里更新 API Key。"
+            % (_USED_LOCAL_FALLBACK["model"], _LAST_LLM_ERROR, _llm_stat_note()))
 
 
 def llm_chat(messages):
@@ -1130,17 +1192,14 @@ def llm_chat(messages):
     payload = {"messages": messages, "temperature": TEMPERATURE, "max_tokens": MAX_TOKENS}
     for _t in _llm_targets():
         _p = dict(payload, model=_t["model"])
-        try:
-            r = requests.post(_t["url"], headers=_llm_headers(_t), json=_p, timeout=90)
-            if r.status_code == 200:
-                if _t["local"] and not _is_local_base(LLM_BASE):
-                    _USED_LOCAL_FALLBACK.update({"on": True, "model": _t["model"]})
-                return r.json()["choices"][0]["message"]["content"].strip()
-            _note_llm_error("chat", r.status_code, r.text)
-            if not _fallback_worthy(r.status_code):
-                break
-        except Exception as e:
-            _note_llm_error("chat", None, "%s: %s" % (type(e).__name__, e))
+        resp, code, body = _llm_post(_t, _p, timeout=90)
+        if code == 200 and resp is not None:
+            if _t["local"] and not _is_local_base(LLM_BASE):
+                _USED_LOCAL_FALLBACK.update({"on": True, "model": _t["model"]})
+            return resp.json()["choices"][0]["message"]["content"].strip()
+        _note_llm_error("chat", code, body)
+        if code is not None and not _fallback_worthy(code):
+            break
     return None
 
 
@@ -1492,21 +1551,15 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
                    "max_tokens": (200 if lean else MAX_TOKENS),
                    "tools": ([] if lean else _build_tools())}
         try:
-            r = requests.post(_t["url"], headers=_llm_headers(_t), json=payload, timeout=120)
-            if r.status_code != 200:
-                # 限流/临时错误 -> 等2s重试一次
-                import time as _t2
-                _t2.sleep(2)
-                r = requests.post(_t["url"], headers=_llm_headers(_t), json=payload, timeout=120)
-                if r.status_code != 200:
-                    _note_llm_error("chat+tools", r.status_code, r.text)   # 真实原因必须留痕
-                    if _fallback_worthy(r.status_code) and _ti + 1 < len(_targets):
-                        _ti += 1                 # 换成下一个目标（通常是本地大脑）再试
-                        _targets[_ti]["local"] = True
-                        LOG.warning("云端大脑不可用，自动改用本地大脑（%s）继续回答",
-                                    _targets[_ti]["model"])
-                        continue
-                    return None, tool_trace
+            r, _code, _body = _llm_post(_t, payload, timeout=120)
+            if _code != 200 or r is None:
+                _note_llm_error("chat+tools", _code, _body)      # 真实原因必须留痕
+                if (_code is None or _fallback_worthy(_code)) and _ti + 1 < len(_targets):
+                    _ti += 1                 # 换成下一个目标（通常是本地大脑）再试
+                    _targets[_ti]["local"] = True
+                    LOG.warning("云端大脑不可用，自动改用本地大脑（%s）继续回答", _targets[_ti]["model"])
+                    continue
+                return None, tool_trace
             if _t.get("local") and not _is_local_base(LLM_BASE):
                 _USED_LOCAL_FALLBACK.update({"on": True, "model": _t["model"]})
             msg = r.json()["choices"][0]["message"]
@@ -1600,16 +1653,16 @@ def detect_tool_intent(q):
 
 
 def _llm_ask_raw(prompt):
-    """一次性小提问（给工具结果写总结用）；同样享受云→本地兜底。"""
+    """一次性小提问（给工具结果写总结用）；同样享受"重试 + 云→本地兜底"。"""
     for _t in _llm_targets():
-        try:
-            r = requests.post(_t["url"], headers=_llm_headers(_t),
-                              json={"model": _t["model"], "messages": [{"role": "user", "content": prompt}],
-                                    "temperature": 0.2, "max_tokens": MAX_TOKENS}, timeout=90)
-            if r.status_code == 200:
+        r, code, _body = _llm_post(_t, {"model": _t["model"],
+                                       "messages": [{"role": "user", "content": prompt}],
+                                       "temperature": 0.2, "max_tokens": MAX_TOKENS}, timeout=90, tries=2)
+        if code == 200 and r is not None:
+            try:
                 return r.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            LOG.debug("忽略异常(%s:%d): %s", __file__, 1051, e)
+            except Exception as e:
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 1051, e)
     return ""
 
 
