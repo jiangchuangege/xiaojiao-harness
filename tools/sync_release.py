@@ -91,13 +91,21 @@ def main() -> int:
             {"ref": "refs/tags/%s" % args.tag, "sha": tobj["sha"]})
         print("✅ tag 已重建 → %s" % main_sha[:12])
 
-    # ② 正文：CHANGELOG 对应小节
-    text = io.open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8").read()
-    m = re.search(r"^##\s*\[%s\][^\n]*\n(.*?)(?=^##\s*\[|\Z)" % re.escape(args.tag), text, re.S | re.M)
-    body = (m.group(1).strip() if m else "")
+    # ② 正文：优先用专门写好的发布说明 docs/release-notes-<tag>.md（排版更适合发布页），
+    #    没有才退回 CHANGELOG 的对应小节（那种 2 万字长文堆在 Release 页上很难看）。
+    notes = os.path.join(ROOT, "docs", "release-notes-%s.md" % args.tag)
+    if os.path.exists(notes):
+        body = io.open(notes, encoding="utf-8").read().strip()
+        src = os.path.relpath(notes, ROOT)
+    else:
+        text = io.open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8").read()
+        m = re.search(r"^##\s*\[%s\][^\n]*\n(.*?)(?=^##\s*\[|\Z)" % re.escape(args.tag), text, re.S | re.M)
+        body = (m.group(1).strip() if m else "")
+        src = "CHANGELOG.md"
     if not body:
-        print("❌ CHANGELOG 里找不到 [%s] 小节" % args.tag)
+        print("❌ 找不到 %s 的发布说明（docs/release-notes-%s.md 或 CHANGELOG 小节）" % (args.tag, args.tag))
         return 1
+    print("正文来源 = %s（%d 字）" % (src, len(body)))
     title = args.title or "%s · 小焦的首个正式版" % args.tag
 
     # ③ 清掉同名草稿/孤儿，再确保有一个已发布 Release

@@ -159,6 +159,26 @@ def main() -> int:
     else:
         check("用例 2 可执行", False, "HTTP %s" % code)
 
+    print("\n[11] 会话删除（侧栏 ✕ 用的接口）")
+    code, r = post("/api/session/new", {})
+    sid = (r.json().get("id") if code == 200 else "") or ""
+    check("能新建会话（拿到 id）", bool(sid), "id=%s" % sid)
+    if sid:
+        code, r = post("/api/session/delete", {"id": sid})
+        body = r.json() if code == 200 else {}
+        check("能删除会话", code == 200 and body.get("ok") is True, str(body)[:80])
+        _cur, _ = post("/api/session/new", {})
+        if _cur == 200:
+            pass
+        code, r = get("/api/sessions")
+        ids = [s.get("id") for s in (r.json().get("sessions") or [])] if code == 200 else []
+        check("删掉的会话不再出现在列表里", sid not in ids, "剩余 %d 个会话" % len(ids))
+    code, r = post("/api/session/delete", {"id": "不存在的会话id"})
+    check("删不存在的会话给中文错误", code == 404 and "会话" in (r.json().get("error") or ""),
+          "HTTP %s" % code)
+    code, r = post("/api/session/delete", {})
+    check("不传 id 时给中文错误", code == 400, "HTTP %s" % code)
+
     print("\n" + "=" * 68)
     print("  实机验收：通过 %d / %d" % (len(passed), len(passed) + len(failed)))
     for f in failed:

@@ -2433,6 +2433,34 @@ def api_session(sid):
     return jsonify({"error": "会话不存在"}), 404
 
 
+@app.route("/api/session/delete", methods=["POST"])
+def api_session_delete():
+    """删除一个会话（侧栏每个会话后面的 ✕ 用的就是它）。
+
+    以前**根本没有这个接口**，所以侧栏只有"新建/切换"，会话越堆越多删不掉。
+    删最后一个会话时自动补一个空会话，保证界面永远有可用的当前会话。
+    """
+    import uuid
+    payload = request.get_json(force=True, silent=True) or {}
+    sid = (payload.get("id") or "").strip()
+    if not sid:
+        return jsonify({"ok": False, "error": "缺少会话 id"}), 400
+    store = _sessions()                              # ⚠️ 别把变量名复用成请求体（第一版就是这么错的）
+    before = len(store.get("sessions", []))
+    store["sessions"] = [s for s in store.get("sessions", []) if s.get("id") != sid]
+    if len(store["sessions"]) == before:
+        return jsonify({"ok": False, "error": "会话不存在（可能已经被删了）"}), 404
+    was_current = (store.get("current") == sid)
+    if was_current:
+        if not store["sessions"]:                    # 删光了就补一个空会话
+            store["sessions"] = [{"id": uuid.uuid4().hex[:10], "title": "新对话", "messages": []}]
+        store["current"] = store["sessions"][0]["id"]
+    _save_sessions(store)
+    LOG.info("删除会话 %s（剩余 %d 个，当前=%s）", sid, len(store["sessions"]), store.get("current"))
+    return jsonify({"ok": True, "deleted": sid, "current": store.get("current"),
+                    "was_current": was_current, "left": len(store["sessions"])})
+
+
 
 
 _DISCOVER_CACHE = {"_started": False}
@@ -3292,6 +3320,17 @@ HTML = r"""<!DOCTYPE html>
   #sidebar .sh .newchat:hover{background:#2a3140}
   #sidebar .cl{flex:0 0 auto;background:#1f2533;border:1px solid #2a3140;color:#8b93a3;border-radius:8px;padding:6px 9px;font-size:12px;cursor:pointer}
   #sessionList{flex:1;overflow-y:auto;padding:8px}
+  /* 会话行：左边是会话按钮，右边是删除 ✕（平时淡、悬停才明显，避免误点） */
+  .srow{display:flex;align-items:center;gap:2px;margin-bottom:4px;border-radius:8px}
+  .srow:hover{background:#1e2430}
+  .srow.active{background:#2a3140}
+  .srow .sess{flex:1;min-width:0;display:block;width:auto;text-align:left;background:transparent;border:none;color:#cbd0dc;padding:9px 10px 9px 12px;border-radius:8px;font-size:13px;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .srow .sess:hover{background:transparent}
+  .srow.active .sess{color:#fff}
+  .sdel{flex:0 0 auto;width:26px;height:26px;margin-right:4px;background:transparent;border:none;color:#6e7681;
+        border-radius:6px;font-size:12px;cursor:pointer;opacity:0;transition:.12s;padding:0}
+  .srow:hover .sdel,.srow.active .sdel{opacity:.75}
+  .sdel:hover{background:#3a2230;color:#f87171;opacity:1}
   .sess{display:block;width:100%;text-align:left;background:transparent;border:none;color:#cbd0dc;padding:9px 12px;border-radius:8px;font-size:13px;cursor:pointer;margin-bottom:4px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
   .sess:hover{background:#1e2430}
   .sess.active{background:#2a3140;color:#fff}
@@ -4141,7 +4180,22 @@ async function loadModels(){try{const r=await fetch('/api/models');const d=await
 async function selectModel(){const v=document.getElementById('modelSel').value;await fetch('/api/model/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:v})});}
 async function loadHistory(){try{const r=await fetch('/api/history');const hs=await r.json();if(Array.isArray(hs)&&hs.length){hs.forEach(h=>add(h.role==='用户'?'user':'bot',h.content));}}catch(e){}}
 async function loadSessions(){try{const r=await fetch('/api/sessions');const d=await r.json();const el=document.getElementById('sessionList');
-  el.innerHTML=(d.sessions||[]).map(s=>'<button class="sess '+(s.id===d.current?'active':'')+'" onclick="openSession(\''+s.id+'\')">'+esc(s.title||'新对话')+'</button>').join('')||'<div class="think">暂无会话</div>';}catch(e){}}
+  el.innerHTML=(d.sessions||[]).map(s=>'<div class="srow'+(s.id===d.current?' active':'')+'">'
+      +'<button class="sess" onclick="openSession(\''+s.id+'\')" title="'+esc(String(s.count||0))+' 条消息">'+esc(s.title||'新对话')+'</button>'
+      +'<button class="sdel" title="删除这个会话" onclick="delSession(event,\''+s.id+'\')">✕</button>'
+    +'</div>').join('')||'<div class="think">暂无会话</div>';}catch(e){}}
+async function delSession(ev,id){
+  if(ev){ev.stopPropagation();ev.preventDefault();}
+  if(!confirm('删除这个会话？该会话的聊天记录会一起删掉（不可恢复）'))return;
+  try{
+    const r=await fetch('/api/session/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})});
+    const d=await r.json();
+    if(!d.ok){toast('⚠️ '+(d.error||'删除失败'));return;}
+    toast('🗑️ 已删除会话');
+    await loadSessions();
+    if(d.was_current){clearFeed();await loadHistory();}     // 删的是当前会话 → 界面跟着切过去
+  }catch(e){toast('⚠️ 删除失败：'+e);}
+}
 async function newChat(){await fetch('/api/session/new',{method:'POST'});clearFeed();loadSessions();}
 async function openSession(id){const r=await fetch('/api/session/'+id);const d=await r.json();clearFeed();(d.messages||[]).forEach(h=>add(h.role==='用户'?'user':'bot',h.content));loadSessions();}
 function clearFeed(){document.getElementById('feed').innerHTML='';renderWelcome();}
