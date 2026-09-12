@@ -127,6 +127,38 @@ def main() -> int:
         txt = open(logp, encoding="utf-8", errors="ignore").read()
         check("日志中无明文密钥", "sk-" not in txt, "")
 
+    print("\n[9] 用户实测缺陷 1：用搜索工具找漏洞（不许把「用」当关键词）")
+    code, r = post("/api/chat", {"message": "用搜索工具找漏洞"})
+    if code == 200:
+        a = r.json().get("answer", "")
+        bad = [k for k in ("汉语汉字", "部首", "拼音是", "笔画", "释义：用") if k in a]
+        check("没有把功能字「用」当主题回答", not bad, "命中=%s" % (bad or "无"))
+        check("给出了真实漏洞/已清洗的检索关键词",
+              ("CVE-" in a) or ("NVD" in a) or ("已把" in a), a[:90].replace("\n", " "))
+    else:
+        check("用例 1 可执行", False, "HTTP %s" % code)
+
+    print("\n[10] 用户实测缺陷 2：抓取最近 7 天的高危漏洞（时间窗 + 软件名 + 完整行数）")
+    code, r = post("/api/chat", {"message": "抓取最近 7 天的高危漏洞"}, timeout=300)
+    if code == 200:
+        a = r.json().get("answer", "")
+        rows = [ln for ln in a.splitlines() if ln.startswith("|")]
+        today = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 7 * 86400))
+        check("走的是 NVD 结构化数据（不是新闻搜索）", "NVD" in a and "lastModStartDate" in a,
+              a.splitlines()[0][:60] if a else "")
+        check("时间窗 = 最近 7 天（杜绝历史数据）", today in a, "窗口起点应为 %s" % today)
+        check("表格完整：表头+分隔+5 行数据", len(rows) == 7, "表格行=%d" % len(rows))
+        cells = [c.strip() for c in (rows[2].split("|")[1:-1])] if len(rows) > 2 else []
+        check("每行字段齐全（序号/CVE/等级/评分/软件/时间/摘要）", len(cells) == 7 and "CVE-" in cells[1],
+              str(cells[:4]))
+        check("等级为 HIGH 或 CRITICAL",
+              all(("| HIGH |" in ln) or ("| CRITICAL |" in ln) for ln in rows[2:]), "")
+        named = [ln for ln in rows[2:] if "未收录" not in ln]
+        check("受影响软件不是 n/a（至少 3/5 行有软件名）", "n/a" not in a and len(named) >= 3,
+              "有名字的行=%d/5" % len(named))
+    else:
+        check("用例 2 可执行", False, "HTTP %s" % code)
+
     print("\n" + "=" * 68)
     print("  实机验收：通过 %d / %d" % (len(passed), len(passed) + len(failed)))
     for f in failed:

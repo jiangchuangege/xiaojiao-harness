@@ -68,7 +68,8 @@
 | 🛠️ | **装小焦体检** | N.E.K.O. 插件点「🛠️ 装小焦」→ 秒级环境体检 ✅/❌ 逐条显示已装/缺什么 |
 | 🔌 | **插件万能桥** | `_make_tools_plugin` 自动把 OpenAI/Claude/DSH tool manifest 转成小焦工具（`plugins/*.json`） |
 | 🎙️ | **播客大脑** | `/podcast` 给它一个主题 → 自己写稿+配音+出封面，生成一段真·中文播客（LLM+Chatterbox+SD1.5） |
-| 🕷️ | **网页抓取（内置 Scrapling）** | 抓网页/动态页/接口/批量/登录态/下载任意文件：**原生 13 个工具 1:1 全暴露** + 3 个小焦增强 = 17 个工具（`plugins/scrapling_bridge.py`）|
+| 🕷️ | **网页抓取（内置 Scrapling）** | 抓网页/动态页/接口/批量/登录态/下载任意文件：**原生 13 个工具 1:1 全暴露** + 4 个小焦增强 = 18 个工具（`plugins/scrapling_bridge.py`）|
+| 🛡️ | **漏洞情报（NVD）** | 说「抓最近 7 天的高危漏洞」→ 自动带时间窗查 NVD，**插件层直接出 Markdown 表格**（编号/等级/评分/受影响软件/时间/摘要），不让模型自己拼接口、自己抽字段 |
 | 📚 | **网页抓取 / 文件下载** | 网页、动态页、接口、批量、登录态都能抓；`download` 一句话把 **PDF/EPUB/TXT/ZIP/图片** 等任意文件下到本地（网页连载可抓正文直接存成文件 `books/`）|
 | 📖 | **抓完自动解读** | 抓到内容后大脑按「是什么 / 关键要点 / 怎么用」逐条讲，看不懂的网页也能快速上手 |
 | 🧠 | **用户使用时学习** | 每次你让它干活（抓取/下载…）→ 经验沉淀进小脑 + 向量库 → 下次同类需求检索命中直接复用（越用越会）|
@@ -328,10 +329,9 @@ xiaojiao-harness/
 | [自研蒸馏小模型](docs/xiaojiao_model.md) | 小模型原理/架构/训练/画图 |
 | [玩法大全 · 加工具加插件](docs/extend.md) | 各种能加的能力 |
 | [插件](docs/PLUGINS.md) | 写插件指南 |
-| [抓取插件详解](docs/scrapling.md) | 17 工具 / 原理 / 配置 / 指标 / 排错 |
+| [抓取插件详解](docs/scrapling.md) | 18 工具 / 原理 / 配置 / 指标 / 排错 |
 | [**安全审计报告**](docs/security-audit.md) | SSRF/robots/限速/穿越/脱敏/命令端点 的审计结论与修复记录 |
 | [**测试与稳定性报告**](docs/testing-report.md) | 覆盖矩阵、通过率、**未覆盖项诚实清单**、24h 长跑方法 |
-| [**最终验收报告**](docs/acceptance-report.md) | v1.2.0 交付总览、13 个 bug 修复清单、健康度终评、剩余风险 |
 | [**完整落地报告**](docs/landing-report.md) | 架构实况、**功能全清单**、**Web UI 设计审查**、测试与安全数据、后续路线 |
 | [发版与回滚](docs/release-and-rollback.md) | 怎么发版、怎么回滚、网络被墙怎么办 |
 | [压力测试](tests/stress/README.md) | 怎么跑、覆盖什么、CI 门槛 |
@@ -344,7 +344,7 @@ xiaojiao-harness/
 | [播客大脑](docs/podcast.md) | 给主题→写稿+配音+封面，生成播客 |
 | [N.E.K.O. 猫娘集成](docs/neko.md) | 桌面 Live2D 猫娘伙伴，学猫娘与主人的对话 |
 | [多脑秒切](docs/brain-switch.md) | 聊天/视频/播客/图像 大脑按需切换 |
-| [内置 Scrapling 抓取](docs/scrapling.md) | **小焦内置 Scrapling**：原生 13 工具 1:1 + 3 增强 = 17 个工具（网页/接口/批量/登录态/下载任意文件）/原理/配置/安全边界/架构图 |
+| [内置 Scrapling 抓取](docs/scrapling.md) | **小焦内置 Scrapling**：原生 13 工具 1:1 + 4 增强 = 18 个工具（网页/接口/批量/登录态/下载任意文件/NVD 漏洞表）/原理/配置/安全边界/架构图 |
 | [依赖检测逻辑](docs/dependency-check.md) | 模型/依赖为何按"协议连通"检测 |
 | [更新记录](CHANGELOG.md) | 每个版本改了什么 |
 | [行为准则](CODE_OF_CONDUCT.md) | 社区友好共识 |
@@ -643,11 +643,11 @@ flowchart LR
         TRAIN["train_model.py 重训"]
     end
 
-    subgraph SCRAPE["🕷️ 抓取插件 scrapling_bridge（17 工具）"]
+    subgraph SCRAPE["🕷️ 抓取插件 scrapling_bridge（18 工具）"]
         direction TB
         SD["抓取意图识别 → 安全闸门<br/>SSRF·robots·限速·熔断·批量策略"]
         SDUAL["双通道<br/>inproc 直连 / MCP(stdio·http)"]
-        SOUT["产出<br/>正文+📖解读 · books/*.md<br/>downloads/*.epub · 网页截图"]
+        SOUT["产出<br/>正文+📖解读 · books/*.md<br/>downloads/*.epub · 网页截图 · NVD 漏洞表"]
         SD --> SDUAL --> SOUT
     end
 
@@ -944,11 +944,11 @@ flowchart LR
 
     P --> A["🛠️ 安装器<br/>install_all.py<br/>分级检测 · 全盘找小脑"]
     P --> B["🚀 启动<br/>start_xiaojiao.py<br/>猫娘先问 y/N"]
-    P --> C["🕷️ 抓取<br/>plugins/scrapling_bridge.py<br/>原生 13 + 增强 3 = 17 工具"]
+    P --> C["🕷️ 抓取<br/>plugins/scrapling_bridge.py<br/>原生 13 + 增强 4 = 18 工具"]
     P --> D["🧡 小焦壳<br/>xiaojiao_app.py<br/>直通 · 直显 · 解读 · 学习落盘"]
     P --> E["⚙️ 配置与模型路径<br/>xiaojiao_control.json · xiaojiao_harness.py<br/>video_service · podcast_service"]
 
-    A --> V["✅ 验收<br/>17 工具可调 · 抓完有解读 · 模型不写死<br/>猫娘不绑死 · 缺可选不影响启动"]
+    A --> V["✅ 验收<br/>18 工具可调 · 抓完有解读 · 模型不写死<br/>猫娘不绑死 · 缺可选不影响启动"]
     B --> V
     C --> V
     D --> V

@@ -19,7 +19,7 @@ scrapling install
 # ③ 启动小焦（插件自动加载）
 python start_xiaojiao.py
 
-# ④ 验证：浏览器打开小焦 → 设置 → 🧩 插件 → 应看到 scrapling_bridge 及其 17 个工具
+# ④ 验证：浏览器打开小焦 → 设置 → 🧩 插件 → 应看到 scrapling_bridge 及其 18 个工具
 ```
 
 在 `xiaojiao_control.json` 里按需配置（见第 5 节）：
@@ -35,7 +35,7 @@ python start_xiaojiao.py
 
 ---
 
-## 2. 十七个工具（**原生 13 个 1:1 全暴露** + 3 个增强 + 1 个兼容入口）
+## 2. 十八个工具（**原生 13 个 1:1 全暴露** + 4 个增强 + 1 个兼容入口）
 
 ### 2.1 原生 13 个（工具名与 Scrapling 官方完全一致）
 
@@ -55,13 +55,42 @@ python start_xiaojiao.py
 | `session_make_request` | `url` `session_id` | 用 HTTP 会话发请求（保持 cookie）|
 | `screenshot` | `url` `session_id` `full_page?` | 页面截图，存 `media/screenshot/` 返回路径 |
 
-### 2.2 小焦增强 3 个
+### 2.2 小焦增强 4 个
 
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
 | `get` | `url` `stealth?` `timeout?` `save_to?` | `make_request` 的中文友好别名（说"抓一下"就走它）|
 | `scrape_with_selector` | `url` `selector` `adaptive?` `name?` | 选择器抓取，**自适应防改版**（存档 + 相似度找回）|
-| 🆕 `download` | `url` `filename?` | **下载任意文件**（PDF/EPUB/ZIP/图片/音视频…），Scrapling 原生没有 |
+| `download` | `url` `filename?` | **下载任意文件**（PDF/EPUB/ZIP/图片/音视频…），Scrapling 原生没有 |
+| 🆕 `collect_vulnerabilities` | `days?` `severity?` `limit?` | **NVD 漏洞时间窗查询**：自动带 `lastModStartDate/lastModEndDate`，**插件层直接产出 Markdown 表格**（见 2.5）|
+
+### 2.5 `collect_vulnerabilities`：为什么漏洞查询要单独做一个工具
+
+真实缺陷复盘（用户实测）：让小焦"抓最近 7 天的高危漏洞"，它自己拼的 URL 是
+
+```
+https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=5&cvssV3Severity=HIGH
+```
+
+**没带时间窗** → 拿回 1999 年的历史数据；原始 JSON 丢给模型 → 5 条只总结了 1 条；
+"受影响软件"要模型自己从 `configurations[].nodes[].cpeMatch[].criteria` 里推 → 全部变成 `n/a`。
+
+修法是把"拼 URL + 挑字段 + 排版"整体收进插件层，模型只负责调用：
+
+| 环节 | 插件层怎么做的 |
+| --- | --- |
+| 时间窗 | **强制**带 `lastModStartDate` / `lastModEndDate`（UTC，`days` 默认 7，上限 120 = NVD 官方限制）|
+| 取数 | `resultsPerPage=50`；窗口内记录多于一页时取"最新一页 + 最早一页"，保证最新几条在手里（NVD 返回按 lastModified 升序）|
+| 等级 | CVSS 取值优先级 v4.0 → v3.1 → v3.0 → v2；v2 没有 `baseSeverity` 时按官方分段区间补等级；`severity=HIGH` 表示**HIGH 及以上**（含 CRITICAL），写多个等级（`HIGH,CRITICAL`）或 `ANY` 也可 |
+| 受影响软件 | 从 CPE 还原人话：`cpe:2.3:a:apache:http_server:1.0` → `Apache HTTP Server 1.0`；新 CVE 尚未收录 CPE 时，从英文描述里**保守摘取**并标注"（描述推断）"，摘不到就写"（NVD 未收录产品配置）"——**不写 n/a，也不臆造** |
+| 输出 | 直接返回 Markdown 表：`序号 / CVE 编号 / 等级 / 评分 / 受影响软件 / 发布时间 / 摘要`，前面带时间窗、数据源、**实际扫描范围**、命中条数 |
+| 抽样透明 | 没拉到的页、没有 CVSS 评分的记录，都在表头如实标注（"只扫描了最新 50 条"），不把不完整讲成完整 |
+
+实测（2026-09-12）：说「抓取最近 7 天的高危漏洞」→ 时间窗 `2026-09-05 → 2026-09-12`，
+5 行完整表格，等级全为 HIGH/CRITICAL，4/5 行带真实软件名，耗时约 3.4 秒。
+
+> 说明：NVD 官方接口对无密钥调用限流较严（5 次/30 秒）。插件遇到 HTTP 429 会退避重试一次；
+> 仍失败则返回中文可读原因，不会把半截结果当成完整结果给你。
 
 ### 2.3 兼容入口 1 个
 
@@ -111,6 +140,8 @@ python start_xiaojiao.py
 | 抓接口 JSON | 抓 https://…/api/list（返回 JSON）| 原样返回 JSON 文本 |
 | 登录态抓取 | 开个会话，然后抓 https://…（需要登录的页）| 会话内抓取 |
 | 整页截图 | 给 https://… 截个整页图 | `media/screenshot/*.png` |
+| **漏洞情报** | 抓取最近 7 天的高危漏洞 / 看看这个月的严重漏洞 10 条 | NVD 漏洞表（等级/评分/受影响软件/时间/摘要），走 `collect_vulnerabilities` |
+| **指定条件** | 帮我看下 30 天的中危漏洞 | 自动解析 `days=30 severity=MEDIUM` |
 
 ### 抓完的自动解读
 
@@ -139,10 +170,10 @@ This domain is for use in documentation examples without needing permission…
 
 ```mermaid
 flowchart TB
-    Q["🧑 用户：抓一下 xxx / 把这个 PDF 下载下来"] --> DI["① 抓取意图识别<br/>抓 / 爬 / 下载 + 网址 → 直接选工具"]
+    Q["🧑 用户：抓一下 xxx / 把这个 PDF 下载下来 / 最近 7 天的高危漏洞"] --> DI["① 意图识别<br/>抓 / 爬 / 下载 + 网址 → 直接选工具<br/>漏洞 / CVE / 高危 → collect_vulnerabilities"]
     DI --> SEC["② 安全闸门<br/>SSRF · robots · 同域限速"]
     SEC --> AR["③ 执行（双通道）<br/>inproc 直连（默认）/ MCP 服务"]
-    AR --> OUT["④ 产出<br/>正文 Markdown · books/ · downloads/ · 截图"]
+    AR --> OUT["④ 产出<br/>正文 Markdown · books/ · downloads/ · 截图 · NVD 漏洞表"]
     OUT --> EX["⑤ 直接展示 + 📖 解读"]
     OUT --> LE["⑥ 经验沉淀<br/>成功 = 用法 · 失败 = 反思"]
     LE -. "下次同类需求直接复用" .-> DI
@@ -411,7 +442,7 @@ python start_xiaojiao.py
 
 | # | 测什么 | 期望 |
 | --- | --- | --- |
-| 1 | 设置 → 🧩 插件 → `scrapling_bridge` | 看到 **17 个工具**（原生 13 + 增强 3 + 兼容 1）|
+| 1 | 设置 → 🧩 插件 → `scrapling_bridge` | 看到 **18 个工具**（原生 13 + 增强 4 + 兼容 1）|
 | 2 | 对小焦说「用 stealthy_fetch 抓一下 example.com」 | 工具轨迹出现 `stealthy_fetch`、正文 + 📖 解读 |
 | 3 | 说「抓一下 127.0.0.1」 | 中文提示「禁止访问本机/内网地址（SSRF 防护）」 |
 | 4 | 说「抓取 https://a.com 和 https://b.com」 | 批量结果，重复 URL 只抓一次 |
@@ -421,6 +452,8 @@ python start_xiaojiao.py
 | 8 | 连续用同一抓取 3 次都失败 | 第 4 次提示「工具暂时不可用，请 30 秒后重试」，30s 后自动恢复 |
 | 9 | 查 `self_learn/tool_skills.txt` | 每次使用都新增一条（成功记用法 / 失败记反思）|
 | 10 | 切换 `mode="mcp"` 且不启动 MCP 服务 | 中文提示「Scrapling MCP 未运行，请先执行 scrapling mcp」，无堆栈 |
+| 11 | 说「抓取最近 7 天的高危漏洞」 | 走 `collect_vulnerabilities`，表头时间窗 = 最近 7 天，5 行完整表格，等级仅 HIGH/CRITICAL，**受影响软件不是 n/a** |
+| 12 | 说「用搜索工具找漏洞」 | **不会把「用」当关键词去搜**；直接给 NVD 漏洞表（或在检索词被清洗时如实说明清洗结果）|
 
 ---
 
@@ -435,6 +468,8 @@ python start_xiaojiao.py
 | `Unexpected keyword argument` | 参数被自动白名单过滤掉了（不同工具支持的参数不同）| 见第 2 节各工具参数表 |
 | 浏览器起不来 | Chromium 未安装 / 路径不对 | 填 `executable_path` 或 `scrapling install` |
 | 小焦重启后改动没生效 | 可能有**两个 python 进程同时占用 5000**（旧进程抢答）| `netstat -ano | findstr :5000` → 结束多余进程后重启 |
+| 漏洞表显示"（NVD 未收录产品配置）" | 该 CVE 刚公布，NVD 还没收录 CPE 影响配置（`vulnStatus=Received`）| 正常现象，如实标注；等 NVD 补充分析后同一条会变成真实软件名 |
+| 漏洞查询提示"接口限流" | NVD 无 API Key 限 5 次/30 秒 | 等 30 秒再问；插件已自动退避重试一次 |
 
 ---
 

@@ -34,7 +34,7 @@ flowchart TB
         BM["brain_manager.py<br/>大脑注册/切换"]
     end
     subgraph EXT["可插拔能力"]
-        P["plugins/*.py|js|json|md<br/>（抓取插件 17 工具）"]
+        P["plugins/*.py|js|json|md<br/>（抓取插件 18 工具）"]
         V["video_service<br/>ComfyUI :8188 + Wan2.1"]
         PD["podcast_service"]
         MU["music_service"]
@@ -84,7 +84,7 @@ flowchart TB
 | 功能 | 说明 |
 | --- | --- |
 | 工具开关 | 顶栏「🛠️ 工具 · 开/关」一键禁用 |
-| 抓取插件 | **17 工具**（原生 13 + 3 增强 + 1 兼容）：网页/动态页/接口/批量/登录态/截图/下载文件 |
+| 抓取插件 | **18 工具**（原生 13 + 4 增强 + 1 兼容）：网页/动态页/接口/批量/登录态/截图/下载文件/NVD 漏洞表 |
 | 其他插件 | py / js / json / md(技能) 四种形态，自动加载（`load_plugins`）|
 | 插件生成器 | `/api/plugin/generate` 按需求生成插件骨架 |
 | 参数适配 | 按工具白名单过滤参数，避免 `unexpected keyword argument` |
@@ -187,10 +187,11 @@ flowchart TB
 ## 6. 测试与安全（真实数据）
 
 ```
-全量套件：103/103 通过 · 通过率 100% · 72.5s
-├─ 离线（unit）    78 项：配置/会话/指标/脱敏/JSON 展示（含 9 项超长 JSON 回归）/参数校验/渲染契约
+全量套件：172/172 通过 · 通过率 100% · 92.4s（实机验收另有 29/29）
+├─ 离线单元（unit） 84 项：配置/会话/指标/脱敏/JSON 展示（含 9 项超长 JSON 回归）/参数校验/渲染契约/NVD 漏洞聚合逻辑
+├─ 应用逻辑 36 项：检索词清洗（命令式/纯功能字/裸关键词）/漏洞查询意图/提示词铁律/工具注册/配置热重载/切人设
 ├─ 安全（security）18 项：SSRF 21 种写法 / robots / 限速 / 脱敏回读 / UA / 穿越 / 命令端点 / 无遥测 / 无明文密钥
-└─ 联网（network） 24 项：真实抓取 / 批量 / 会话 / 对抗（注入/超长/特殊字符/并发/超时/熔断自愈）
+└─ 联网（network） 34 项：真实抓取 / 批量 / 会话 / 对抗（注入/超长/特殊字符/并发/超时/熔断自愈）/ NVD 最近 7 天高危漏洞
 ```
 
 | 安全项 | 结果 |
@@ -214,20 +215,23 @@ flowchart TB
 | `docs/security-audit.md` | 安全结论 + 3 个问题根因修复 + 控制点流程图 |
 | `docs/testing-report.md` | 覆盖矩阵（诚实版）+ 未覆盖清单 + 24h 长跑方法 |
 | `docs/release-and-rollback.md` | 五步发版 + 6 种回滚场景 + 网络被墙时 API 发布兜底 |
-| `docs/acceptance-report.md` | 上一轮验收报告（13 个 bug 修复清单、评分）|
 | `docs/landing-report.md` | **本报告** |
-| `docs/scrapling.md` | 抓取插件 17 工具 / 原理 / 配置 / 指标 / 排错 |
-| 原理图 | **40 张 Mermaid，`tools/check_mermaid.py` 校验 0 问题**（已接入 CI）|
+| `docs/scrapling.md` | 抓取插件 18 工具 / 原理 / 配置 / 指标 / 排错 |
+| 原理图 | **42 张 Mermaid，`tools/check_mermaid.py` 校验 0 问题**（已接入 CI）|
 
 ---
 
-## 8. 本轮（v1.2.1 → v1.2.3）修复清单
+## 8. 本轮（v1.2.1 → v1.2.4）修复清单
 
 | 版本 | 问题 | 修复 |
 | --- | --- | --- |
 | v1.2.1 | 模型下拉误导、favicon 404 | 「自动（本地大脑）」+ 内联 SVG favicon |
 | v1.2.2 | **大 JSON 展示混乱（根因：截断顺序）**、存 .json 非法、save_to 存预览 | 先美化后截断 + `clip` 由调用方决定 + 落盘合法 JSON |
 | v1.2.3 | ` ```markdown ` 表格被当代码显示 | 新增 `.mdfence` 渲染成真 HTML 表格 |
+| v1.2.4 | **漏洞查询不走时间窗**（拿到 1999 年数据）、5 条只总结 1 条、受影响软件全 `n/a` | 新增 `collect_vulnerabilities` 工具：强制时间窗 + 插件层压平成 Markdown 表格（含 CPE→人话、描述兜底、抽样透明）|
+| v1.2.4 | **把功能字「用」当检索关键词**（搜出"用（汉语汉字）"） | 代码层检索词清洗闸门（命令式/裸关键词两种策略）+ 清洗为空则反问用户 + 提示词铁律；漏洞类问题优先走 `collect_vulnerabilities` |
+| v1.2.4 | 附带修掉两个潜在缺陷：`_fetch_raw` 用了非原生工具名 `get`；统一日志的脱敏过滤器把参数全转成字符串，导致所有 `%d` 型日志 emit 报错（熔断告警被打掉）| 改用原生名 `make_request`；过滤器改为"先渲染成最终文本再脱敏" |
+| v1.2.4 | 用 `ruff --select E9,F63,F7,F82`（真 bug 级规则）扫出并修掉 5 处潜在崩溃：`brain_manager._llama_cfg/_comfy_dir` **根本没定义**（多脑唤醒永远静默失败）、`/api/persona` 引用未定义的 `_CFG`（**切人设必然 500**）、语音预热缺 `global`（模型加载完就被回收）、插件生成兜底模板 `TPL` 未定义（失败路径 500）；另修 99 处日志格式参数不匹配（`忽略异常(%s:行号)` 注入格式多传一个参数 → emit 报错）| 补齐实现/常量/`global`，统一日志占位符为 `%s:%d` |
 
 ---
 
@@ -242,6 +246,7 @@ flowchart TB
 | 5 | 视频/播客/音乐/安装器未进 CI | 依赖 GPU 与外部模型 |
 | 6 | 移动端适配、长回答折叠等 UI 优化 | 见 4.4，需你确认视觉方向 |
 | 7 | AtomGit 未发布 | 未配置该平台凭据 |
+| 8 | ruff 全量规则集（含风格类）未清零 | 目前只把**真 bug 级规则**（`E9,F63,F7,F82`）纳入并要求 0 通过；风格类 900+ 条（printf 风格、盲 except、注解写法）未整改 |
 
 ---
 
@@ -251,7 +256,7 @@ flowchart TB
 | --- | --- | --- | --- |
 | 仓库卫生 | 5.0 | 9.0 | 日志归档、遗留物清理、行尾统一（噪音 diff 7232→146）|
 | 依赖管理 | 4.0 | 8.5 | 修 2 个致命错误、37 包锁定 |
-| 测试覆盖 | 3.0 | 8.5 | 103 项自动化 + CI 门槛 + 安全套件 + 实机/UI 检查 |
+| 测试覆盖 | 3.0 | 9.0 | 172 项自动化 + 29 项实机 + CI 门槛 + 安全套件 + UI 检查 |
 | 安全 | 6.5 | 9.0 | 修 SSRF 绕过与端点暴露；扣分：无鉴权（本地定位）|
 | 文档 | 7.0 | 9.5 | 9 份文档 + 40 图自检 + CHANGELOG 规范 |
 | 代码质量 | 4.0 | 8.5 | 静默吞异常 103→**0**（已跟踪文件）、统一日志、死代码清理 |
@@ -274,10 +279,11 @@ flowchart LR
 ## 12. 复现本报告全部结论
 
 ```powershell
-python tests/stress/run_all.py --json tests/stress/results.json --min-pass-rate 95   # 103 项
-python tests/stress/run_all.py --offline                                            # 离线 3 秒
-python tests/stress/live_check.py                                                   # 实机验收（需服务在跑）
-python tests/stress/ui_check.py --out ui_chat.png                                   # 真浏览器渲染检查
-python tools/check_mermaid.py --all                                                 # 40 张图语法
+python tests/stress/run_all.py --json tests/stress/results.json --min-pass-rate 95   # 172 项
+python tests/stress/run_all.py --offline                                            # 离线 5 秒（138 项）
+python tests/stress/live_check.py                                                   # 实机验收（需服务在跑，29 项）
+python tests/stress/ui_check.py --vuln --out ui_chat.png                            # 真浏览器渲染（含漏洞表格场景）
+python tools/check_mermaid.py --all                                                 # Mermaid 图语法（42 张）
 python tools/audit_static.py                                                        # 静态质量审计
+python -m ruff check --select E9,F63,F7,F82 .                                       # 真 bug 级静态检查（未定义名/语法）
 ```

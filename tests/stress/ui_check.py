@@ -34,6 +34,8 @@ def main() -> int:
     ap.add_argument("--base", default="http://127.0.0.1:5000")
     ap.add_argument("--out", default="ui_chat.png")
     ap.add_argument("--message", default="抓一下 https://example.com")
+    ap.add_argument("--vuln", action="store_true",
+                    help="追加漏洞表格场景：真发「抓取最近 7 天的高危漏洞」并数真 HTML 表格")
     args = ap.parse_args()
 
     try:
@@ -95,13 +97,37 @@ def main() -> int:
         print("  控制台错误：%d 条 %s" % (len(errors), errors[:3]))
         page.screenshot(path=out_path)
         print("  截图：%s" % out_path)
+
+        vuln_ok = None
+        if args.vuln:
+            # 场景 2：漏洞表格 —— 验证「Markdown 表格 → 真 HTML <table>」这条链路真的通
+            page.fill(sel, "抓取最近 7 天的高危漏洞")
+            page.keyboard.press("Enter")
+            print("  已发送：抓取最近 7 天的高危漏洞")
+            vuln_deadline = time.time() + 180
+            while time.time() < vuln_deadline:
+                page.wait_for_timeout(2000)
+                if "NVD 漏洞速览" in page.inner_text("body"):
+                    break
+            t_cnt = len(page.query_selector_all("table"))
+            rows = len(page.query_selector_all("table tr"))
+            ths = len(page.query_selector_all("table th"))
+            body_txt = page.inner_text("body")
+            vuln_ok = ("NVD 漏洞速览" in body_txt) and t_cnt >= 1 and rows >= 6 and "CVE-" in body_txt
+            print("  漏洞表格渲染：table=%d · 行=%d · 表头=%d · 含 CVE=%s"
+                  % (t_cnt, rows, ths, "CVE-" in body_txt))
+            print("  控制台错误（累计）：%d 条" % len(errors))
+            page.screenshot(path=out_path)
+
         browser.close()
 
     rendered = any(k in text for k in ("Example Domain", "小焦解读", "HTTP 200"))
     print("\n结论：%s" % ("✅ UI 可用、回答已渲染" if rendered else "⚠️ 未检测到回答，请看截图"))
+    if vuln_ok is not None:
+        print("漏洞表格场景：%s" % ("✅ 渲染成真 HTML 表格" if vuln_ok else "⚠️ 没等到表格，请看截图"))
     if errors:
         print("提示：控制台有 %d 条错误，建议排查（截图已保存）" % len(errors))
-    return 0 if rendered else 1
+    return 0 if (rendered and vuln_ok is not False) else 1
 
 
 if __name__ == "__main__":

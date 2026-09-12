@@ -121,5 +121,48 @@ def run(res: Results, mod=None, quick: bool = False) -> Results:
             _, _, e_r, d_r = b.call("get", {"url": URL_OK, "timeout": 25})
             res.check("对抗", "熔断 30 秒后自动恢复", not e_r, e_r[:60] or "已恢复")
 
+    # ---------- 5. NVD 漏洞聚合（真实接口，验证"最近 N 天"的时间窗真的生效） ----------
+    # 复盘：以前是自己拼 URL（没带时间窗）→ 拿回 1999 年的数据、受影响软件 n/a。
+    # 这条用例直接盯住"数据必须是新的 + 表格必须完整 + 软件名必须真实"。
+    _t0 = time.time()
+    _, _, _err, _d = b.call("collect_vulnerabilities",
+                            {"days": 7, "severity": "HIGH", "limit": 5}, cap=180)
+    _md = _d.get("content", "")
+    if _err and any(k in _err for k in ("限流", "429", "请求失败", "网络请求失败", "过大")):
+        res.skip("漏洞聚合", "NVD 最近 7 天高危漏洞", "接口限流/网络不可用：%s" % _err[:60])
+    else:
+        res.check("漏洞聚合", "NVD 最近 7 天高危漏洞（真实接口）", bool(_md) and not _err,
+                  _err[:70] or "%.1fs · %d 字" % (time.time() - _t0, len(_md)))
+        _rows = [l for l in _md.splitlines() if l.startswith("|")]
+        res.check("漏洞聚合", "返回完整表格（表头+分隔+5 行）",
+                  len(_rows) == 7, "%d 行" % len(_rows))
+        _today = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 7 * 86400))
+        res.check("漏洞聚合", "时间窗是最近 7 天（不是历史数据）", _today in _md,
+                  "窗口起点应为 %s" % _today)
+        _cells = [c.strip() for c in (_rows[2].split("|")[1:-1])] if len(_rows) > 2 else []
+        res.check("漏洞聚合", "行内字段齐全（序号/编号/等级/评分/软件/时间/摘要）",
+                  len(_cells) == 7 and "CVE-" in _cells[1] and _cells[2] in ("HIGH", "CRITICAL"),
+                  str(_cells[:4]))
+        _named = [r for r in _rows[2:] if "未收录" not in r]
+        res.check("漏洞聚合", "受影响软件不是 n/a（至少 3/5 行有软件名）",
+                  "n/a" not in _md and len(_named) >= 3, "有名字的行=%d/5" % len(_named))
+        res.check("漏洞聚合", "等级只在要求范围内（HIGH 及以上）",
+                  all(("| HIGH |" in r) or ("| CRITICAL |" in r) for r in _rows[2:]), "")
+        # 参数夹取与等级放宽在真实接口下也要成立（NVD 限流时如实跳过，不算失败）
+        _, _, _e2, _d2 = b.call("collect_vulnerabilities", {"days": 30, "severity": "ANY", "limit": 2}, cap=180)
+        if _e2 and any(k in _e2 for k in ("限流", "429", "请求失败", "网络请求失败", "过大")):
+            res.skip("漏洞聚合", "days 上限夹取 / severity=ANY", "接口限流：%s" % _e2[:60])
+        else:
+            _rows2 = [l for l in _d2.get("content", "").splitlines() if l.startswith("|")]
+            res.check("漏洞聚合", "severity=ANY 返回不筛选（2 行）", len(_rows2) == 4,
+                      "%d 行" % len(_rows2))
+            res.check("漏洞聚合", "days 参数如实反映在表头（最近 30 天）",
+                      "最近 30 天" in _d2.get("content", ""), _d2.get("content", "").splitlines()[0][:50] if _d2.get("content") else "")
+            _, _, _e3, _d3 = b.call("collect_vulnerabilities", {"days": 999, "severity": "ANY", "limit": 1}, cap=180)
+            res.check("漏洞聚合", "days=999 被夹到 NVD 上限 120 天",
+                      ("最近 120 天" in _d3.get("content", ""))
+                      or any(k in (_e3 or "") for k in ("限流", "429", "请求失败")),
+                      (_e3 or _d3.get("content", "").splitlines()[0])[:60])
+
     b.close_all()
     return res

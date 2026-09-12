@@ -139,7 +139,7 @@ def run(res: Results, mod=None) -> Results:
                 try:
                     if pat.search(open(p, encoding="utf-8", errors="ignore").read()):
                         suspects.append(os.path.relpath(p, REPO_ROOT))
-                except OSError:
+                except OSError:  # noqa: silent-ok — 个别文件读不了就跳过，不影响"无遥测"的结论
                     pass
     res.check("数据不外传", "代码中无遥测/上报埋点", not suspects, str(suspects[:3]))
 

@@ -272,7 +272,7 @@ flowchart TB
 | 文档 | 内容 |
 | --- | --- |
 | [README.md](README.md) | 安装、用法、功能全览、抓取章节 |
-| [docs/scrapling.md](docs/scrapling.md) | 抓取插件 17 工具、原理、配置、指标、排错 |
+| [docs/scrapling.md](docs/scrapling.md) | 抓取插件 18 工具、原理、配置、指标、排错 |
 | [docs/install.md](docs/install.md) | 安装与迁移 |
 | [docs/release-and-rollback.md](docs/release-and-rollback.md) | 发版流程与回滚预案 |
 | [tests/stress/README.md](tests/stress/README.md) | 压力测试用法与覆盖范围 |

@@ -204,7 +204,8 @@ def run(res: Results, mod=None) -> Results:
               "session_fetch", "session_make_request", "screenshot"]
     missing = [t for t in native if t not in tools]
     res.check("工具集", "Scrapling 原生 13 工具 1:1 全暴露", not missing, "缺=%s" % missing)
-    res.check("工具集", "对外工具总数 17", len(tools) == 17, "实际 %d: %s" % (len(tools), tools))
+    res.check("工具集", "对外工具总数 18", len(tools) == 18, "实际 %d: %s" % (len(tools), tools))
+    res.check("工具集", "新增漏洞聚合工具已注册", "collect_vulnerabilities" in tools, "")
 
     # 空参数 / 非法参数（全部离线即可判定，不联网）
     for tool, params, expect in (
@@ -223,5 +224,76 @@ def run(res: Results, mod=None) -> Results:
             res.check("参数校验", "%s 接受字符串并规范化" % tool, True, "（联网用例验证真实抓取）")
         else:
             res.check("参数校验", "%s → %s" % (tool, expect), expect in err, err[:70])
+
+    # ---------- 10. NVD 漏洞聚合（collect_vulnerabilities）：纯离线逻辑 ----------
+    # 复盘：以前"抓最近漏洞"会拿到 1999 年数据、受影响软件全是 n/a、5 条只总结 1 条，
+    # 所以这里把"CPE 转人话 / CVSS 取值 / 表格渲染"逐条钉死，任何一步退化都能被这条用例抓到。
+    _cpe = "cpe:2.3:a:apache:http_server:1.0:*:*:*:*:*:*:*"
+    res.check("漏洞聚合", "CPE → 人话软件名（含版本）",
+              mod.cpe_to_software(_cpe) == "Apache HTTP Server 1.0", mod.cpe_to_software(_cpe))
+    res.check("漏洞聚合", "非 CPE 字符串不硬凑软件名",
+              mod.cpe_to_software("not-a-cpe") == "" and mod.cpe_to_software("") == "", "")
+    _cpe_kernel = mod.cpe_to_software("cpe:2.3:o:linux:linux_kernel:*:*:*:*:*:*:*:*")
+    res.check("漏洞聚合", "厂商名不重复 + 通配版本不显示(不出 *)",
+              _cpe_kernel == "Linux Kernel", _cpe_kernel)
+    _v31 = {"metrics": {"cvssMetricV31": [{"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}]}}
+    _v2 = {"metrics": {"cvssMetricV2": [{"cvssData": {"baseScore": 7.5}}]}}
+    res.check("漏洞聚合", "CVSS v3.1 取等级与评分", mod._cvss_of(_v31) == ("CRITICAL", 9.8), str(mod._cvss_of(_v31)))
+    res.check("漏洞聚合", "CVSS v2 无 baseSeverity 时按分数补等级",
+              mod._cvss_of(_v2) == ("HIGH", 7.5), str(mod._cvss_of(_v2)))
+    res.check("漏洞聚合", "无 CVSS 数据时不编造等级", mod._cvss_of({}) == ("", 0.0), "")
+    # 下面这条是按 NVD 真实响应结构构造的样本（字段名/嵌套一致，值均为虚构）
+    _cve = {"id": "CVE-2026-0001", "vulnStatus": "Analyzed",
+            "published": "2026-02-05T10:00:00.000",
+            "lastModified": "2026-02-06T10:00:00.000",
+            "descriptions": [{"lang": "es", "value": "no"}, {"lang": "en", "value": "A flaw  was found | in Apache."}],
+            "metrics": {"cvssMetricV31": [{"cvssData": {"baseScore": 8.1, "baseSeverity": "HIGH"}}]},
+            "configurations": [{"nodes": [{"cpeMatch": [{"criteria": _cpe}]}]}]}
+    _row = mod._nvd_row(_cve)
+    res.check("漏洞聚合", "整行字段提取（编号/等级/评分/受影响软件）",
+              bool(_row) and _row["id"] == "CVE-2026-0001" and _row["severity"] == "HIGH"
+              and _row["score"] == 8.1 and _row["software"] == ["Apache HTTP Server 1.0"],
+              str(_row)[:120])
+    res.check("漏洞聚合", "描述只取英文、压平空白",
+              bool(_row) and _row["summary"] == "A flaw was found | in Apache.", str(_row and _row["summary"]))
+    res.check("漏洞聚合", "Rejected 状态的 CVE 不进表",
+              mod._nvd_row({"id": "CVE-2026-0002", "vulnStatus": "Rejected"}) is None, "")
+    res.check("漏洞聚合", "缺 id 的脏记录不进表", mod._nvd_row({}) is None, "")
+    _md = mod.build_vuln_markdown([_row], "HIGH 及以上", 7, "2026-02-01T00:00:00.000+00:00",
+                                  "2026-02-08T00:00:00.000+00:00", 1284, 200, 3, 5)
+    _tbl = [l for l in _md.splitlines() if l.startswith("|")]
+    res.check("漏洞聚合", "输出可直接渲染的 Markdown 表格（表头+分隔+数据行）",
+              len(_tbl) == 3 and _tbl[0].count("|") == 8, "%d 行表格" % len(_tbl))
+    res.check("漏洞聚合", "表格里是真实软件名而不是 n/a",
+              "Apache HTTP Server 1.0" in _md and "n/a" not in _md, "")
+    res.check("漏洞聚合", "摘要里的竖线被转义（不撑破表格）", "found \\| in Apache" in _md, "")
+    res.check("漏洞聚合", "命中不足时如实说明（不凑数）", "确实只有 1 条" in _md, "")
+    _md0 = mod.build_vuln_markdown([], "CRITICAL 及以上", 1, "s", "e", 0, 12, 0, 5)
+    res.check("漏洞聚合", "零命中时给出放宽建议而不是空白", "severity=ANY" in _md0, _md0.splitlines()[-1][:70])
+    res.check("漏洞聚合", "days/limit 脏输入回落默认值",
+              (mod._clamp_int("abc", 7, 1, 120), mod._clamp_int(None, 5, 1, 50)) == (7, 5), "")
+    res.check("漏洞聚合", "days 被夹在 NVD 官方上限 120 天内",
+              mod._clamp_int(999, 7, 1, mod.NVD_WINDOW_MAX_DAYS) == 120, "")
+    # CPE 未收录时的描述兜底（新 CVE 常态）：必须摘到名字 + 明确标注"描述推断"，且去掉冠词
+    _guess = mod._software_from_desc(
+        "The GEO my WP plugin for WordPress is vulnerable to Local File Inclusion in all versions up to 5.0.")
+    res.check("漏洞聚合", "CPE 缺失时从描述摘软件名（去冠词、带平台）",
+              _guess == "GEO my WP（WordPress）", _guess)
+    _guess2 = mod._software_from_desc(
+        "The Tutor LMS – eLearning and online course solution plugin for WordPress is vulnerable to SQL Injection.")
+    res.check("漏洞聚合", "描述里有破折号说明时只取产品名", _guess2 == "Tutor LMS（WordPress）", _guess2)
+    res.check("漏洞聚合", "描述里没有软件名就不硬编（返回空）",
+              mod._software_from_desc("An improper check in some component allows an attacker to cause a crash.") == "",
+              mod._software_from_desc("An improper check in some component allows an attacker to cause a crash."))
+    _row_g = dict(_row, software=[], software_guess="GEO my WP（WordPress）")
+    _mdg = mod.build_vuln_markdown([_row_g], "HIGH 及以上", 7, "s", "e", 10, 10, 0, 5)
+    res.check("漏洞聚合", "描述推断的软件名在表格里被标注为推断",
+              "（描述推断）" in _mdg and "GEO my WP（WordPress）（描述推断）" in _mdg, "")
+    _mdn = mod.build_vuln_markdown([_row], "HIGH 及以上", 7, "s", "e", 7124, 100, 0, 5,
+                                   notes=["第二页没拉到，本次只扫描了最新 50 条"])
+    res.check("漏洞聚合", "抽样不完整时如实告警（不冒充全量）",
+              "第二页没拉到" in _mdn and "本次实际扫描 100 条" in _mdn, "")
+    res.check("漏洞聚合", "窗口很小(全扫)时说已全部扫描",
+              "已全部扫描" in mod.build_vuln_markdown([_row], "HIGH 及以上", 1, "s", "e", 12, 12, 0, 5), "")
 
     return res
