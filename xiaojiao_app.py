@@ -2865,6 +2865,8 @@ HTML = r"""<!DOCTYPE html>
   .codebox.lang-json pre.code,.codebox.lang-text pre.code{max-height:380px;overflow-y:auto}
   .codebox.lang-json pre.code::-webkit-scrollbar,.codebox.lang-text pre.code::-webkit-scrollbar{width:6px}
   .codebox.lang-json pre.code::-webkit-scrollbar-thumb,.codebox.lang-text pre.code::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
+  /* ```markdown 围栏：直接渲染成正常排版（表格/标题/列表），左侧细线表示"这块来自代码围栏" */
+  .b .mdfence{border-left:2px solid #2f3b52;padding:2px 0 2px 12px;margin:8px 0}
   .lang.cpp,.lang.c{color:#6e7681}.lang.java{color:#6e7681}.lang.sql{color:#6e7681}
   .cp{background:#1f2533;border:1px solid #2a3140;color:#cbd0dc;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer}
   .cp:hover{background:#2a3140}
@@ -3399,8 +3401,15 @@ function renderMd(text){
   let out='',last=0,m;
   while((m=fence.exec(text))){
     const seg=text.slice(last,m.index);
+    const lang=(m[1]||'').toLowerCase();
     out+=renderBlocks(seg);
-    out+=codeBlock(m[2],m[1]);
+    // ```markdown / ```md 里本来就是 Markdown（表格/标题/列表），渲染出来比当代码显示好读得多；
+    // 其它语言（json/python/…）仍按代码块显示，保留「⧉ 复制」按钮。
+    if(lang==='markdown'||lang==='md'){
+      out+='<div class="mdfence">'+renderBlocks(m[2])+'</div>';
+    }else{
+      out+=codeBlock(m[2],m[1]);
+    }
     last=fence.lastIndex;
   }
   out+=renderBlocks(text.slice(last));
