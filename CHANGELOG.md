@@ -7,6 +7,7 @@
 **🕷️ 网页抓取能力 + 🧠 小脑成为必需项 + 🛠️ 安装器分级与体验修复。**
 
 ### Added
+- 🧪 **压力测试套件进仓库 + CI 定时跑**：新增 `tests/stress/`（`run_all.py` 编排 + `harness.py` 骨架 + 离线与联网两套用例，结果机读 `results.json`），以及 `.github/workflows/stress-test.yml`（每天 03:00 定时 / 手动触发 / 插件或测试变更触发；**通过率 < 95% 直接失败**；结果上传 artifact 并写入 Job Summary）。本地实测 **67/67 通过 · 通过率 100% · 74.3 秒**。用法见 [tests/stress/README.md](tests/stress/README.md)。
 - ⚡ **批量并发可配置（BatchConfig）**：原来批量是串行的，3 个域名也要排队；现在拆成**跨域并发**（`batch.concurrency`，默认 3）与**同域闸门**（`batch.per_domain_limit`，默认 1，永不并发打同一个站），外加 `rate_limit` / `max_retries` / `backoff_base`。实测 3 个不同域名 **6.20s → 0.92s（提速 85%）**；同域实测最大并发仍为 1。非法配置（如 `concurrency=0`）**不静默忽略**，批量工具直接返回中文错误。复测 **18/18 通过**。
 - 📊 **指标与观测（MetricsCollector）**：每次工具调用自动记录 `calls / success / fail / total_latency / avg_latency / max_latency / circuit_breaks / last_error`，三种取法：`GET /metrics`（Prometheus 文本，可直接抓取）、`GET /api/scrapling/metrics`（JSON，含活跃会话明细与熔断状态）、`logs/scrapling_metrics.json`（落盘）。安全拦截（SSRF/robots）不计失败；错误信息**脱敏后**入库。实测 **17/17 通过**，`/metrics` 线上返回 200。
 - 🔒 **`sanitize()` 脱敏补强**：原来只认 `key=value` 形式，**裸凭据会原样泄露**（指标自测发现 `sk-xxx` 未被抹掉）。现在额外覆盖 `sk-…` / `ghp_…` / `AKIA…` / `xox…` / JWT / `password=`，日志与指标一律打码。
