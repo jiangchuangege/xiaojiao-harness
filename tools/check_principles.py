@@ -219,7 +219,9 @@ def main() -> int:
             record(13, "实机健康检查 /api/env", False, str(e)[:80])
             live_ok = False
 
-    jsonp = args.json or os.path.join(ROOT, "_principles.json")
+    # 结果默认写进 logs/（已被 .gitignore 忽略），避免临时产物混进仓库
+    os.makedirs(os.path.join(ROOT, "logs"), exist_ok=True)
+    jsonp = args.json or os.path.join(ROOT, "logs", "principles.json")
     io.open(jsonp, "w", encoding="utf-8").write(json.dumps(RESULTS, ensure_ascii=False, indent=1))
     try:
         os.remove(os.path.join(ROOT, "_princ.json"))
