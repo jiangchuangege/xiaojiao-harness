@@ -11,6 +11,13 @@ import pickle
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 # ========== 配置 ==========
 LLAMA_API = os.environ.get("LLAMA_API", "http://127.0.0.1:9292/completion")
@@ -77,8 +84,8 @@ def generate_qa(chunk):
                 qa_list = json.loads(json_str)
                 if isinstance(qa_list, list) and len(qa_list) > 0:
                     all_json.append(qa_list)
-            except:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:80): %s", __file__, 80, e)
             start = end
         
         if all_json:
@@ -90,8 +97,8 @@ def generate_qa(chunk):
         if matches:
             try:
                 return json.loads(matches[-1])
-            except:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:93): %s", __file__, 93, e)
         
         print("⚠️ 未找到有效 JSON 数组")
         return []

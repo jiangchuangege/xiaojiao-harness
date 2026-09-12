@@ -9,6 +9,13 @@
 环境：pip install diffusers transformers accelerate safetensors imageio[ffmpeg]
 """
 import os, sys, datetime
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 PROMPT = sys.argv[1] if len(sys.argv) > 1 else "a whale swimming in the deep blue ocean"
 MODEL_CHOICE = None
@@ -36,8 +43,8 @@ def detect_model():
                 return "wan"
             if "ltx-video" in d.lower():
                 return "ltx"
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:39): %s", __file__, 39, e)
     return "ltx"  # 默认 LTX
 
 

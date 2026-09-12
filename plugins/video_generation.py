@@ -1,6 +1,13 @@
 # plugins/video_generation.py —— 视频生成插件(工具)：小焦说"生成视频"时调用
 # 秒级切换(keep_warm)：ComfyUI/Wan 常驻时不重启, 直接调 ComfyUI API；未加载才启动。
 import os, json, datetime, threading
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_BASE)
@@ -66,8 +73,8 @@ class VideoGeneration:
                     out = (r.json()["choices"][0].get("message", {}).get("content") or "").strip()
                     if out:
                         refined = out
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:69): %s", __file__, 69, e)
             ckpt = config.find_checkpoint() or "dit_fp8.safetensors"
             wf = json.load(open(os.path.join(_ROOT, "video_service", "workflow_wan.json"), encoding="utf-8"))
             for n in wf.values():

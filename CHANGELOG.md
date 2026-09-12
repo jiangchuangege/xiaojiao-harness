@@ -7,6 +7,11 @@
 **🕷️ 网页抓取能力 + 🧠 小脑成为必需项 + 🛠️ 安装器分级与体验修复。**
 
 ### Added
+- 🪵 **统一日志模块 `xiaojiao_log.py`**：所有模块走同一套 logging（`logs/xiaojiao.log`，5MB×3 轮转），
+  支持 `XIAOJIAO_LOG_LEVEL` / `XIAOJIAO_LOG_CONSOLE` 调节；**写日志前全链路脱敏**（`api_key=`、`sk-…`、`ghp_…`、`AKIA…`、JWT 一律打码），
+  日志目录不可写时自动降级、绝不影响主流程。
+- 🔧 **安全重构工具 `tools/fix_silent_except.py`**：用 AST 精确把「`except: pass`」改成「记日志 + 明确降级」，
+  把裸 `except:` 改成 `except Exception:`；默认 dry-run、改写后自动语法校验、语法不过则放弃该文件。
 - 🧪 **压力测试套件进仓库 + CI 定时跑**：新增 `tests/stress/`（`run_all.py` 编排 + `harness.py` 骨架 + 离线与联网两套用例，结果机读 `results.json`），以及 `.github/workflows/stress-test.yml`（每天 03:00 定时 / 手动触发 / 插件或测试变更触发；**通过率 < 95% 直接失败**；结果上传 artifact 并写入 Job Summary）。本地实测 **67/67 通过 · 通过率 100% · 74.3 秒**。用法见 [tests/stress/README.md](tests/stress/README.md)。
 - ⚡ **批量并发可配置（BatchConfig）**：原来批量是串行的，3 个域名也要排队；现在拆成**跨域并发**（`batch.concurrency`，默认 3）与**同域闸门**（`batch.per_domain_limit`，默认 1，永不并发打同一个站），外加 `rate_limit` / `max_retries` / `backoff_base`。实测 3 个不同域名 **6.20s → 0.92s（提速 85%）**；同域实测最大并发仍为 1。非法配置（如 `concurrency=0`）**不静默忽略**，批量工具直接返回中文错误。复测 **18/18 通过**。
 - 📊 **指标与观测（MetricsCollector）**：每次工具调用自动记录 `calls / success / fail / total_latency / avg_latency / max_latency / circuit_breaks / last_error`，三种取法：`GET /metrics`（Prometheus 文本，可直接抓取）、`GET /api/scrapling/metrics`（JSON，含活跃会话明细与熔断状态）、`logs/scrapling_metrics.json`（落盘）。安全拦截（SSRF/robots）不计失败；错误信息**脱敏后**入库。实测 **17/17 通过**，`/metrics` 线上返回 200。
@@ -26,6 +31,13 @@
 - 📚 文档：README 增加 **🛠️ 一键安装 · 检测分级** 章节（含三张图：**安装必需/可选分级图**、**小脑路径三级解析图**、**v1.1.0 改动全景图**＋原则落地对照表），同样位于**致谢之前**；`docs/architecture.md` 增加插件小节。
 
 ### Changed
+- 🧹 **消除"静默吞异常"（阶段 2 代码质量）**：静态审计发现 `except: pass` 共 **103 处**、裸 `except:` 19 处 ——
+  出错时无声无息，线上完全无法排障。用 AST 工具批量改为「`LOG.debug("忽略异常(文件:行): 异常")`」，
+  并给裸 `except:` 加上 `Exception` 限定（不再吞掉 `KeyboardInterrupt`）。
+  审计结果：**静默吞异常 103 → 6、裸 except 19 → 14、疑似密钥 0**（剩余均在本地未入库的自用插件里）。
+- 🧹 **清理死代码**：插件加载器里重复的 `elif man.get("tools")` 分支（永远不可达）已删除。
+- 🧹 **行尾一致性**：仓库里 CRLF/LF 混存曾导致"整文件被改"的巨型 diff（`xiaojiao_app.py` 7232 行噪音，真实改动仅 73 行）——
+  已按各文件在 HEAD 中的原始约定对齐并强制重新入库，现在 diff 干净可评审。
 - 🧠 **小脑改为必需项**（项目核心）：一键安装会检测小脑并明确提示；**路径不写死**（环境变量 → 配置 `brain.xiaojiao.model_path` → 项目目录探测 → **全盘自动探测**，模型与词表可跨目录配对、体积优先），支持换任意自训模型当小脑。
 - 🛠️ **一键安装检测分级**：必需（Python 依赖 / 聊天大脑 llama.cpp / 大脑模型 / llama-swap 秒级切换 / 小脑）与可选（ComfyUI 视频大脑 / 视频节点 / Wan 视频模型 / Node.js / 猫娘 / 配音 / 封面 / 音乐）分开报告。
   - ComfyUI、视频节点、Wan 视频模型、Node.js 由「必需」降级为「可选」，不再阻塞启动。

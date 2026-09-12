@@ -17,6 +17,13 @@ from datetime import datetime
 from flask import Flask, request, jsonify, render_template_string, Response, redirect
 import requests
 import torch
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 # ================== 配置（读取「操控文件」xiaojiao_control.json） ==================
 # 你想让小焦成为什么类型的模型、用什么大脑、开哪些工具，全部由这个文件决定。
@@ -37,8 +44,8 @@ def _load_control():
     if os.path.exists(p):
         try:
             c.update(json.load(open(p, encoding="utf-8")))
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:40): %s", __file__, 40, e)
     return c
 
 CONTROL = _load_control()
@@ -232,11 +239,6 @@ def load_plugins():
                     desc = inst.get_tool_descriptions() if inst else []
                     if desc:
                         plugins[base] = {"instance": inst, "desc": desc, "builtin": False, "type": "tools", "path": p, "manifest": man}
-                elif man.get("tools"):
-                    inst = _make_tools_plugin(man)
-                    desc = inst.get_tool_descriptions() if inst else []
-                    if desc:
-                        plugins[base] = {"instance": inst, "desc": desc, "builtin": False, "type": "tools", "path": p, "manifest": man}
                 else:
                     inst = _make_api_plugin(man)
                     desc = inst.get_tool_descriptions()
@@ -341,8 +343,8 @@ def _find_tts_model_dir():
             for _t in _ia._top_dirs(_drv):
                 if _ia._hit_keyword(_t, _kws) or _ia._hit_keyword(_t, ("downloads", "下载")):
                     cands.append(os.path.join(_drv, _t))
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:344): %s", __file__, 344, e)
     for c in cands:
         try:
             subs = [c] + [os.path.join(c, x) for x in os.listdir(c) if os.path.isdir(os.path.join(c, x))]
@@ -378,8 +380,8 @@ def _record_usage(usage, model=""):
         else:
             day["local_tokens"] += pt + ct
         json.dump(d, open(_COST_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:381): %s", __file__, 381, e)
 
 
 def _build_tools():
@@ -500,8 +502,8 @@ def load_memory():
 def save_memory(mem):
     try:
         json.dump(mem, open(MEMORY_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:503): %s", __file__, 503, e)
 
 
 def _key(text):
@@ -551,8 +553,8 @@ def save_history(hist):
     try:
         json.dump(hist[-MAX_HISTORY:], open(HISTORY_FILE, "w", encoding="utf-8"),
                   ensure_ascii=False)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:554): %s", __file__, 554, e)
 
 
 # ================== 会话存储（每个新对话一个会话，可切换） ==================
@@ -564,8 +566,8 @@ def _sessions():
         d = json.load(open(SESSIONS_FILE, encoding="utf-8"))
         if isinstance(d, dict) and "sessions" in d:
             return d
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:567): %s", __file__, 567, e)
     default = {"id": "default", "title": "新对话", "messages": []}
     return {"current": "default", "sessions": [default]}
 
@@ -573,8 +575,8 @@ def _sessions():
 def _save_sessions(d):
     try:
         json.dump(d, open(SESSIONS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:576): %s", __file__, 576, e)
 
 
 def get_current_session():
@@ -612,8 +614,8 @@ def llm_chat(messages):
         r = requests.post(url, headers=headers, json=payload, timeout=90)
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:615): %s", __file__, 615, e)
     return None
 
 
@@ -630,8 +632,8 @@ def llm_online():
     try:
         if requests.get("http://" + host + "/health", timeout=3).status_code == 200:
             return True
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:633): %s", __file__, 633, e)
     # 2) 端口连通(外部API如deepseek可能无/health, 但端口可达)
     try:
         h, _, pt = host.rpartition(":")
@@ -749,8 +751,8 @@ def run_tool(name, args, force=False):
                             vr = subprocess.run([it, vf], capture_output=True, text=True, timeout=5)
                             if vr.stdout.strip():
                                 ver = vr.stdout.strip().split("\n")[0][:40]; break
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            LOG.debug("忽略异常(%s:752): %s", __file__, 752, e)
                     if r.returncode == 0:
                         out.append("✅ %s 已安装%s" % (it, ("，版本: " + ver) if ver else ""))
                     else:
@@ -860,8 +862,8 @@ def run_tool(name, args, force=False):
                                 hits.append("%s:%d: %s" % (os.path.join(root, f), i, l.strip()[:70]))
                                 if len(hits) >= 30:
                                     break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        LOG.debug("忽略异常(%s:863): %s", __file__, 863, e)
                     if len(hits) >= 30:
                         break
                 if len(hits) >= 30:
@@ -935,8 +937,8 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
             import video_service.model_switch as _ms
             _other = "xiaojiao" if LLM_MODEL == "coder" else "coder"
             _ms._llama_swap_unload(_other)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:938): %s", __file__, 938, e)
     m = list(messages)
     tool_trace = []
     for _ in range(max_rounds):
@@ -955,8 +957,8 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
             msg = r.json()["choices"][0]["message"]
             try:
                 _record_usage(r.json().get("usage"), LLM_MODEL)
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:958): %s", __file__, 958, e)
         except Exception:
             return None, tool_trace
         tool_calls = msg.get("tool_calls")
@@ -1048,8 +1050,8 @@ def _llm_ask_raw(prompt):
                                 "temperature": 0.2, "max_tokens": MAX_TOKENS}, timeout=90)
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:1051): %s", __file__, 1051, e)
     return ""
 
 
@@ -1239,13 +1241,13 @@ def _learn_skill(user_input: str, tool: str, args, ok: bool, detail: str) -> Non
                 sys.path.insert(0, _SELF_DIR)
             import vstore
             vstore.add(line, tag="tool_skill")
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:1242): %s", __file__, 1242, e)
     except Exception as e:
         try:
             print("学习沉淀失败(不影响使用): %s" % str(e)[:80])
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:1247): %s", __file__, 1247, e)
 
 
 def _recall_skills(query: str, k: int = 3) -> str:
@@ -1276,8 +1278,8 @@ def plan_tool(user_input):
             j = json.loads(m.group(0))
             if isinstance(j, dict) and j.get("tool"):
                 return j["tool"], j.get("args", {})
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:1279): %s", __file__, 1279, e)
     return None, None
 
 
@@ -1356,8 +1358,8 @@ def agent_run(user_input, lean=False):
         if _sc:
             try:
                 _build_tools()          # 填充 _TOOL2PLUGIN，确保插件工具可被调用
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:1359): %s", __file__, 1359, e)
             _tn, _ta = _sc
             _res = _tool_result_str(run_tool(_tn, _ta, force=True))
             tool_trace.append({"tool": _tn, "args": _ta, "result": _trace_summary(_res)})
@@ -1424,8 +1426,8 @@ def agent_run(user_input, lean=False):
             _r = str(_t.get("result") or "")
             _bad = any(k in _r for k in ("失败", "错误", "Error", "error", "禁止", "超时", "不可用"))
             _learn_skill(user_input, _t.get("tool", ""), _t.get("args"), not _bad, _r)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:1427): %s", __file__, 1427, e)
 
     # 5. 落地上下文
     if answer:
@@ -1528,8 +1530,8 @@ def api_asr():
         text = "".join(seg.text for seg in segments).strip()
         try:
             os.remove(tmp.name)
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:1531): %s", __file__, 1531, e)
         return jsonify({"ok": True, "text": text})
     except Exception as e:
         return jsonify({"ok": False, "error": "识别失败: " + str(e)[:120]}), 500
@@ -1706,8 +1708,8 @@ def api_plugin_generate():
     try:
         global PLUGINS
         PLUGINS = load_plugins()
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:1709): %s", __file__, 1709, e)
     return jsonify({"ok": True, "name": name.split(".py")[0], "file": "plugins/" + name, "note": "已生成并注册，设置->插件 可开关"})
 
 
@@ -1891,8 +1893,8 @@ def api_workspace():
             else:
                 sz = ""
             out.append({"name": name, "type": typ, "size": sz})
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:1894): %s", __file__, 1894, e)
     return jsonify(out)
 
 
@@ -1977,8 +1979,8 @@ def _discover_probe():
         d["comfy"] = _ia.discover_comfy() or ""
         d["video_root"] = _ia.discover_video_root() or ""
         d["swap"] = _ia.discover_exe("llama-swap.exe", ("llama-swap", "swap", "秒切")) or ""
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:1980): %s", __file__, 1980, e)
     _DISCOVER_CACHE.update(d)
 
 
@@ -1993,8 +1995,8 @@ def _discover_paths(kick=True):
         _DISCOVER_CACHE["_started"] = True
         try:
             threading.Thread(target=_discover_probe, daemon=True).start()
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:1996): %s", __file__, 1996, e)
     root = os.path.dirname(os.path.abspath(__file__))
     try:
         with open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8") as f:
@@ -2048,8 +2050,8 @@ def api_env():
     _cfg = {}
     try:
         _cfg = _j.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), encoding="utf-8"))
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:2051): %s", __file__, 2051, e)
     _ll = _cfg.get("brain", {}).get("llama", {}) or {}
     _ap = _cfg.get("brain", {}).get("api", {}) or {}    # Python
     add("Python", True, "v" + __import__("sys").version.split()[0], "已装", "")
@@ -2141,8 +2143,8 @@ def api_env():
         r2 = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=8)
         if r2.returncode == 0:
             gpu = r2.stdout.strip()
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:2144): %s", __file__, 2144, e)
     add("NVIDIA GPU + 显存", bool(gpu), gpu or "未检测到", "需 N 卡", "")
     missing = [i for i in items if not i["ok"]]
     return jsonify({"items": items, "missing": [i["name"] for i in missing], "ok": not missing})
@@ -2326,8 +2328,8 @@ def api_brain():
                 bad += 1
             if r.get("corrected_reply"):
                 corr += 1
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:2329): %s", __file__, 2329, e)
     try:
         import sys as _s, os as _o
         _s.path.insert(0, os.path.join(root, "self_learn"))
@@ -2368,8 +2370,8 @@ def api_growth():
                 good += 1
             if r.get("corrected_reply"):
                 corr += 1
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:2371): %s", __file__, 2371, e)
     return jsonify({"know": know, "logs": logs, "good": good, "bad": bad, "corr": corr})
 
 
@@ -2405,8 +2407,8 @@ def api_access():
         control = json.loads(open("xiaojiao_control.json", encoding="utf-8").read())
         control["capabilities"] = cap
         json.dump(control, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:2408): %s", __file__, 2408, e)
     return jsonify({"ok": True, "full_access": FULL_ACCESS})
 
 
@@ -2526,8 +2528,8 @@ def api_model_addlocal():
         else:
             return jsonify({"ok": True, "model_id": mid, "name": name,
                             "note": "已写入配置；但没找到 llama-swap.exe，请手动重启它（或设 XIAOJIAO_LLAMA_SWAP）"})
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:2529): %s", __file__, 2529, e)
     return jsonify({"ok": True, "model_id": mid, "name": name, "note": "llama-swap 正在重启, 约10秒后可用"})
 
 
@@ -2597,8 +2599,8 @@ def _growth_html():
                 bad += 1
             if r.get("corrected_reply"):
                 corr += 1
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:2600): %s", __file__, 2600, e)
     bar = min(100, int(know / 5))
     try:
         import sys as _s, os as _o
@@ -2611,8 +2613,8 @@ def _growth_html():
     try:
         ls = [x.strip() for x in open(os.path.join(root, "self_learn", "little_brain_knowledge.txt"), encoding="utf-8") if x.strip()]
         lessons = ls[-8:][::-1]
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:2614): %s", __file__, 2614, e)
     lhtml = "".join("<div class='bli'>" + (l[:64] + ("…" if len(l) > 64 else "")) + "</div>" for l in lessons) or "<div class='bli think'>还没学到东西，多聊几轮、点几个👍吧</div>"
     return ("""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>小焦成长报告</title>
 <style>*{box-sizing:border-box}body{margin:0;font-family:'Segoe UI',sans-serif;background:linear-gradient(160deg,#0e1116,#141a2e);color:#e8ebf3;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:32px 16px}
@@ -3605,8 +3607,8 @@ def main():
     try:
         _discover_paths(kick=True)
         print("  🔎 路径自动探测已在后台预热(ComfyUI / llama-swap / 视频模型)")
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:3608): %s", __file__, 3608, e)
     threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 

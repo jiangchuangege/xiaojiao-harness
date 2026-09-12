@@ -1,6 +1,13 @@
 # plugins/music_generation.py —— 音乐生成插件(工具)：小焦说"生成音乐/曲子/旋律"时调用
 # 本地 MusicGen(facebook/musicgen-small, 首次自动下载~1.5G) → 生成 wav → 前端播放
 import os, sys, datetime, subprocess
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_BASE)
@@ -13,14 +20,14 @@ def _free_vram():
         import video_service.model_switch as ms
         ms._llama_swap_unload("coder")
         ms._llama_swap_unload("xiaojiao")
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:16): %s", __file__, 16, e)
     try:
         import brain_manager as bm
         for k in list(bm.BRAINS.keys()):
             bm._full_stop(k)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:22): %s", __file__, 22, e)
 
 
 class MusicGeneration:

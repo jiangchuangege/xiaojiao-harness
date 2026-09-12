@@ -2,6 +2,13 @@
 import os, time, json, requests
 
 import config
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 
 def submit_workflow(workflow):
@@ -27,8 +34,8 @@ def wait_output(prompt_id, timeout=1800, progress_cb=None):
                 pr = requests.get(config.COMFY_URL + "/progress", timeout=3).json()
                 if pr and pr.get("max"):
                     progress_cb(int(pr.get("value", 0)), int(pr.get("max", 0)))
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:30): %s", __file__, 30, e)
         try:
             h = requests.get(config.COMFY_URL + "/history/%s" % prompt_id, timeout=15).json()
         except Exception:

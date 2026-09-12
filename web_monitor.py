@@ -65,7 +65,7 @@ def update_status():
         import requests
         resp = requests.get("http://127.0.0.1:%s/health" % os.environ.get("LLAMA_PORT", "8080"), timeout=2)
         status["llm_online"] = resp.status_code == 200
-    except:
+    except Exception:
         status["llm_online"] = False
 
     # 从 massive_distill.log 读取日志和最后蒸馏时间

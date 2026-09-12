@@ -1,5 +1,12 @@
 # video_service/config.py —— 视频生成服务配置（自动探测，全部可改）
 import os
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 # 视频模型总目录（可改/可设环境变量；默认自动探测，不写死）
 def _find_video_root_near(comfy_dir):
@@ -29,8 +36,8 @@ def _default_video_root():
             if near:
                 return near
             return os.path.dirname(cd.rstrip("\\/"))
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:32): %s", __file__, 32, e)
     try:
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -67,8 +74,8 @@ def find_comfy_dir():
             _c = _ia.discover_comfy()
             if _c:
                 return _c
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:70): %s", __file__, 70, e)
         return cand or ""
     # 递归找 main.py（最多 4 层）
     for root, dirs, files in os.walk(VIDEO_ROOT):

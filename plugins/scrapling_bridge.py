@@ -63,6 +63,13 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutTimeout
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 # =====================================================================
 # 常量（所有魔法数字集中在此，便于调优）
@@ -558,8 +565,8 @@ class BridgeConfig:
                 if hasattr(cfg, k) and v is not None:
                     try:
                         setattr(cfg, k, v)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        LOG.debug("忽略异常(%s:561): %s", __file__, 561, e)
         # 环境变量覆盖（部署/调试更方便）
         env_map = {
             "XIAOJIAO_SCRAPLING_MODE": "mode",
@@ -581,8 +588,8 @@ class BridgeConfig:
                         setattr(cfg, attr, int(float(v)))
                     else:
                         setattr(cfg, attr, v)
-                except Exception:
-                    pass
+                except Exception as e:
+                    LOG.debug("忽略异常(%s:584): %s", __file__, 584, e)
         if not cfg.executable_path:
             # 兜底探测：项目内 / 家目录 / 各盘关键词目录找 chrome.exe（不写死盘符与目录名）
             _here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -599,8 +606,8 @@ class BridgeConfig:
                             _b = os.path.join(_drv, _t)
                             cands.append(os.path.join(_b, "chrome.exe"))
                             cands.append(os.path.join(_b, "chrome-win64", "chrome.exe"))
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:602): %s", __file__, 602, e)
             for cand in cands:
                 if os.path.exists(cand):
                     cfg.executable_path = cand
@@ -644,8 +651,8 @@ class AsyncRunner:
         finally:
             try:
                 self._loop.close()
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:647): %s", __file__, 647, e)
 
     def run(self, coro, timeout: float = DEFAULT_TIMEOUT):
         """提交协程并等待结果；超时抛 TimeoutError（由上层转成中文错误）。"""
@@ -662,8 +669,8 @@ class AsyncRunner:
         try:
             if self._loop and self._loop.is_running():
                 self._loop.call_soon_threadsafe(self._loop.stop)
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:665): %s", __file__, 665, e)
 
 
 # =====================================================================
@@ -1649,8 +1656,8 @@ class MCPClient:
                     self._proc.wait(timeout=5)
                 except Exception:
                     self._proc.kill()
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:1652): %s", __file__, 1652, e)
 
 
 # =====================================================================
@@ -1981,8 +1988,8 @@ class ScraplingBridge:
                 ct = ""
                 try:
                     ct = (r.headers.get("content-type") or "").split(";")[0].strip()
-                except Exception:
-                    pass
+                except Exception as e:
+                    LOG.debug("忽略异常(%s:1984): %s", __file__, 1984, e)
                 return body, getattr(r, "status", 0), ct
         try:
             return _RUNNER.run(_get(), timeout=self._cfg.timeout)
@@ -2063,8 +2070,8 @@ class ScraplingBridge:
                         f.close()
                         try:
                             os.remove(fp)
-                        except OSError:
-                            pass
+                        except OSError as e:
+                            LOG.debug("忽略异常(%s:2066): %s", __file__, 2066, e)
                         return fmt_result(0, url, "", "文件超过 %d MB 上限，已中止（可先确认文件大小）" % MAX_DOWNLOAD_MB)
         except OSError as e:
             return fmt_result(0, url, "", "写入失败（磁盘空间/权限）：%s" % sanitize(e)[:100])
@@ -2074,8 +2081,8 @@ class ScraplingBridge:
         if got == 0:
             try:
                 os.remove(fp)
-            except OSError:
-                pass
+            except OSError as e:
+                LOG.debug("忽略异常(%s:2077): %s", __file__, 2077, e)
             return fmt_result(0, url, "", "下载失败：目标返回空内容（0 字节），未保存文件")
         _want_bin = os.path.splitext(name)[1].lower() in (".pdf", ".epub", ".zip", ".mobi", ".exe", ".apk", ".mp4", ".mp3")
         if ctype == "text/html" and _want_bin:
@@ -2397,8 +2404,8 @@ def _humanize_error(msg: str) -> str:
         sid = ""
         try:
             sid = m.split("'")[1]
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:2400): %s", __file__, 2400, e)
         return ("会话 %s 不存在（可能已被关闭或服务重启过）—— 先调用 list_sessions 看有哪些会话，"
                 "或重新 open_session / open_request_session 开一个" % (sid or "该"))
     if "input should be 'dynamic'" in low or "type=literal_error" in low or "validation error" in low:
@@ -2438,8 +2445,8 @@ def _sid_of(out: str) -> str:
                 return m.group(1)
         if isinstance(body, dict):
             return str(body.get("session_id") or "")
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:2441): %s", __file__, 2441, e)
     return ""
 
 

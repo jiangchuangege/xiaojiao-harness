@@ -3,6 +3,13 @@
 #      空闲大脑 → sleep(权重从显存卸载到内存, ~1-2s)；要用 → wake(内存→显存, ~1-2s)。
 #      进程常驻不杀，只做权重 offload/onload → 秒级切换，省显存。
 import os, json, threading, time, subprocess
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 # 大脑注册表：每个大脑 = 一个可连的"模型服务"(唯一端口/唯一指纹)
 # state: RUN(权重在显存) / SLEEP(权重在内存, 进程在) / OFF(未加载)
@@ -56,8 +63,8 @@ def _pid_on_port(port):
         if ":%d " % port in line and ("LISTENING" in line or "LISTEN" in line):
             try:
                 return int(line.strip().split()[-1])
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:59): %s", __file__, 59, e)
     return None
 
 
@@ -78,8 +85,8 @@ def _start_llama(b):
         mine = "coder" if str(b.get("name", "")).find("编码") >= 0 or b.get("port") != 9292 else "xiaojiao"
         other = "coder" if mine == "xiaojiao" else "xiaojiao"
         _ms._llama_swap_unload(other)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:81): %s", __file__, 81, e)
     if _port_alive(b["port"]):
         return True
     try:
@@ -152,8 +159,8 @@ def _full_stop(brain_key):
                 _ms._llama_swap_unload(_mid)
             else:
                 _ms.stop_comfy()
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:155): %s", __file__, 155, e)
         b["state"] = "OFF"
     return True
 
@@ -166,8 +173,8 @@ def _evict_ram_brains(except_key):
             continue  # 聊天/视频互相切换不清
         try:
             _ms.stop_comfy()  # 第三方大脑占用时, 视频大脑让位(或按类型扩展)
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:169): %s", __file__, 169, e)
 
 
 def switch_to(target):

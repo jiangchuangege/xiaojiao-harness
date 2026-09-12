@@ -14,6 +14,13 @@ import os
 import shutil, sys, time, threading, webbrowser, subprocess
 import requests
 import xiaojiao_app as app
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 CONTROL = app.CONTROL
 MODEL_NAME = app.MODEL_NAME
@@ -52,8 +59,8 @@ def start_llama_brain():
         if "9292" in burl and requests.get("http://127.0.0.1:9292/v1/models", timeout=3).status_code == 200:
             print("✅ 大脑已由 llama-swap(9292) 管理，跳过冗余直连(8080)。")
             return None
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:55): %s", __file__, 55, e)
     server, gguf = resolve_llama_paths()
     port = int(BRAIN.get("llama", {}).get("port", 8080))
     if not (server and gguf and os.path.exists(server) and os.path.exists(gguf)):
@@ -70,8 +77,8 @@ def start_llama_brain():
             if requests.get(f"http://127.0.0.1:{port}/health", timeout=2).status_code == 200:
                 print(f"✅ 大脑 {MODEL_NAME} 已就绪 (port {port})")
                 return proc
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:73): %s", __file__, 73, e)
         time.sleep(2)
     print(f"⚠️ 大脑启动超时（可能在加载模型），小焦仍会尝试连接。")
     return proc
@@ -163,8 +170,8 @@ def start_neko():
             _sp.Popen([sys.executable, learn, "--daemon", "--interval", "300"],
                       cwd=os.path.dirname(os.path.abspath(__file__)), creationflags=subprocess.CREATE_NO_WINDOW)
             print("🎓 [N.E.K.O] 后台学习通道已启动(每5分钟学你与猫娘的对话)")
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:166): %s", __file__, 166, e)
     return root
 
 
@@ -195,8 +202,8 @@ def start_llama_swap():
         try:
             s.connect(("127.0.0.1", 9292)); s.close()
             print("  [llama-swap] 已在运行(9292)"); return None
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:198): %s", __file__, 198, e)
         finally:
             s.close()
         proc = subprocess.Popen([exe, "--config", cfg, "--listen", "127.0.0.1:9292"],
@@ -239,7 +246,7 @@ def main():
     if "--port" in sys.argv:
         try:
             port = int(sys.argv[sys.argv.index("--port") + 1])
-        except:
+        except Exception:
             port = 5000
     else:
         port = int(CONTROL.get("web_port", os.environ.get("PORT", 5000)))
@@ -267,8 +274,8 @@ def main():
         if llama_proc:
             try:
                 llama_proc.kill()
-            except:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:270): %s", __file__, 270, e)
         print("🛑 所有服务已关闭。")
 
 if __name__ == "__main__":

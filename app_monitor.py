@@ -6,6 +6,13 @@
 import os, time, json, subprocess
 from flask import Blueprint, jsonify, request
 import brain_manager as bm
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 bp = Blueprint("monitor", __name__)
 _LOGS = []
@@ -55,8 +62,8 @@ def _nvidia():
         if r.returncode == 0:
             u, t = r.stdout.strip().split(",")[:2]
             return int(u), int(t)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:58): %s", __file__, 58, e)
     return 0, 0
 
 
@@ -66,8 +73,8 @@ def _mem():
         import psutil
         v = psutil.virtual_memory()
         return int(v.used / 1048576), int(v.total / 1048576)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:69): %s", __file__, 69, e)
     try:
         import ctypes
         class MEMORYSTATUSEX(ctypes.Structure):
@@ -175,8 +182,8 @@ def api_monitor_op():
                 import requests
                 requests.post("http://127.0.0.1:8188/free", json={"unload_models": True, "free_memory": True}, timeout=8)
                 requests.post("http://127.0.0.1:9292/api/models/unload/xiaojiao", timeout=8)
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:178): %s", __file__, 178, e)
             note = "已紧急清空显存"
         elif op == "add":
             name = d.get("name") or tgt
@@ -212,5 +219,5 @@ def _save_conf(key, conf):
         d = json.load(open(cf, encoding="utf-8"))
         d.setdefault("brain", {}).setdefault(key, {}).setdefault("conf", {}).update(conf)
         json.dump(d, open(cf, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:215): %s", __file__, 215, e)

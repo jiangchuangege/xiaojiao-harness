@@ -5,6 +5,13 @@
 装完(或补完缺失) → 全部功能就能用。
 """
 import os, sys, json, shutil, subprocess, urllib.request, zipfile, time, socket
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CFG = os.path.join(ROOT, "xiaojiao_control.json")
@@ -63,8 +70,8 @@ def _drives():
         try:
             if os.path.isdir(r):
                 out.append(r)
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:66): %s", __file__, 66, e)
     return out
 
 
@@ -104,8 +111,8 @@ def _where_search(drv, name, timeout=25):
                 p = line.strip()
                 if p.lower().endswith(name.lower()):
                     return p
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:107): %s", __file__, 107, e)
     return None
 
 
@@ -148,8 +155,8 @@ def discover_gguf():
                             if "xiaojiao" in f.lower():
                                 return os.path.join(dp, f)   # 官方同名优先
                             best = best or os.path.join(dp, f)
-                except Exception:
-                    pass
+                except Exception as e:
+                    LOG.debug("忽略异常(%s:151): %s", __file__, 151, e)
     return best
 
 
@@ -367,8 +374,8 @@ def main():
                 ll["server"] = exe.replace("/", "\\")
         try:
             os.remove(dl)
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:370): %s", __file__, 370, e)
         if not (ll.get("server") and os.path.exists(ll["server"])):
             missing.append("llama-server.exe")
 
@@ -552,8 +559,8 @@ def main():
                             sw = os.path.join(root, f)
             try:
                 os.remove(dl)
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:555): %s", __file__, 555, e)
             if not sw:
                 missing.append("llama-swap.exe")
     if sw:

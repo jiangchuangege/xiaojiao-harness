@@ -18,6 +18,13 @@ import os, re, json, pickle, sys
 import torch
 import torch.nn as nn
 import requests
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 def _resolve_brain_paths():
     """解析小脑(自研蒸馏模型)的文件路径 —— 不写死，可自己改、可自动探测。
@@ -39,8 +46,8 @@ def _resolve_brain_paths():
             model = model or _xj.get("model_path", "")
             vocab = vocab or _xj.get("vocab_path", "")
             conf = conf or _xj.get("config_path", "")
-        except Exception:
-            pass
+        except Exception as e:
+            LOG.debug("忽略异常(%s:42): %s", __file__, 42, e)
     if not (model and os.path.exists(model)):          # 自动探测
         _c = sorted(_g.glob("*.pth"))
         model = _c[0] if _c else "mini_gpt_model.pth"
@@ -76,8 +83,8 @@ try:
     os.system("")
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except Exception:
-    pass
+except Exception as e:
+    LOG.debug("忽略异常(%s:79): %s", __file__, 79, e)
 
 
 class MiniGPT(nn.Module):
@@ -212,8 +219,8 @@ def retrieve_reply(query, index, threshold=RETRIEVE_THRESHOLD):
         vr = vstore.search(query, k=1, threshold=0.13)
         if vr["hit"] and vr["best"][1]:
             return vr["best"][1], vr["best"][0]
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:215): %s", __file__, 215, e)
     q = _bigrams(query)
     best_reply, best_score = None, 0.0
     for user_bi, user, reply in index:
@@ -329,8 +336,8 @@ def llm_ask(prompt):
                           timeout=90)
         if r.status_code == 200:
             return r.json().get("content", "").strip()
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:332): %s", __file__, 332, e)
     return ""
 
 
@@ -444,8 +451,8 @@ def main():
             try:
                 with open(MEMORY_PATH, "a", encoding="utf-8") as f:
                     f.write(f"用户 {user_input} 小焦 {record[:80]}\n")
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.debug("忽略异常(%s:447): %s", __file__, 447, e)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,13 @@
 # 用「剧本(LLM) → 卸载LLM → TTS逐句(Chatterbox) → pydub拼接 → SD1.5封面」产出一个完整播客包。
 # 遵循小焦多脑机制: 用时一个大脑上显存, 用别的 LLM/视频就把它替换/卸载, 互不打架。
 import os, json, sys, time, threading, datetime
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 # ===== 路径 =====
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # xiaojiao harness 根
@@ -129,8 +136,8 @@ def _get_tts():
         if getattr(_app, "_tts_model", None) is not None:
             _tts = _app._tts_model
             return _tts
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:132): %s", __file__, 132, e)
     # 否则独立加载
     import perth
     if getattr(perth, "PerthImplicitWatermarker", None) is None:
@@ -162,8 +169,8 @@ def _find_tts_dir():
             for _t in _ia._top_dirs(_drv):
                 if _ia._hit_keyword(_t, _kws) or _ia._hit_keyword(_t, ("downloads", "下载")):
                     bases.append(os.path.join(_drv, _t))
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:165): %s", __file__, 165, e)
     for base in bases:
         try:
             subs = [base] + glob.glob(os.path.join(base, "*"))

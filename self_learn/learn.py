@@ -18,6 +18,13 @@
 
 import json, os, sys, datetime
 import vstore
+import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
+try:
+    from xiaojiao_log import get_logger
+except Exception:  # 独立运行时退化为标准 logging
+    def get_logger(name=None):
+        return logging.getLogger(name or 'xiaojiao')
+LOG = get_logger(__name__)
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PROJ = os.path.dirname(BASE)                                  # 项目根
@@ -70,8 +77,8 @@ def _good(fb, corrected):
     try:
         if int(str(fb).strip("星")) >= 4:
             return True
-    except Exception:
-        pass
+    except Exception as e:
+        LOG.debug("忽略异常(%s:73): %s", __file__, 73, e)
     return False
 
 
