@@ -99,6 +99,11 @@ def run(res: Results, mod=None, quick: bool = False) -> Results:
 
         def _w(i):
             _, _, e, dd = b.call("get", {"url": urls[i], "timeout": 25}, cap=60)
+            if e:
+                # 外网站点偶发抖动不该判"并发有问题"：这条用例要盯的是**不串数据/不崩**，
+                # 所以单个地址失败时重试一次再算数（实测会被一次 CDN 抖动打成假失败）。
+                _, _, e2, dd2 = b.call("get", {"url": urls[i], "timeout": 25}, cap=60)
+                e, dd = e2, (dd2 if dd2 else dd)
             out[i] = (dd.get("url", "").rstrip("/"), e)
 
         ths = [threading.Thread(target=_w, args=(i,)) for i in range(len(urls))]

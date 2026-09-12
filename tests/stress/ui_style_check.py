@@ -136,6 +136,21 @@ def main() -> int:
         if not got:
             got = ask("抓一下 https://httpbin.org/json", "HTTP 200", timeout=120)
         page.wait_for_timeout(1500)
+        # 现场答案里不一定带代码围栏（模型每次写的长短不同，实测会假失败）。所以：
+        # 如果没有现成代码块，就用页面自己的 codeBlock() 往 DOM 里挂一个固定样例再测样式 ——
+        # 测的仍然是真实渲染路径与真实 CSS。
+        if not page.query_selector(".codebox"):
+            page.evaluate("""() => {
+                const src = 'def add(a, b):\\n    return a + b';
+                const html = (typeof codeBlock === 'function') ? codeBlock(src, 'python') : '';
+                for (const h of [...document.querySelectorAll('.b')]) {
+                    const wrap = document.createElement('div');
+                    wrap.innerHTML = html;
+                    h.appendChild(wrap.firstElementChild || wrap);
+                    break;
+                }
+            }""")
+            page.wait_for_timeout(300)
         if page.query_selector(".codebox"):
             style = page.evaluate("""() => {
                 const code=document.querySelector('.codebox pre.code code');
@@ -238,7 +253,11 @@ def main() -> int:
 
         # ---------- 4. 预设下拉 / 提示条位置（真实缺陷：选好的预设名不见了、提示盖住输入区） ----------
         print("\n[4] 预设下拉与轻提示位置")
-        # 先问后端"当前到底套用了哪个预设"：没套用就只验下拉本身可用，
+        # 先刷新一次页面：DOM 与后端状态对齐（刚跑过预设用例时，页面上的 DOM 可能是旧的，
+        # 会造成"接口说没预设、下拉却显示预设"这种假矛盾）。
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(2000)
+        # 再问后端"当前到底套用了哪个预设"：没套用就只验下拉本身可用，
         # 不要因为"当前没有预设"就把用例判失败（那是用户状态，不是缺陷）。
         _cur = page.evaluate("""async () => {
           try { const r = await fetch('/api/presets'); const d = await r.json();

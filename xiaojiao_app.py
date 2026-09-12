@@ -33,15 +33,26 @@ CONTROL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojia
 
 
 def strip_search_rules(role):
-    """把人设里被写进去的「检索铁律」剥掉（只留纯人设）。
+    """把混进人设里的**规则文本**剥掉，只留纯人设。
 
-    **真实缺陷防复发**：`/api/tools_toggle` 与 `_save_control` 曾经把**合成后**的
-    SYSTEM_PROMPT 当人设存回控制文件，于是每切一次工具开关就多存一份铁律 ——
-    线上控制文件里累积到 **11 份**，每轮请求都白背 3.5KB 提示词。
-    这里一次剥干净，且对"界面回传的合成人设"同样有效（幂等）。
+    role 只管人设（身份/性格/说话风格）。检索铁律、工具规则、技能清单、插件清单都该由
+    代码独立拼接 —— 一旦被写进 role，就会出现三个真问题：改人设丢规则、加插件得手改人设、
+    role 越写越长把人设淹没。
+
+    历史遗留（真实事故）：`/api/tools_toggle` 与 `_save_control` 曾把**合成后**的
+    SYSTEM_PROMPT 当人设存回控制文件，线上累积过 **11 份**铁律，每轮白背 3.5KB 提示词。
+    所以这里把**所有**规则类片段都切掉（[检索铁律]/[工具铁律]/[简洁原则]/[代码工作流]/
+    [技能插件]/[插件清单]/[环境]… 起始到下一个同级别段），且对"界面回传的合成人设"幂等。
     """
     s = role or ""
-    cuts = [i for i in (s.find("\n[检索铁律]"), s.find("[检索铁律]")) if i != -1]
+    cuts = []
+    for mark in ("\n[检索铁律]", "[检索铁律]", "\n[工具铁律]", "[工具铁律]",
+                 "\n[简洁原则]", "[简洁原则]", "\n[代码工作流]", "[代码工作流]",
+                 "\n[技能插件]", "[技能插件]", "\n[插件清单]", "[插件清单]",
+                 "\n【当前已加载", "【当前已加载", "\n[环境]", "[环境]", "\n[工具用法]", "[工具用法]"):
+        i = s.find(mark)
+        if i != -1:
+            cuts.append(i)
     if cuts:
         s = s[:min(cuts)]
     return s.strip()
@@ -84,6 +95,12 @@ LLM_KEY = BRAIN.get("api", {}).get("api_key", "")
 LLM_MODEL = BRAIN.get("api", {}).get("model", MODEL_NAME)
 # 检索铁律：写死在代码里，而不是只写在 control 文件里 —— 用户换人设/换模型也不会把这条规矩弄丢。
 # 真实缺陷防复发：小焦曾把功能字「用」当关键词去搜，搜回来的是"用（汉语汉字）"百科词条。
+# ============================================================================
+# 系统提示词的分层（**架构约定**：role 只负责人设，规则与清单由代码独立管理）
+#   最终提示词 = role（纯人设） + _SEARCH_RULES（检索铁律） + _TOOL_RULES（工具规则）
+#                + _plugin_list()（插件清单，从 PLUGINS 动态生成）
+# 这样：改人设不丢规则；加插件不用手改人设；role 不会被规则淹没。
+# ============================================================================
 _SEARCH_RULES = (
     "\n[检索铁律] "
     "① 调用 web_search 时，query 只能是**内容关键词**（如「最近的漏洞 CVE」「2026 年 AI 新闻」），"
@@ -92,18 +109,92 @@ _SEARCH_RULES = (
     "不要用新闻搜索代替；"
     "③ 用户没说清要搜什么时，先反问「请告诉我你要搜索的具体关键词」，绝不用单个字去搜；"
     "④ **检索到的资料必须真读进去**：回答要落在资料的具体内容上（标题、数字、结论、原文措辞），"
-    "不许把资料当摆设、自己另编一套；资料里没有的就直说没有。"
+    "不许把资料当摆设、自己另编一套；资料里没有的就直说没有；"
+    "⑤ 用户让你**别搜/停止搜索/直接用某个工具**时，就照办：一次搜索都不要再发。"
 )
 
+_PLUGIN_LIST_TEMPLATE = "\n【当前已加载的工具（可直接调用）】\n%s"
 
-def compose_system_prompt(role):
-    """人设 + 检索铁律。**所有**给人设赋值的地方都必须走这里。
+# 工具规则（同样写死在代码里，不往 role 里塞）。
+# 真实缺陷 a：原来是"凡是要帮我做实事都必须先调工具"，云端模型于是把寒暄也当"实事"——
+#             实测一句"你好"它连调 read_file / get_ip / read_file / list_files 四个工具，
+#             147 秒才吐出一句问候。工具是给"做事"用的，不是给聊天用的。
+# 真实缺陷 b：用户让"用 Archify 画架构图"，模型不知道手上有 archify_* 工具（清单在 role 里、
+#             没人维护），转头去联网搜「用」字。所以下面还要点明"先看上面清单里有没有现成工具"。
+_TOOL_RULES = ("\n[工具铁律] "
+               "① 只有当用户**明确要你做事**（写/改文件、建网页、跑命令、查资料、读文件、"
+               "查 IP、抓网页、画图…）时才调用对应工具；寒暄、闲聊、概念解释、单纯问答"
+               "**一个工具都不要调**（别为了打招呼去 read_file / list_files / get_ip）。"
+               "② **做事之前先看上面那份工具清单**：用户点名某个插件/工具（如 Archify）时，"
+               "直接调那个工具，**不要**改用 web_search 去搜；清单里没有的才说「没有这个工具」。"
+               "③ 多步任务按顺序拆开做（先校验/先读文件，再产出结果），每步都调对应工具。"
+               "④ 工具报错就把真实错误原样告诉用户并说明怎么修，不要自己编一个成功结果。"
+               "\n[简洁原则] 回答要极简：只给结果/代码/结论，不要寒暄、不要说【好的我来帮你】、"
+               "不要复述问题、不要多余解释。写代码只输出代码块。"
+               "\n[代码工作流] 写/改代码请这样：① 先 read_file 看相关文件再动手；"
+               "② 新增用 write_file，修改用 edit_file 精准替换；"
+               "③ 改完用 run_command 验证（Python 用 python -c 语法检查、JS 用 node --check、"
+               "或直接运行看结果）；④ 有报错就读出来修复。不要凭空猜测文件内容。")
+
+
+def _plugin_list(plugins=None, max_tools=90):
+    """从 PLUGINS 动态生成"插件清单"，让模型知道**现在到底有哪些工具**。
+
+    为什么动态生成：以前这份清单写在 role 里，用户每加一个插件都得手改人设 —— 加完还常常
+    忘，于是模型压根不知道新工具有、转头去联网搜（用户实测：让 Archify 画架构图，
+    它跑去搜"用"字）。清单跟着 PLUGINS 走，重启/开关插件即自动生效。
+
+    注意要**显式传入**刚加载好的插件表：`PLUGINS = load_plugins()` 这句赋值发生在函数返回
+    **之后**，此刻全局 PLUGINS 还是旧的 —— 直接读全局会生成"当前无可用工具"（真实踩过）。
+    """
+    try:
+        rows = plugins if plugins is not None else globals().get("PLUGINS") or {}
+        items = []
+        for pname, p in (rows or {}).items():
+            if not p.get("on") or p.get("type") == "skin":
+                continue
+            for t in (p.get("desc") or []):
+                if not isinstance(t, dict) or not t.get("name"):
+                    continue
+                d = (t.get("description") or "").strip().replace("\n", " ")
+                if len(d) > 46:
+                    d = d[:46] + "…"
+                items.append("- %s：%s" % (t["name"], d or pname))
+        if not items:
+            return _PLUGIN_LIST_TEMPLATE % "当前无可用工具"
+        seen, uniq = set(), []
+        for it in items:
+            k = it.split("：")[0]
+            if k not in seen:
+                seen.add(k)
+                uniq.append(it)
+        body = "\n".join(uniq[:max_tools])
+        if len(uniq) > max_tools:
+            body += "\n- …（另有 %d 个工具，见设置页「插件」）" % (len(uniq) - max_tools)
+        return _PLUGIN_LIST_TEMPLATE % body
+    except Exception as e:      # 清单生成失败绝不能拖垮提示词
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 76, e)
+        return _PLUGIN_LIST_TEMPLATE % "当前无可用工具"
+
+
+def compose_system_prompt(role, plugins=None):
+    """**唯一**的系统提示词合成入口：人设 + 检索铁律 + 工具规则 + 动态插件清单。
 
     为什么单独立个函数：`reload_control()`（切人设/改配置后调用）原来直接
-    `SYSTEM_PROMPT = CONTROL.get("role","")`，把铁律丢了 —— 缺陷会悄悄复发。
-    铁律永远只加**一份**：先剥掉人设里历史遗留的，再拼。
+    `SYSTEM_PROMPT = CONTROL.get("role","")`，把规则全丢了 —— 缺陷会悄悄复发。
+    每条规则都只加**一份**：先剥掉人设里历史遗留的规则文本，再按固定顺序拼。
     """
-    return strip_search_rules(role) + _SEARCH_RULES
+    return strip_search_rules(role) + _SEARCH_RULES + _TOOL_RULES + _plugin_list(plugins)
+
+
+def refresh_system_prompt(plugins=None):
+    """重建全局 SYSTEM_PROMPT（插件加载/开关后调用，让新工具立刻进清单）。"""
+    global SYSTEM_PROMPT
+    try:
+        SYSTEM_PROMPT = compose_system_prompt(CONTROL.get("role", ""), plugins)
+    except Exception as e:
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 96, e)
+    return SYSTEM_PROMPT
 
 
 SYSTEM_PROMPT = compose_system_prompt(CONTROL.get("role", ""))   # ← 人设/类型，改 control 文件即换模型人格
@@ -328,6 +419,12 @@ def load_plugins():
     # 依据操控文件的插件开关
     for k in plugins:
         plugins[k]["on"] = CAP.get("plugins", {}).get(k, plugins[k].get("on", True))
+    # **架构约定**：插件清单是动态生成的，插件一变就重建提示词 —— 这样往 plugins/ 丢一个
+    # 新 .py、重启小焦，新工具自动出现在模型的工具清单里，**不需要**任何人去改 role。
+    try:
+        refresh_system_prompt(plugins)      # 必须把刚加载好的表传进去（全局变量此刻还是旧的）
+    except Exception as e:  # noqa: silent-ok — 清单重建失败不影响插件本身加载
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 180, e)
     return plugins
 
 
@@ -1702,6 +1799,21 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
     return None, tool_trace
 
 
+def _workflow_needs_more_rounds(user_input):
+    """多步插件工作流（画图/批量/交付类）需要更多轮工具调用。
+
+    真实缺陷（用户实测）：让 Archify 画架构图，它的工作流是 8 步（读技能 → 取指南 → 读 schema
+    → 读示例 → 校验 → 交付 → 视觉核对），而工具循环上限只有 6 轮 → 走到一半被截断，
+    最后回给用户的竟是"✅ 已完成「archify_read_example」：{…}" 这种中间产物，
+    图根本没交付。这里按"点名了多步工具/含工作流关键词"把上限放宽。
+    """
+    q = (user_input or "").lower()
+    if any(k in q for k in ("画图", "画一张", "架构图", "流程图", "时序图", "数据流图", "状态图",
+                            "draw", "diagram", "archify")):
+        return 14
+    return 6
+
+
 # ===== 强制工具执行：意图检测 + 让模型生成工具JSON（兼容任何模型） =====
 _TOOL_HINTS = [
     ("run_command", ["运行", "执行", "命令", "跑一下", "建文件夹", "创建文件夹", "新建目录", "建目录",
@@ -1980,6 +2092,102 @@ def plan_tool(user_input):
     return None, None
 
 
+# ================== 「别搜 / 直接用工具」闸门 ==================
+# 真实缺陷（用户实测截图）：用户说"用 Archify 画一张小焦系统的架构图"，小焦跑去**联网搜「用」字**
+# 搜回"用（汉语文字）_百度百科"；用户接着命令"停止搜索。不要搜「用」字。请直接调用 archify_doctor
+# 工具" —— 它又把"停止"当检索词搜了一遍。三条规则治它：
+#   ① 用户明确说"别搜/停止搜索/不要搜/别联网" → 一次搜索都不发；
+#   ② 用户在点名**已加载的工具/插件**（archify_deliver、scrapling、net_ip…）→ 不搜，让工具去干；
+#   ③ 点名"某工具"时把它作为直连目标，真去调，而不是嘴上答应。
+_SEARCH_OFF_HINTS = ("别搜", "不要搜", "不用搜", "不准搜", "不要搜索", "停止搜索", "停止搜",
+                     "别再搜", "不许搜", "不要联网", "别联网", "不用联网", "别查百科",
+                     "不要用搜索", "禁止搜索", "不要调用搜索", "直接调用", "直接调",
+                     "别再搜索", "no search", "don't search")
+
+
+def _search_forbidden(text):
+    """用户是不是明确要求"别搜了"（命令式）。"""
+    q = (text or "").lower()
+    return any(h in q for h in _SEARCH_OFF_HINTS)
+
+
+def _tool_named_options():
+    """当前已加载的工具名 + 插件名（供"用户点名了某个工具"识别用）。"""
+    names = set()
+    try:
+        for pname, p in (globals().get("PLUGINS") or {}).items():
+            if not p.get("on"):
+                continue
+            names.add(str(pname).lower())
+            for t in (p.get("desc") or []):
+                nm = (t or {}).get("name")
+                if nm:
+                    names.add(str(nm).lower())
+    except Exception as e:  # noqa: silent-ok — 识别失败就当没点名
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 700, e)
+    return names
+
+
+def _named_tools(text):
+    """用户这句话点名了哪些已加载的工具（按名字长度降序，避免 scrapling 命中 scrapling_bridge）。
+
+    为什么需要它：点名工具时**不该联网搜**，而且最好直接调那个工具 ——
+    用户实测就是"让 Archify 画图，它去搜『用』字"，报错后还得再骂一句"停止搜索"。
+    """
+    q = (text or "").lower()
+    hit = []
+    for n in _tool_named_options():
+        if len(n) >= 3 and n in q and "web_search" not in n and "search" not in n:
+            hit.append(n)
+    hit.sort(key=len, reverse=True)
+    # 去掉被更长名字包含的短名（如 scrapling 与 scrapling_bridge 同时命中）
+    out = []
+    for n in hit:
+        if not any(n != m and n in m for m in hit):
+            out.append(n)
+    return out
+
+
+def real_tool_names():
+    """真正注册在工具表里的名字（`_TOOL2PLUGIN` 的键）。"""
+    try:
+        _build_tools()
+        return list(_TOOL2PLUGIN.keys())
+    except Exception:
+        return []
+
+
+def _noarg_named_tool(text):
+    """用户点名了一个**不需要参数**的工具 → 直接返回它的名字（让主流程真去调）。
+
+    为什么：用户的原话是"请直接调用 archify_doctor 工具，检查 Archify 环境" —— 既然是
+    零参数工具，最稳的做法是**直接调用**并把结果摆出来，而不是再让模型自己决定调不调
+    （实测它会转头去联网搜"停止"）。需要参数的工具不在这里抢，交给模型按工作流编排。
+    """
+    named = _named_tools(text)
+    if not named:
+        return ""
+    try:
+        tools = _build_tools()
+        for nm in named:
+            for t in tools:
+                fn = (t or {}).get("function") or {}
+                if str(fn.get("name", "")).lower() != nm:
+                    continue
+                prm = fn.get("parameters") or {}
+                props = prm.get("properties") or {}
+                req = prm.get("required") or []
+                # 零参数，或者参数全是**可选**的（给空 {} 走默认值也安全）→ 可以直接调
+                if nm in _TOOL2PLUGIN and not req:
+                    return fn["name"]
+    except Exception as e:  # noqa: silent-ok — 识别失败就交回模型
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 730, e)
+    return ""
+
+
+# ================== 「别搜 / 直接用工具」闸门结束 ==================
+
+
 def _summarize_tool(user_input, result, tool):
     """让大脑基于工具结果给一句简短总结。"""
     prompt = ("你用 %s 工具执行了用户请求，结果如下：\n%s\n\n"
@@ -2062,20 +2270,7 @@ def _asks_own_ip(text):
                 and not re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", q))
 
 
-# 工具铁律：**只在用户真的要你做事时**才调工具。
-# 真实缺陷：原来是"凡是要帮我做实事都必须先调工具"，云端模型于是把寒暄也当"实事"——
-# 实测一句"你好"它连调 read_file / get_ip / read_file / list_files 四个工具，147 秒才回一句问候。
-# 工具是给"做事"用的，不是给聊天用的。（抽成模块常量：可被用例直接断言，不再埋在函数里。）
-_TOOL_RULES = ("\n[工具铁律] 只有当用户**明确要你做事**（写/改文件、建网页、跑命令、查资料、"
-               "读文件、查 IP、抓网页…）时才调用对应工具；"
-               "寒暄、闲聊、概念解释、单纯问答**一个工具都不要调**（别为了打招呼去 read_file / "
-               "list_files / get_ip）；不确定就别调，直接用已有信息回答。"
-               "\n[简洁原则] 回答要极简：只给结果/代码/结论，不要寒暄、不要说【好的我来帮你】、"
-               "不要复述问题、不要多余解释。写代码只输出代码块。"
-               "\n[代码工作流] 写/改代码请这样：① 先 read_file 看相关文件再动手；"
-               "② 新增用 write_file，修改用 edit_file 精准替换；"
-               "③ 改完用 run_command 验证（Python 用 python -c 语法检查、JS 用 node --check、"
-               "或直接运行看结果）；④ 有报错就读出来修复。不要凭空猜测文件内容。")
+# （_TOOL_RULES 已上移到提示词分层区，见文件顶部「系统提示词的分层」）
 
 
 # ================== 智能体 ==================
@@ -2170,15 +2365,35 @@ def agent_run(user_input, lean=False):
         except Exception as e:
             LOG.debug("忽略异常(%s:%d): %s", __file__, 1560, e)
 
+    # 1b5. 用户点名了"零参数工具"（如 archify_doctor / 资产测绘状态）→ 直接调它
+    #      真实缺陷（用户实测）：说"请直接调用 archify_doctor 工具"，小焦却把"停止"拿去联网搜。
+    if answer is None and CAP.get("run_tools", True):
+        _nt = _noarg_named_tool(user_input)
+        if _nt:
+            try:
+                _res = _asset_result_text(_tool_result_str(run_tool(_nt, {}, force=True)))
+                if _res and "未知工具" not in _res:
+                    tool_trace.append({"tool": _nt, "args": {}, "result": "用户点名，直接调用"})
+                    answer = "🔧 **%s** 实测结果：\n\n```\n%s\n```" % (_nt, _res.strip()[:2500])
+            except Exception as e:
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 1570, e)
+
     # 2. 联网检索（受操控文件 capabilities 控制）
     #    检索词必须先过闸门：整句/功能字一律清洗，清洗后为空就干脆不搜（不再拿"用"去搜百科）。
+    #    另有两道硬闸：用户说"别搜/停止搜索"，或点名了已加载的工具 → 一次搜索都不发。
     info = []
+    _named = _named_tools(user_input)
     if CAP.get("web_search", True) and answer is None:
-        _q, _qhint = resolve_search_query(user_input)
-        if _q:
-            info = web_search(_q, num=5)
-        elif _qhint:
-            LOG.info("跳过自动检索：%s", _qhint)
+        if _search_forbidden(user_input):
+            LOG.info("用户明确要求别搜，跳过自动检索：%s", (user_input or "")[:40])
+        elif _named:
+            LOG.info("用户点名了工具 %s，跳过自动检索（直接走工具）", _named[:3])
+        else:
+            _q, _qhint = resolve_search_query(user_input)
+            if _q:
+                info = web_search(_q, num=5)
+            elif _qhint:
+                LOG.info("跳过自动检索：%s", _qhint)
     web_text = "\n".join((f"{t}：{c}" if len(t)==3 else f"{t}：{c}") for t, c in [ (x[0],x[2]) for x in info[:4] ]) if info else ""
 
     # 3. 大脑回答：遵循操控文件的 brain.engine
@@ -2193,10 +2408,11 @@ def agent_run(user_input, lean=False):
                     "当前工作目录：%s；用户主目录：%s；桌面：%s。"
                     "凡是要创建文件/文件夹/读写文件，一律用绝对路径（如桌面文件用 %s\\文件名）。"
                     % (time.strftime("%Y-%m-%d %H:%M:%S %A"), os.getcwd(), home, desktop, desktop))
+        # 运行时只再补两样：工具用法细则 + .md 技能文档（规则与清单已在 SYSTEM_PROMPT 里，
+        # 这里绝不能再拼一遍 _TOOL_RULES，否则提示词白涨一大截）
         tool_guidance = "\n[工具用法] 写文件/建网站/代码用 write_file(路径用 Windows 绝对路径, 会自动建目录); 查信息/运行命令用 run_command(PowerShell 语法, 不能用并字连接命令要用分号; 不要用 run_command 去写文件)。\n"
         skills = "\n\n[技能插件] " + "\n\n".join(c for _, c in PLUGIN_SKILLS) if PLUGIN_SKILLS else ""
-        # 工具铁律 + 简洁原则 + 代码工作流（见模块常量 _TOOL_RULES，用例直接断言它）
-        skills = tool_guidance + _TOOL_RULES + skills
+        skills = tool_guidance + skills
         if lean:
             # 语音精简模式: 短提示, 不背工具/技能, 生成快
             messages = [{"role": "system", "content": (SYSTEM_PROMPT[:240] + "\n[语音对话] 请简短、口语化、直接回答，一两句话；不要调用工具、不要长篇大论、不要列表。")}]
@@ -2215,7 +2431,8 @@ def agent_run(user_input, lean=False):
             context += "（小脑学到的工具用法，可参考）\n" + _skills + "\n\n"
         messages.append({"role": "user", "content": (context + "用户：" + user_input) if context else user_input})
         if CAP.get("run_tools", True):
-            answer, tool_trace = llm_chat_tools(messages, lean=lean)   # 模型推理并调用工具
+            answer, tool_trace = llm_chat_tools(messages, lean=lean,
+                                                max_rounds=_workflow_needs_more_rounds(user_input))
         else:
             answer = llm_chat(messages)
 

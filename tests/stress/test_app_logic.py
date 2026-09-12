@@ -131,8 +131,10 @@ def run(res: Results) -> Results:
     app.reload_control()
     res.check("配置热重载", "reload 后人设里仍有检索铁律", "检索铁律" in (app.SYSTEM_PROMPT or ""),
               app.SYSTEM_PROMPT[-40:].replace("\n", " "))
-    res.check("配置热重载", "compose_system_prompt 是唯一合成入口",
-              app.compose_system_prompt("X").endswith(app._SEARCH_RULES), "")
+    res.check("配置热重载", "compose_system_prompt 是唯一合成入口（人设+铁律+清单）",
+              app.compose_system_prompt("X").startswith("X")
+              and app._SEARCH_RULES in app.compose_system_prompt("X")
+              and "【当前已加载的工具" in app.compose_system_prompt("X"), "")
     res.check("配置热重载", "操控文件路径是模块级常量（不再是函数内局部变量）",
               os.path.isabs(app.CONTROL_FILE) and app.CONTROL_FILE.endswith("xiaojiao_control.json"),
               app.CONTROL_FILE)
@@ -299,5 +301,45 @@ def run(res: Results) -> Results:
               "一个工具都不要调" in app._TOOL_RULES and "寒暄" in app._TOOL_RULES, "")
     res.check("工具铁律", "仍然保留「要做事就调工具」的正向要求",
               "明确要你做事" in app._TOOL_RULES and "才调用对应工具" in app._TOOL_RULES, "")
+
+    # ---------- 15. 提示词分层架构（role 只留人设 / 规则与清单由代码管） ----------
+    # 架构缺陷：role 里被塞了"检索铁律 + Archify 工作流 + 工具清单" → 改人设丢规则、
+    # 加插件要手改人设、role 越写越长。现在固定四段拼接，且插件清单从 PLUGINS 动态生成。
+    _p = app.compose_system_prompt("你是一只猫")
+    res.check("提示词分层", "role 原样保留在最前面", _p.startswith("你是一只猫"), _p[:20])
+    res.check("提示词分层", "顺序固定：人设 → 检索铁律 → 工具铁律 → 插件清单",
+              _p.find("你是一只猫") < _p.find("[检索铁律]") < _p.find("[工具铁律]")
+              < _p.find("【当前已加载的工具"), "")
+    res.check("提示词分层", "换人设不丢规则（改成猫也照样有铁律与清单）",
+              "[检索铁律]" in _p and "[工具铁律]" in _p and "【当前已加载的工具" in _p, "")
+    _dirty = ("你是猫。[检索铁律] 旧的铁律" + app._SEARCH_RULES +
+              "[工具铁律] 旧工具规则\n【当前已加载的工具（可直接调用）】\n- 假的：旧清单")
+    _clean = app.strip_search_rules(_dirty)
+    res.check("提示词分层", "role 里混进来的规则文本被剥掉（只留人设）", _clean == "你是猫。", _clean[:40])
+    res.check("提示词分层", "合成后每段规则各只有一份",
+              _p.count("[检索铁律]") == 1 and _p.count("[工具铁律]") == 1, "")
+    res.check("提示词分层", "插件清单来自 PLUGINS（含 archify / net_ip 这类真实工具）",
+              "- archify_deliver：" in _p and "- net_ip：" in _p, "")
+    # 动态性：塞一个假插件进 PLUGINS，compose 后必须自动出现
+    _fake = dict(app.PLUGINS)
+    _fake["unit_test_plugin"] = {"on": True, "type": "py", "desc": [
+        {"name": "unit_test_tool", "description": "单测用的假工具"}]}
+    res.check("提示词分层", "新增插件自动进清单（不用改 role）",
+              "- unit_test_tool：" in app.compose_system_prompt("你是一只猫", _fake), "")
+
+    # ---------- 16. 「别搜 / 直接调工具」闸门（用户实测：搜了"用"字、"停止"） ----------
+    res.check("别搜闸门", "「停止搜索。不要搜「用」字…请直接调用 X 工具」被识别为禁止检索",
+              app._search_forbidden("停止搜索。不要搜「用」字。请直接调用 archify_doctor 工具。"), "")
+    res.check("别搜闸门", "「别搜了/不用联网」也算", app._search_forbidden("别搜了，直接干") and
+              app._search_forbidden("这次不用联网"), "")
+    res.check("别搜闸门", "正常提问不受影响", not app._search_forbidden("最近 AI 新闻"), "")
+    res.check("别搜闸门", "点名已加载工具时不做联网检索",
+              "archify" in app._named_tools("用 Archify 画一张小焦系统的架构图"), "")
+    res.check("别搜闸门", "点名零参数工具时直接调用（不再嘴上答应）",
+              app._noarg_named_tool("请直接调用 archify_doctor 工具，检查 Archify 环境") == "archify_doctor", "")
+    res.check("别搜闸门", "普通问题不误判成点名工具", app._named_tools("今天天气怎么样") == [], "")
+    res.check("别搜闸门", "多步工作流放宽工具轮数（画图 8 步不会被第 6 轮截断）",
+              app._workflow_needs_more_rounds("用 Archify 画一张架构图") >= 12
+              and app._workflow_needs_more_rounds("你好") == 6, "")
 
     return res
