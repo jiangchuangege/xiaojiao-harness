@@ -688,21 +688,6 @@ flowchart LR
 ---
 
 
-## 🤝 想一起把它变得更好？
-
-小焦是开源的，也**欢迎你来一起开发**：插件生态(py/js/api/skill)、持续学习、DSH 社区接入、皮肤、训练管线……任何一个你感兴趣的方向，都可以来贡献。
-
-- **🚀 快速上手**：看 [docs/quickstart.md](docs/quickstart.md) 五分钟跑起来；
-- **🐛 报 Bug**：开 [Bug Issue](.github/ISSUE_TEMPLATE/bug_report.yml)，按模板写现象/环境/日志；
-- **✨ 提功能**：开 [Feature Issue](.github/ISSUE_TEMPLATE/feature_request.yml)，或直接写个**插件**（`docs/extend.md`）；
-- **🔀 交代码**：Fork 后提 [Pull Request](.github/PULL_REQUEST_TEMPLATE.md)；
-- **💙 行为规范**：见 [Code of Conduct](CODE_OF_CONDUCT.md)，我们对新人很友好；
-- **📝 更新记录**：见 [CHANGELOG.md](CHANGELOG.md)。
-
-> 它正等着，**和愿意陪它长大的人一起，慢慢长大**。✨
-
----
-
 ## 🎬 真·文生视频（本地 ComfyUI + Wan2.1）
 
 小焦网页里有 **🎬 生成视频**：点它输入场景 → **精炼提示词 → 切换视频大脑(智能温存) → 生成真视频 → 温存15分钟(连续视频秒级)/闲置自动释放**（8G 显存按需切换，对用户透明）。
@@ -1153,6 +1138,21 @@ python -m pip install "scrapling[fetchers]" markdownify mcp -i https://pypi.tuna
 > 本功能仅用于抓取**公开可访问**的网页与文件，请自行遵守目标站点条款与当地法律。**请勿**用于绕过付费墙、破解版权内容或任何违法用途 —— 使用产生的后果由使用者自行承担。
 
 > 详细原理、测试清单与排错见 [docs/scrapling.md](docs/scrapling.md)。
+
+---
+
+## 🤝 想一起把它变得更好？
+
+小焦是开源的，也**欢迎你来一起开发**：插件生态(py/js/api/skill)、持续学习、DSH 社区接入、皮肤、训练管线……任何一个你感兴趣的方向，都可以来贡献。
+
+- **🚀 快速上手**：看 [docs/quickstart.md](docs/quickstart.md) 五分钟跑起来；
+- **🐛 报 Bug**：开 [Bug Issue](.github/ISSUE_TEMPLATE/bug_report.yml)，按模板写现象/环境/日志；
+- **✨ 提功能**：开 [Feature Issue](.github/ISSUE_TEMPLATE/feature_request.yml)，或直接写个**插件**（`docs/extend.md`）；
+- **🔀 交代码**：Fork 后提 [Pull Request](.github/PULL_REQUEST_TEMPLATE.md)；
+- **💙 行为规范**：见 [Code of Conduct](CODE_OF_CONDUCT.md)，我们对新人很友好；
+- **📝 更新记录**：见 [CHANGELOG.md](CHANGELOG.md)。
+
+> 它正等着，**和愿意陪它长大的人一起，慢慢长大**。✨
 
 ---
 
