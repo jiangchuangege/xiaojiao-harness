@@ -1,0 +1,60 @@
+# 小焦 · XiaoJiao Harness — 依赖锁定文件（requirements.lock）
+#
+# 用途：装出与本项目验证环境**完全一致**的依赖版本，避免"在我这能跑"问题。
+#   python -m pip install -r requirements.lock
+#
+# 生成环境：Python 3.13.13 / Windows / 2026-09-12
+# 重新生成：python -m pip freeze | findstr /R /C:"^包名==" > requirements.lock  （或手动维护）
+# 升级某包：改这里 → 跑一次全量回归（tests/stress/run_all.py）→ 通过后再提交
+
+# ---------- Web / 接口 ----------
+Flask==3.1.3
+Werkzeug==3.1.8
+Jinja2==3.1.6
+requests==2.34.2
+urllib3==2.7.0
+certifi==2026.2.25
+charset-normalizer==3.5.1
+idna==3.19
+
+# ---------- 数值 / 深度学习 ----------
+numpy==2.5.2
+torch==2.6.0+cu118
+torchaudio==2.6.0+cu118
+filelock==3.32.4
+safetensors==0.5.3
+huggingface_hub==0.36.2
+tokenizers==0.22.2
+transformers==4.57.6
+diffusers==0.29.0
+accelerate==1.14.0
+pillow==12.3.0
+regex==2026.7.19
+tqdm==4.67.3
+
+# ---------- 中文分词 ----------
+jieba==0.42.1
+
+# ---------- 抓取栈（plugins/scrapling_bridge.py）----------
+scrapling==0.4.15
+markdownify==1.2.3
+mcp==2.2.0
+playwright==1.62.0
+curl_cffi==0.16.3
+lxml==6.1.2
+cssselect==1.5.0
+beautifulsoup4==4.15.0
+soupsieve==2.9.2
+httpx==0.28.1
+pydantic==2.13.3
+openai==2.32.0
+
+# ---------- 播客配音 / 音频（可选）----------
+chatterbox-tts==0.1.7
+soundfile==0.14.0
+librosa==0.11.0
+
+# ---------- 说明 ----------
+# · 未列出的包为上述依赖的传递依赖，pip 会按上表的约束自动解析
+# · torch 的 CUDA 版本按你的显卡驱动选：cu118 / cu121 / cpu（此处为本机验证过的 cu118）
+# · 浏览器内核不在 pip 体系内：自备 Chrome 或 `python -m scrapling install`

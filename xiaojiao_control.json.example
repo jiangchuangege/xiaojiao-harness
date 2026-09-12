@@ -1,0 +1,44 @@
+{
+  "_说明": "小焦的「操控文件」模板。复制成 xiaojiao_control.json 后按需修改；该文件含本地密钥，已被 .gitignore 忽略，切勿提交。",
+  "_版本": "对应 v1.1.0+（新增 brain.xiaojiao 小脑路径 与 scrapling 抓取段）",
+
+  "brain": {
+    "_说明": "大脑=聊天主模型；小脑=自研 MiniGPT（项目核心，必需）",
+    "llama": {
+      "server": "",                                  "//server": "llama-server.exe 路径；留空=自动探测",
+      "gguf": "",                                    "//gguf": "聊天大脑 GGUF 路径；留空=自动探测（全盘按关键词+体积）"
+    },
+    "api": {
+      "base_url": "http://127.0.0.1:9292/v1",        "//base_url": "任意 OpenAI 兼容端点；llama-swap 默认 9292",
+      "model": "xiaojiao",
+      "api_key": "",                                 "//api_key": "云端模型才需要；本地留空"
+    },
+    "llama_swap_port": 9292,
+    "comfy_dir": "",                                 "//comfy_dir": "ComfyUI 目录（视频大脑）；留空=自动探测",
+    "keep_warm": true,
+    "xiaojiao": {
+      "_说明": "小脑三件套。三项都可留空=自动探测（环境变量 > 本配置 > 全盘扫描）",
+      "model_path": "mini_gpt_model.pth",
+      "vocab_path": "vocab.pkl",
+      "config_path": "model_config.json"
+    }
+  },
+
+  "scrapling": {
+    "_说明": "网页抓取插件（plugins/scrapling_bridge.py）：想抓啥抓啥",
+    "mode": "auto",                                  "//mode": "auto=进程内优先(最稳) | mcp=强制走 MCP | inproc",
+    "scrapling_mcp_url": "",                         "//scrapling_mcp_url": "仅 mcp+http 模式需要，如 http://127.0.0.1:8000/mcp",
+    "executable_path": "",                           "//executable_path": "自备 Chrome 路径；留空=自动探测/用内置 Chromium",
+    "proxy_list": [],                                "//proxy_list": "代理池，逐条轮换；单个代理最多用 5 次",
+    "rate_limit": 1.0,                               "//rate_limit": "同域最小请求间隔（秒），默认 1.0",
+    "timeout": 60,                                   "//timeout": "单次抓取超时（秒）",
+    "max_retries": 3,
+    "circuit_breaker_threshold": 3,                  "//circuit_breaker_threshold": "连续失败几次触发熔断",
+    "circuit_breaker_timeout": 30,                   "//circuit_breaker_timeout": "熔断冷却秒数（到点自动恢复）",
+    "allow_robots_skip": false,                      "//allow_robots_skip": "true=robots.txt 明确禁止时也抓（默认 false；也可在对话里说「忽略 robots 抓一次」）"
+  },
+
+  "capabilities": {
+    "plugins": true
+  }
+}
