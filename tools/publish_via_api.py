@@ -74,6 +74,8 @@ def main() -> int:
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--branch", default=git("branch", "--show-current").strip())
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force-ref", action="store_true",
+                    help="允许非快进更新分支引用（仅在需要清理远端重复提交等特殊情况使用）")
     args = ap.parse_args()
 
     api = Api(args.repo, get_token(args.repo))
@@ -83,20 +85,52 @@ def main() -> int:
         print("远端与本地一致，无需发布")
         return 0
 
-    pending = git("rev-list", "--reverse", "%s..%s" % (remote_head, local_head)).split()
+    # 求"待发布提交"：注意 API 发布的提交对象本地可能没有（SHA 不同），
+    # 所以不能用 `git rev-list 远端..本地`，改为「远端已有哪些 SHA」求差集。
+    remote_shas = set()
+    remote_tree_to_sha = {}
+    page = 1
+    while page <= 5:                      # 最多回溯 500 个提交，足够用
+        chunk = api("/repos/%s/commits?sha=%s&per_page=100&page=%d" % (args.repo, args.branch, page))
+        if not chunk:
+            break
+        for c in chunk:
+            remote_shas.add(c["sha"])
+            remote_tree_to_sha.setdefault(c["commit"]["tree"]["sha"], c["sha"])
+        if len(chunk) < 100:
+            break
+        page += 1
+    # 找共同基点：先按 SHA 精确匹配；匹配不到再按 **内容（tree）** 匹配 ——
+    # 因为 API 发布过的提交本轮本地并没有该对象（SHA 不同但内容相同）。
+    base, base_remote = "", ""
+    for sha in git("rev-list", "HEAD").split():
+        if sha in remote_shas:
+            base = base_remote = sha
+            break
+        tree = git("rev-parse", "%s^{tree}" % sha).strip()
+        if tree in remote_tree_to_sha:
+            base, base_remote = sha, remote_tree_to_sha[tree]
+            print("（本地 %s 与远端 %s 内容一致，按内容匹配为共同基点）"
+                  % (sha[:8], base_remote[:8]))
+            break
+    if not base:
+        print("❌ 找不到本地与远端的共同提交（历史可能已分叉），请人工核对后再发布")
+        return 1
+    pending = git("rev-list", "--reverse", "%s..%s" % (base, local_head)).split()
     if not pending:
         print("本地没有领先远端的新提交（远端可能领先，请先 fetch）")
         return 1
 
-    print("分支 %s：远端 %s → 本地 %s，待发布 %d 个提交"
-          % (args.branch, remote_head[:12], local_head[:12], len(pending)))
+    print("分支 %s：共同基点 %s → 本地 %s，待发布 %d 个提交"
+          % (args.branch, base_remote[:12], local_head[:12], len(pending)))
     for sha in pending:
         print("  · %s %s" % (sha[:8], git("log", "-1", "--format=%s", sha).strip()[:70]))
     if args.dry_run:
         print("\n（--dry-run：未真正发布）")
         return 0
 
-    parent = remote_head
+    parent = base_remote                  # ★ 链的起点必须是"远端那侧的基点提交"
+    # （既不能用 remote_head，也不能用本地 SHA —— 否则会重复发布或产生分叉历史）
     for sha in pending:
         subject = git("log", "-1", "--format=%s", sha).strip()
         body = git("log", "-1", "--format=%B", sha).strip() or subject
@@ -122,8 +156,9 @@ def main() -> int:
         parent = commit["sha"]
 
     api("/repos/%s/git/refs/heads/%s" % (args.repo, args.branch), "PATCH",
-        {"sha": parent, "force": False})
-    print("\n✅ 已发布：%s 现在指向 %s" % (args.branch, parent[:12]))
+        {"sha": parent, "force": bool(args.force_ref)})
+    print("\n✅ 已发布：%s 现在指向 %s%s"
+          % (args.branch, parent[:12], "（force 更新）" if args.force_ref else ""))
 
     local_tree = git("rev-parse", "%s^{tree}" % local_head).strip()
     remote_tree = api("/repos/%s/git/commits/%s" % (args.repo, parent))["tree"]["sha"]
