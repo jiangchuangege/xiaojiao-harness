@@ -7,11 +7,12 @@
 **🕷️ 网页抓取能力 + 🧠 小脑成为必需项 + 🛠️ 安装器分级与体验修复。**
 
 ### Added
-- 🕷️ **内置 Scrapling**（`plugins/scrapling_bridge.py` 桥接插件）：小焦从此**想抓啥抓啥**——网页 / 动态页 / 接口 JSON / 批量列表 / 登录态页面 / 下载任意文件。共 9 个工具，覆盖 Scrapling 全部 13 个 MCP 工具：
-  - `get` / `bulk_get` / `fetch` / `bulk_fetch` / `stealthy_fetch` / `bulk_stealthy_fetch` / `scrape_with_selector`
-  - `browser_session`：会话管理 + **登录态抓取** + **整页截图**（覆盖 open/close/list/session_fetch/session_make_request/screenshot）
-  - 🆕 `download`：**下载任意文件**（PDF/EPUB/TXT/ZIP/图片/音视频…）到 `downloads/`（插件自研，Scrapling 无此能力）
+- 🕷️ **内置 Scrapling**（`plugins/scrapling_bridge.py` 桥接插件）：小焦从此**想抓啥抓啥**——网页 / 动态页 / 接口 JSON / 批量列表 / 登录态页面 / 下载任意文件。**Scrapling 原生 13 个工具 1:1 全部暴露（工具名与官方一致）**，另加 3 个小焦增强（`get` 友好别名 / `scrape_with_selector` 自适应选择器 / `download` 任意文件下载），并保留 `browser_session` 聚合入口 → 对外共 **17 个工具**：
+  - 原生 13：`make_request` / `bulk_get` / `fetch` / `bulk_fetch` / `stealthy_fetch` / `bulk_stealthy_fetch` / `open_session` / `open_request_session` / `close_session` / `list_sessions` / `session_fetch` / `session_make_request` / `screenshot`
+  - 小焦增强 3：`get`（`make_request` 的中文友好别名）/ `scrape_with_selector`（自适应选择器，防站点改版）/ 🆕 `download`（**下载任意文件** PDF/EPUB/ZIP/图片/音视频…，Scrapling 原生没有这个能力）
+  - 兼容入口 1：`browser_session`（用 `action` 一个工具走完 open/fetch/screenshot/close 全流程）
   - 🆕 `save_to` 参数：抓取正文直接存文件到 `books/`（长文/连载章节不塞对话）
+  - 会话类型用错时给**中文提示**（如 dynamic 会话不能发 HTTP 请求，会告诉你去用 `session_fetch` 或先 `open_request_session`）
 - 📖 **抓完自动解读**：`_explain_content()` 让大脑按「是什么 / 关键要点 / 怎么用」逐条讲；模型不可用时退回规则提纲。
 - 🧠 **用户使用时学习**：`_learn_skill()` 每次用户使用工具后沉淀经验（成功=正确用法、失败=原因+反思）→ `self_learn/tool_skills.txt` + 向量库；`_recall_skills()` 下次检索命中即注入上下文复用（**越用越会**）。
 - 🎯 **抓取意图直通**：`_detect_scrape_intent()` 用规则识别「抓/爬/下载 + 网址」→ 直接构造并执行工具调用（不指望 4B 模型自己选工具/避免它编造代码）。

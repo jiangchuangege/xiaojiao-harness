@@ -23,9 +23,13 @@ HTTP 请求 / Playwright 浏览器渲染 / 隐身绕过 Cloudflare。
 【小焦内置 Scrapling 抓取能力】想抓啥抓啥：
   网页正文 / 动态渲染页 / 接口 JSON / 批量列表 / 登录态页面 / 下载任意文件（PDF/EPUB/ZIP/图片…）
 
-【对小焦暴露 9 个工具】（描述精简，便于 4B 模型选择）
-  get / bulk_get / fetch / bulk_fetch / stealthy_fetch / bulk_stealthy_fetch
-  scrape_with_selector / browser_session / download
+【对小焦暴露 17 个工具】= Scrapling 原生 13 个（1:1，名字与官方一致）+ 3 个增强 + 1 个兼容入口
+  原生 13: make_request / bulk_get / fetch / bulk_fetch / stealthy_fetch / bulk_stealthy_fetch
+           open_session / open_request_session / close_session / list_sessions
+           session_fetch / session_make_request / screenshot
+  增强 3 : get（make_request 的中文友好别名）/ scrape_with_selector（自适应选择器）
+           / download（下载任意文件，Scrapling 原生没有）
+  兼容 1 : browser_session（用 action 一个工具走完 open/fetch/screenshot/close）
 
 【设计要点】
   · 异步桥接：专用事件循环线程 + ThreadPoolExecutor，绝不直接 asyncio.run()（避免事件循环冲突）
@@ -1153,7 +1157,7 @@ def _random_impersonate() -> str:
 class ScraplingBridge:
     """小焦插件：Scrapling MCP 桥接。
 
-    对外只暴露 7 个简单工具（把复杂度全部封装在内），
+    对外暴露 17 个工具（原生 13 个 1:1 + 3 个增强 + 1 个兼容入口，把复杂度全部封装在内），
     4B 模型只需决定"抓哪个 URL"，不需要懂指纹/退避/代理/熔断。
     """
 
@@ -1183,8 +1187,27 @@ class ScraplingBridge:
         S_NAME = {"type": "string", "description": "name: 选择器存档名"}
         S_SAVE = {"type": "string", "description": "save_to: 并存成本地文件名(可选)"}
         S_FN = {"type": "string", "description": "filename: 保存文件名(可选)"}
+        S_SID = {"type": "string", "description": "session_id: 会话ID(open 后返回)"}
+        S_STYPE = {"type": "string", "description": "session_type: dynamic 或 stealthy，默认 dynamic"}
+        S_FULL = {"type": "boolean", "description": "full_page: 是否整页截图，默认否"}
 
         return [
+            # ---------- Scrapling 原生 13 个工具（1:1 暴露，名字与官方一致）----------
+            T("make_request", "原生名·抓普通网页(纯HTTP，最快)。等同 get",
+              {"url": S_URL, "timeout": S_TO, "save_to": S_SAVE}, ["url"]),
+            T("open_session", "开浏览器会话(登录态用)。开完用 session_fetch 抓",
+              {"session_type": S_STYPE, "session_id": S_SID}, []),
+            T("open_request_session", "开HTTP会话(保持 cookie)。开完用 session_make_request",
+              {"session_id": S_SID}, []),
+            T("close_session", "关闭会话并释放资源。参数: session_id 必填", {"session_id": S_SID}, ["session_id"]),
+            T("list_sessions", "列出当前所有会话", {}, []),
+            T("session_fetch", "用已开会话抓页面(保持登录态/已过验证)",
+              {"url": S_URL, "session_id": S_SID, "wait_selector": S_WAIT}, ["url", "session_id"]),
+            T("session_make_request", "用HTTP会话发请求(保持 cookie)",
+              {"url": S_URL, "session_id": S_SID}, ["url", "session_id"]),
+            T("screenshot", "给页面截图(可整页)，存 media/screenshot/ 并返回路径",
+              {"url": S_URL, "session_id": S_SID, "full_page": S_FULL}, ["url", "session_id"]),
+            # ---------- 小焦增强（原生没有 / 更好用）----------
             T("get", "抓取网页(普通HTTP，快)。参数: url 必填", {"url": S_URL, "stealth": S_STEALTH, "timeout": S_TO, "save_to": S_SAVE}, ["url"]),
             T("bulk_get", "批量抓多个网页(普通HTTP，快)。参数: urls 必填", {"urls": S_URLS, "stealth": S_STEALTH}, ["urls"]),
             T("fetch", "用浏览器渲染抓取(能抓动态页面)", {"url": S_URL, "wait_selector": S_WAIT, "timeout": S_TO, "save_to": S_SAVE}, ["url"]),
@@ -1194,7 +1217,7 @@ class ScraplingBridge:
             T("bulk_stealthy_fetch", "批量隐身抓取(开销大，≤20个)", {"urls": S_URLS}, ["urls"]),
             T("scrape_with_selector", "按选择器抓取内容，自适应防改版",
               {"url": S_URL, "selector": S_SEL, "adaptive": S_ADAPT, "name": S_NAME}, ["url", "selector"]),
-            T("browser_session", "会话与截图:登录态抓取/整页截图(需要登录的站点用这个)",
+            T("browser_session", "会话+截图的聚合入口(一个工具走完全流程):登录态抓取/整页截图",
               {"action": {"type": "string",
                           "description": "action: open/open_http/close/list/fetch/request/screenshot"},
                "url": S_URL, "session_id": {"type": "string", "description": "session_id: 会话ID"},
@@ -1217,15 +1240,26 @@ class ScraplingBridge:
                 return fmt_result(0, params.get("url", ""), "", msg)
 
             handler = {
+                # 小焦增强
                 "get": self._do_get,
+                "make_request": self._do_get,          # 原生名，等同 get
                 "bulk_get": self._do_bulk_get,
                 "fetch": self._do_fetch,
                 "bulk_fetch": self._do_bulk_fetch,
                 "stealthy_fetch": self._do_stealthy_fetch,
                 "bulk_stealthy_fetch": self._do_bulk_stealthy_fetch,
                 "scrape_with_selector": self._do_scrape_selector,
-                "browser_session": self._do_browser_session,
                 "download": self._do_download,
+                # 原生会话/截图 7 个：1:1 直通
+                "open_session": lambda q: self._do_native_session("open_session", q),
+                "open_request_session": lambda q: self._do_native_session("open_request_session", q),
+                "close_session": lambda q: self._do_native_session("close_session", q),
+                "list_sessions": lambda q: self._do_native_session("list_sessions", q),
+                "session_fetch": lambda q: self._do_native_session("session_fetch", q),
+                "session_make_request": lambda q: self._do_native_session("session_make_request", q),
+                "screenshot": lambda q: self._do_native_session("screenshot", q),
+                # 兼容入口
+                "browser_session": self._do_browser_session,
             }.get(tool_name)
             if not handler:
                 return fmt_result(0, "", "", "未知工具：%s" % tool_name)
@@ -1483,49 +1517,41 @@ class ScraplingBridge:
             return fmt_result(res.get("status", 0), args.get("url", ""), res.get("content", ""), res["error"])
         return fmt_result(res.get("status", 0), args.get("url", ""), res.get("content", ""), "")
 
-    def _do_browser_session(self, p: Dict[str, Any]) -> str:
-        """浏览器/HTTP 会话管理 + 页面截图。
+    # ---- Scrapling 原生 13 工具里的「会话/截图」7 个：1:1 暴露 ----
+    def _do_native_session(self, tool: str, p: Dict[str, Any]) -> str:
+        """原生会话类工具直通（open_session / open_request_session / close_session /
+        list_sessions / session_fetch / session_make_request / screenshot）。
 
-        action:
-          open       开浏览器会话(dynamic/stealthy)：之后 fetch/screenshot 复用它，省去反复起浏览器
-          open_http  开 HTTP 会话(static)：保持 cookie/连接，之后 request 复用
-          close      关闭会话，释放资源
-          list       列出当前所有会话
-          fetch      用会话抓页面（**保持登录态 / 已过 Cloudflare 验证的浏览器**）
-          request    用 HTTP 会话发请求（保持 cookie）
-          screenshot 给页面截图（整页可选），图片存到 media/screenshot/ 并返回路径
+        带 URL 的三个同样过安全闸门（SSRF / robots / 限速），错误一律中文可读。
         """
-        action = (p.get("action") or "").strip().lower()
         sid = (p.get("session_id") or "").strip()
-        headless = self._cfg.headless
-
-        if action == "open":
+        if tool == "open_session":
             args: Dict[str, Any] = {"session_type": (p.get("session_type") or "dynamic"),
-                                    "headless": headless}
+                                    "headless": self._cfg.headless}
             if sid:
                 args["session_id"] = sid
             if self._cfg.executable_path:
                 args["executable_path"] = self._cfg.executable_path
             return self._session_call("open_session", args)
 
-        if action == "open_http":
+        if tool == "open_request_session":
             args = {}
             if sid:
                 args["session_id"] = sid
             return self._session_call("open_request_session", args)
 
-        if action == "close":
+        if tool == "close_session":
             if not sid:
-                return fmt_result(0, "", "", "关闭会话需要提供 session_id")
+                return fmt_result(0, "", "", "close_session 需要提供 session_id")
             return self._session_call("close_session", {"session_id": sid})
 
-        if action == "list":
+        if tool == "list_sessions":
             return self._session_call("list_sessions", {})
 
-        # 下面三个都要带 url：统一做安全校验 + 限速
+        # 下面三个都要 URL：安全闸门 + 限速
         url = (p.get("url") or "").strip()
         if not url:
-            return fmt_result(0, "", "", "该 action 需要提供 url")
+            return fmt_result(0, "", "", "%s 需要提供 url" % tool)
         reason = _GUARD.check_ssrf(url)
         if reason:
             return fmt_result(0, url, "", reason)
@@ -1533,13 +1559,13 @@ class ScraplingBridge:
         if not ok:
             return fmt_result(0, url, "", why)
         _GUARD.wait_rate_limit(url)
-
         if not sid:
-            return fmt_result(0, url, "", "该 action 需要提供 session_id（先用 action=open 或 open_http 开会话）")
+            return fmt_result(0, url, "",
+                              "%s 需要提供 session_id（先调用 open_session / open_request_session）" % tool)
 
-        if action == "fetch":
-            # solve_cloudflare 仅 stealthy 会话支持：dynamic 会话传了会报错，所以按需才传
-            args: Dict[str, Any] = {"url": url, "session_id": sid, "extraction_type": _EXTRACT_TYPE}
+        if tool == "session_fetch":
+            # solve_cloudflare 只有 stealthy 会话支持，按需才传
+            args = {"url": url, "session_id": sid, "extraction_type": _EXTRACT_TYPE}
             if p.get("wait_selector"):
                 args["wait_selector"] = p["wait_selector"]
             if p.get("solve_cloudflare"):
@@ -1548,18 +1574,42 @@ class ScraplingBridge:
                 args["blocked_domains"] = p["blocked_domains"]
             return self._session_call("session_fetch", args)
 
-        if action == "request":
-            return self._session_call("session_make_request",
-                                      {"url": url, "session_id": sid, "method": "GET",
-                                       "extraction_type": _EXTRACT_TYPE})
+        if tool == "session_make_request":
+            out = self._session_call("session_make_request",
+                                     {"url": url, "session_id": sid, "method": "GET",
+                                      "extraction_type": _EXTRACT_TYPE})
+            return _session_mismatch_hint(out, sid, "session_make_request")
 
-        if action == "screenshot":
-            args = {"url": url, "session_id": sid, "image_type": p.get("image_type") or "png",
-                    "full_page": bool(p.get("full_page"))}
-            return self._session_call("screenshot", args)
+        if tool == "screenshot":
+            out = self._session_call("screenshot",
+                                     {"url": url, "session_id": sid,
+                                      "image_type": p.get("image_type") or "png",
+                                      "full_page": bool(p.get("full_page"))})
+            return _session_mismatch_hint(out, sid, "screenshot")
 
-        return fmt_result(0, url, "",
-                          "未知 action：%s（可用 open/open_http/close/list/fetch/request/screenshot）" % action)
+        return fmt_result(0, url, "", "未知原生会话工具：%s" % tool)
+
+    def _do_browser_session(self, p: Dict[str, Any]) -> str:
+        """聚合入口（兼容旧用法）：一个工具按 action 走完会话全流程。
+
+        action:
+          open       开浏览器会话(dynamic/stealthy)：之后 session_fetch/screenshot 复用它
+          open_http  开 HTTP 会话(static)：保持 cookie/连接，之后 session_make_request 复用
+          close      关闭会话，释放资源
+          list       列出当前所有会话
+          fetch      用会话抓页面（**保持登录态 / 已过 Cloudflare 验证的浏览器**）
+          request    用 HTTP 会话发请求（保持 cookie）
+          screenshot 给页面截图（整页可选），图片存到 media/screenshot/ 并返回路径
+        """
+        action = (p.get("action") or "").strip().lower()
+        _MAP = {"open": "open_session", "open_http": "open_request_session", "close": "close_session",
+                "list": "list_sessions", "fetch": "session_fetch", "request": "session_make_request",
+                "screenshot": "screenshot"}
+        native = _MAP.get(action)
+        if not native:
+            return fmt_result(0, p.get("url", ""), "",
+                              "未知 action：%s（可用 open/open_http/close/list/fetch/request/screenshot）" % action)
+        return self._do_native_session(native, p)
 
     # ---- scrape_with_selector（自适应选择器，强制 adaptive） ----
     def _do_scrape_selector(self, p: Dict[str, Any]) -> str:
@@ -1599,6 +1649,21 @@ class ScraplingBridge:
 
 
 # ---------- 小工具 ----------
+def _session_mismatch_hint(out: str, sid: str, tool: str) -> str:
+    """会话类型用错时给中文提示（Scrapling 原文是英文，4B 模型看不懂）。"""
+    try:
+        err = json.loads(out).get("error") or ""
+    except Exception:
+        return out
+    if "dynamic" in err and "session" in err.lower():
+        tip = ("会话 %s 是 dynamic（浏览器）会话：抓页面请用 session_fetch；"
+               "要发 HTTP 请求/截图请先 open_request_session 或 open_session(session_type=stealthy)"
+               % sid) if tool == "session_make_request" else \
+              ("会话 %s 是 dynamic 会话，截图请用 open_session(session_type=stealthy) 或 open_request_session 再试" % sid)
+        return fmt_result(0, "", "", "%s（%s）" % (err, tip))
+    return out
+
+
 def _is_err(out: str) -> bool:
     try:
         return bool(json.loads(out).get("error"))

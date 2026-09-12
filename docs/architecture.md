@@ -142,7 +142,7 @@ class XXPlugin:
 - `memory.py` → `save_memory` / `read_memory`（持久化到 `xiaojiao_memory.txt`）
 - `search.py` → `web_search`（打开百度搜索）
 - `weather.py` → `get_weather`（wttr.in 天气）
-- 🕷️ `scrapling_bridge.py` → **抓取 9 工具**（get/bulk_get/fetch/bulk_fetch/stealthy_fetch/bulk_stealthy_fetch/scrape_with_selector/browser_session/download）→ 详见 [scrapling.md](scrapling.md)
+- 🕷️ `scrapling_bridge.py` → **内置 Scrapling 抓取，17 个工具**（原生 13 个 1:1：make_request/bulk_get/fetch/bulk_fetch/stealthy_fetch/bulk_stealthy_fetch/open_session/open_request_session/close_session/list_sessions/session_fetch/session_make_request/screenshot ＋ 3 个增强：get/scrape_with_selector/download ＋ 兼容入口 browser_session）→ 详见 [scrapling.md](scrapling.md)
 
 ### 6.1 🕷️ 抓取插件（scrapling_bridge）架构要点
 
@@ -168,7 +168,7 @@ flowchart LR
     class OUT,EX,LE o;
 ```
 
-**与插件接口的关系**：`ScraplingBridge` 仍遵循上表的 `get_tool_descriptions()/execute()` 约定，因此对小焦而言它只是"一个多了 9 个工具的普通插件"——复杂逻辑（异步桥接、安全闸门、熔断、批量、双通道）全部封装在插件内部，对外只暴露简单参数。
+**与插件接口的关系**：`ScraplingBridge` 仍遵循上表的 `get_tool_descriptions()/execute()` 约定，因此对小焦而言它只是"一个多了 17 个工具的普通插件"——复杂逻辑（异步桥接、安全闸门、熔断、批量、双通道）全部封装在插件内部，对外只暴露简单参数。
 
 **两条关键设计**：
 1. **意图直通**（在 `xiaojiao_app.py` 侧）：4B 模型 function-calling 不稳，小焦用规则识别「抓/爬/下载 + 网址」→ 直接构造工具调用（`_detect_scrape_intent`），失败才回落到模型自主调用。

@@ -19,7 +19,7 @@ scrapling install
 # ③ 启动小焦（插件自动加载）
 python start_xiaojiao.py
 
-# ④ 验证：浏览器打开小焦 → 设置 → 🧩 插件 → 应看到 scrapling_bridge 及其 9 个工具
+# ④ 验证：浏览器打开小焦 → 设置 → 🧩 插件 → 应看到 scrapling_bridge 及其 17 个工具
 ```
 
 在 `xiaojiao_control.json` 里按需配置（见第 5 节）：
@@ -35,19 +35,39 @@ python start_xiaojiao.py
 
 ---
 
-## 2. 九个工具（覆盖 Scrapling 全部能力）
+## 2. 十七个工具（**原生 13 个 1:1 全暴露** + 3 个增强 + 1 个兼容入口）
 
-| 工具 | 参数 | 说明 | 对应 Scrapling MCP |
-| --- | --- | --- | --- |
-| `get` | `url` `stealth?` `timeout?` `save_to?` | 普通 HTTP 抓取，最快 | make_request |
-| `bulk_get` | `urls` `stealth?` | 批量抓（去重/限速/退避/隔离）| bulk_get |
-| `fetch` | `url` `wait_selector?` `timeout?` `save_to?` | Playwright 浏览器渲染 | fetch |
-| `bulk_fetch` | `urls` | 批量渲染 | bulk_fetch |
-| `stealthy_fetch` | `url` `timeout?` `save_to?` | 隐身（指纹随机化 + 过 Cloudflare）| stealthy_fetch |
-| `bulk_stealthy_fetch` | `urls`（≤20）| 批量隐身 | bulk_stealthy_fetch |
-| `scrape_with_selector` | `url` `selector` `adaptive?` `name?` | 选择器抓取，自适应防改版 | make_request/fetch + `css_selector` |
-| `browser_session` | `action` `url?` `session_id?` `session_type?` `full_page?` | 会话管理 / 登录态抓取 / 截图 | open_session、open_request_session、close_session、list_sessions、session_fetch、session_make_request、screenshot |
-| 🆕 `download` | `url` `filename?` | **下载文件**（PDF/EPUB/TXT/ZIP）| —（插件自研）|
+### 2.1 原生 13 个（工具名与 Scrapling 官方完全一致）
+
+| 工具 | 参数 | 说明 |
+| --- | --- | --- |
+| `make_request` | `url` `timeout?` `save_to?` | 普通 HTTP 抓取，最快（= `get`）|
+| `bulk_get` | `urls` | 批量抓（去重/限速/退避/隔离）|
+| `fetch` | `url` `wait_selector?` `timeout?` `save_to?` | Playwright 浏览器渲染 |
+| `bulk_fetch` | `urls` | 批量渲染 |
+| `stealthy_fetch` | `url` `timeout?` `save_to?` | 隐身（指纹随机化 + 过 Cloudflare）|
+| `bulk_stealthy_fetch` | `urls`（≤20）| 批量隐身 |
+| `open_session` | `session_type?` `session_id?` | 开浏览器会话（dynamic / stealthy）|
+| `open_request_session` | `session_id?` | 开 HTTP 会话（保持 cookie）|
+| `close_session` | `session_id` | 关闭会话、释放资源 |
+| `list_sessions` | — | 列出当前所有会话 |
+| `session_fetch` | `url` `session_id` `wait_selector?` | 用会话抓页面（**保持登录态 / 已过验证**）|
+| `session_make_request` | `url` `session_id` | 用 HTTP 会话发请求（保持 cookie）|
+| `screenshot` | `url` `session_id` `full_page?` | 页面截图，存 `media/screenshot/` 返回路径 |
+
+### 2.2 小焦增强 3 个
+
+| 工具 | 参数 | 说明 |
+| --- | --- | --- |
+| `get` | `url` `stealth?` `timeout?` `save_to?` | `make_request` 的中文友好别名（说"抓一下"就走它）|
+| `scrape_with_selector` | `url` `selector` `adaptive?` `name?` | 选择器抓取，**自适应防改版**（存档 + 相似度找回）|
+| 🆕 `download` | `url` `filename?` | **下载任意文件**（PDF/EPUB/ZIP/图片/音视频…），Scrapling 原生没有 |
+
+### 2.3 兼容入口 1 个
+
+`browser_session`：用 `action` 一个工具走完会话全流程（见 2.4），适合不熟悉多步调用的场景。
+
+### 2.4 `browser_session` 的 7 种 action（等价于上面 7 个原生会话工具）
 
 ### 返回值统一结构
 
@@ -258,7 +278,7 @@ python start_xiaojiao.py
 
 | # | 测什么 | 期望 |
 | --- | --- | --- |
-| 1 | 设置 → 🧩 插件 → `scrapling_bridge` | 看到 **9 个工具** |
+| 1 | 设置 → 🧩 插件 → `scrapling_bridge` | 看到 **17 个工具**（原生 13 + 增强 3 + 兼容 1）|
 | 2 | 对小焦说「用 stealthy_fetch 抓一下 example.com」 | 工具轨迹出现 `stealthy_fetch`、正文 + 📖 解读 |
 | 3 | 说「抓一下 127.0.0.1」 | 中文提示「禁止访问本机/内网地址（SSRF 防护）」 |
 | 4 | 说「抓取 https://a.com 和 https://b.com」 | 批量结果，重复 URL 只抓一次 |
