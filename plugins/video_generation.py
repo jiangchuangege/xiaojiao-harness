@@ -41,8 +41,8 @@ class VideoGeneration:
     def get_tool_descriptions(self):
         return [{
             "name": "generate_video",
-            "description": "根据场景描述生成一段真实视频(本地 ComfyUI+Wan2.1)。"
-                           "输入中文场景描述，几秒到几分钟后返回视频链接。",
+            "description": "本地生成一段视频(ComfyUI+Wan2.1)。什么时候用：用户要「生成/画一段视频」；"
+                           "输入中文场景描述；输出 视频链接(几秒到几分钟)。",
             "parameters": {"type": "object", "properties": {"prompt": {"type": "string", "description": "视频场景(中文)"}},
                            "required": ["prompt"]},
         }]

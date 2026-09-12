@@ -446,17 +446,17 @@ class ArchifyPlugin:
             # 第 1 层：环境与知识
             {
                 "name": "archify_doctor",
-                "description": "检查 Archify 环境是否正常（Node版本、依赖、schema完整性）。",
+                "description": "体检 Archify 环境(Node/依赖/schema 是否齐)。什么时候用：画图报错、或用户让你查环境；无参数；输出 各项 ✅/❌ 报告",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
             {
                 "name": "archify_read_skill",
-                "description": "读取 Archify 完整技能文档 SKILL.md。画图前必须读一次。",
+                "description": "读 Archify 完整技能文档。什么时候用：**每次开始画图的第一步**(同一会话只读一次)；无参数；输出 SKILL.md 全文",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
             {
                 "name": "archify_read_schema",
-                "description": "读取指定类型的 schema + common schema。type: architecture/workflow/sequence/dataflow/lifecycle",
+                "description": "读该图表类型的 schema(含公共部分)。什么时候用：按 archify_guide 推荐的类型，**生成 JSON 之前**读；输入 type；输出 schema 全文(照它写 JSON)",
                 "parameters": {
                     "type": "object",
                     "properties": {"diagram_type": {"type": "string", "enum": list(DIAGRAM_TYPES)}},
@@ -465,7 +465,7 @@ class ArchifyPlugin:
             },
             {
                 "name": "archify_read_example",
-                "description": "读取指定类型的完整示例 JSON，照它的结构生成。",
+                "description": "读该类型的**完整示例 JSON**。什么时候用：写 JSON 前照着抄结构(比只看 schema 稳)；输入 type；输出 示例 JSON 全文",
                 "parameters": {
                     "type": "object",
                     "properties": {"diagram_type": {"type": "string", "enum": list(DIAGRAM_TYPES)}},
@@ -475,7 +475,7 @@ class ArchifyPlugin:
             # 第 2 层：智能路由
             {
                 "name": "archify_guide",
-                "description": "按场景返回推荐图表类型、配方、官方提示词。中文场景可加 lang=zh。",
+                "description": "按场景推荐图表类型+配方+官方提示词。什么时候用：读完 SKILL.md 后、决定画哪种图之前；输入 scenario(用户的画图需求)、lang=zh；输出 推荐类型/适用与不适用/应含要素/官方提示词",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -488,7 +488,7 @@ class ArchifyPlugin:
             # 第 3 层：质量保障
             {
                 "name": "archify_validate",
-                "description": "校验 JSON 是否符合 Archify 规范，返回 9 项检查 + 合成结果。0 错误才可交付。",
+                "description": "**交付前必做**：校验 JSON 是否符合规范。什么时候用：写完 JSON 立刻校验；输入 diagram_type + spec_json + quality 取 showcase；输出 全部报错清单(字段路径+建议修法)。FAIL 时**按全部报错一次改完**再校验，禁止逐条试错",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -501,7 +501,7 @@ class ArchifyPlugin:
             },
             {
                 "name": "archify_inspect",
-                "description": "结构检查，查看 JSON 的图结构是否符合规范（不渲染）。",
+                "description": "只看结构、不渲染。什么时候用：想快速确认节点/关系结构对不对；输入 diagram_type + spec_json；输出 结构报告",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -513,7 +513,7 @@ class ArchifyPlugin:
             },
             {
                 "name": "archify_check",
-                "description": "检查已生成的 HTML 文件是否正常。",
+                "description": "检查已生成的 HTML 是否正常。什么时候用：交付后自检；输入 html_path；输出 检查结果",
                 "parameters": {
                     "type": "object",
                     "properties": {"html_path": {"type": "string"}},
@@ -522,7 +522,7 @@ class ArchifyPlugin:
             },
             {
                 "name": "archify_visual_check",
-                "description": "对已生成的 HTML 做视觉检查，返回 JSON 报告。",
+                "description": "对已生成的 HTML 做**视觉**检查。什么时候用：交付后确认渲染质量(标签重叠等)；输入 html_path；输出 JSON 报告",
                 "parameters": {
                     "type": "object",
                     "properties": {"html_path": {"type": "string"}},
@@ -532,7 +532,7 @@ class ArchifyPlugin:
             # 第 4 层：渲染交付
             {
                 "name": "archify_render",
-                "description": "把 JSON 渲染成 HTML（基础渲染，不打开浏览器）。",
+                "description": "把 JSON 渲染成 HTML(基础版，不开浏览器)。什么时候用：只想拿文件、不需要报告；输入 diagram_type + spec_json + output_name；输出 文件路径",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -546,7 +546,7 @@ class ArchifyPlugin:
             },
             {
                 "name": "archify_deliver",
-                "description": "交付渲染（带 --json 报告），生成最终 HTML。",
+                "description": "**最终交付**：渲染并生成正式 HTML。什么时候用：validate 通过之后；输入 diagram_type + spec_json + output_name + quality 取 showcase；输出 HTML 路径(告诉用户这个)",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -560,7 +560,7 @@ class ArchifyPlugin:
             },
             {
                 "name": "archify_preview",
-                "description": "预览渲染（不打开浏览器，服务端用）。",
+                "description": "预览渲染(服务端用，不开浏览器)。什么时候用：想先看看效果再决定交付；输入同 render；输出 预览结果",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -574,7 +574,7 @@ class ArchifyPlugin:
             },
             {
                 "name": "archify_compare",
-                "description": "对比两张架构图，输出差异（仅 architecture 类型）。",
+                "description": "对比两张架构图并给差异。什么时候用：改版前后比一比(仅 architecture)；输入两份 spec；输出 差异清单",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -588,7 +588,7 @@ class ArchifyPlugin:
             # 第 5 层：自动化
             {
                 "name": "archify_batch",
-                "description": "批量渲染多个 spec。items: [{diagram_type, spec_json, output_name}]",
+                "description": "一次画多张图。什么时候用：用户要一批图；输入 items 数组；输出 每张的结果",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -600,7 +600,7 @@ class ArchifyPlugin:
             # 第 6 层：可观测
             {
                 "name": "archify_metrics",
-                "description": "查看桥接层调用统计。",
+                "description": "看画图调用的统计(成功/失败/耗时)。什么时候用：排查画图为什么慢/失败；无参数；输出 统计表",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         ]

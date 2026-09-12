@@ -342,4 +342,63 @@ def run(res: Results) -> Results:
               app._workflow_needs_more_rounds("用 Archify 画一张架构图") >= 12
               and app._workflow_needs_more_rounds("你好") == 6, "")
 
+    # ---------- 17. 四层工具选择修复（描述场景化 / 决策树 / 关键词路由 / 调错换工具） ----------
+    # 第 1 层：描述要写"什么时候用"，且**不许重名**（重名会让模型调 A 实际跑 B）
+    app._build_tools()
+    builtin = {t["function"]["name"] for t in app.TOOLS}
+    allnames = list(app._TOOL2PLUGIN.keys())
+    dup = [n for n in set(allnames) if allnames.count(n) > 1 or n in builtin]
+    res.check("工具选择", "工具名唯一（插件之间、以及不与内置重名）", not dup, str(dup[:4]))
+    _bad_desc = []
+    for _pn, _p in app.PLUGINS.items():
+        if _p.get("builtin"):
+            continue                       # 内置条目只是设置页占位，不是真工具
+        for _t in (_p.get("desc") or []):
+            _nm = (_t or {}).get("name")
+            # 只看**真能调用**的工具（幻影工具执行不了，描述不影响选工具）
+            if _nm and _nm in app._TOOL2PLUGIN and "什么时候用" not in ((_t or {}).get("description") or ""):
+                _bad_desc.append(_nm)
+    res.check("工具选择", "插件工具描述都写明「什么时候用」（场景化，仅可调用工具）",
+              not _bad_desc, "未场景化=%s" % _bad_desc[:5])
+    _base_tools = {"run_command", "open_app", "list_files", "read_file", "write_file",
+                   "search_files", "grep_files", "fetch_url"}
+    _bad_b = [t["function"]["name"] for t in app.TOOLS
+              if t["function"]["name"] in _base_tools and "什么时候用" not in t["function"]["description"]]
+    res.check("工具选择", "内置工具描述也场景化", not _bad_b, str(_bad_b))
+
+    # 第 2 层：决策树写进 _TOOL_RULES
+    _tr = app._TOOL_RULES
+    res.check("工具选择", "决策树在工具规则里（含抓取升级/画图链/漏洞/IP/纯聊天）",
+              all(k in _tr for k in ("【工具选择顺序】", "stealthy_fetch", "archify_read_skill",
+                                     "collect_vulnerabilities", "net_ip", "不调任何工具")), "")
+
+    # 第 3 层：入口关键词路由
+    res.check("工具选择", "网址 → 锁定抓取",
+              app._looks_like_url("抓一下 https://example.com")
+              and app._looks_like_url("帮我看看 www.gutenberg.org 写了啥")
+              and not app._looks_like_url("今天天气怎么样"), "")
+    res.check("工具选择", "画图词 → 锁定 archify 链",
+              app._asks_diagram("画一张小焦架构图") and app._asks_diagram("帮我画个流程图")
+              and not app._asks_diagram("帮我查资料"), "")
+    res.check("工具选择", "IP 词 → 锁定 net_ip（但给了具体 IP 时不抢）",
+              app._asks_net_ip("我的 IP 是多少") and app._asks_net_ip("本机公网 IP 和归属地")
+              and not app._asks_net_ip("这个 IP 1.1.1.1 是哪里的"), "")
+
+    # 第 4 层：调错换候选 / 停止 / 抓取失败判定
+    res.check("工具选择", "候选表：get 失败 → fetch → stealthy_fetch",
+              app._tool_fallback_for("get") == ["fetch", "stealthy_fetch"], str(app._tool_fallback_for("get")))
+    res.check("工具选择", "抓取失败判定（403/风控页/空正文）",
+              app._scrape_failed('{"error":"HTTP 403 被拦"}')
+              and app._scrape_failed('{"status":200,"content":"Just a moment... Cloudflare"}')
+              and app._scrape_failed('{"status":200,"content":"短"}')
+              and not app._scrape_failed('{"status":200,"content":"' + "正常内容" * 40 + '"}'), "")
+    _bad = {}
+    _r1 = app._layer4_after_call(_bad, "archify_validate", "状态：FAIL 校验失败", [])
+    _r2 = app._layer4_after_call(_bad, "archify_validate", "状态：FAIL 校验失败", [])
+    res.check("工具选择", "连续 2 次调错即停止并如实报告",
+              _r1 == "" and "已停止" in _r2 and "archify_validate" in _r2, _r2[:60])
+    res.check("工具选择", "成功一次即清零，不会误停",
+              (lambda b: (app._layer4_after_call(b, "get", '{"status":200,"content":"'
+                                                 + "正文" * 60 + '"}', []), b.get("get")))({"get": 1})[1] is None, "")
+
     return res

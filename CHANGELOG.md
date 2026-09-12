@@ -5,6 +5,50 @@
 > 说明：仓库对外只保留 **v1.0** 这一个版本（旧的 Release/tag 已清理）。
 > 下面是 v1.0 的完整记录 —— 之前迭代过程（抓取能力、稳定化落地、展示修复等）按其主题合并进各小节，内容未做删减。
 
+## [v1.1.1] - 2026-09-13
+
+### 四层修复：工具选择（调错工具 / 乱试 / 漏调）
+
+**🧭 用户实测：小焦有时会调错工具、在工具海里乱试、或者该调不调。按四层从根上治。**
+
+#### Changed
+
+- **第 1 层 · 工具描述场景化**：所有可调用工具（`.py` / `.js` / `.json` 插件 + 内置）的描述
+  统一改成「**什么时候用** + 输入 + 输出」，同类工具写明区别：
+  `get`（静态页首选）→ `fetch`（要渲染）→ `stealthy_fetch`（被风控才用）；
+  `net_ip`（查自己）vs `get_ip_info`（查指定 IP）；`search_files`（找文件名）vs `grep_files`（找内容）。
+- **修掉重名工具（"调错工具"的根因之一）**：`read_file` / `search_files` / `search_content`
+  在**内置、code_intelligence、workspace_search** 三处重名 —— 后加载的会覆盖路由表，
+  模型以为调 A 实际执行 B。现在：`ci_*` / `ws_*` 改名区分，并且 `_build_tools()` 加**冲突防呆**
+  （内置优先，重名跳过并告警）。
+- **第 2 层 · 工具选择决策树**：`_TOOL_RULES` 增加【工具选择顺序】八条
+  （网址→get→fetch→stealthy_fetch ｜ 信息→web_search ｜ 画图→archify 工作流 ｜
+  漏洞→collect_vulnerabilities ｜ IP→net_ip ｜ 纯聊天→不调工具 ｜ 命令/文件 ｜ 兜底 web_search）。
+- **第 3 层 · 入口关键词路由**（规则先于模型）：句子里有网址 → 直接走抓取；
+  画图词 → 锁 archify 链；漏洞 → `collect_vulnerabilities`；IP/公网/归属地 → `net_ip`。
+- **第 4 层 · 调错后的修正**：新增候选表 `_TOOL_FALLBACK`（`get`→`fetch`→`stealthy_fetch` …）、
+  `_scrape_failed()` 判定（403/风控页/空正文）、**抓取自动升级**、
+  `_layer4_after_call()`：同一工具**连续 2 次调错即停止**并如实报错（附建议候选）。
+- **按意图收窄本轮工具**：画图轮只暴露 `archify_*`（+读文件/打开），网址轮只暴露抓取类 ——
+  实测修掉了"画架构图跑去 read_memory，最后把记忆当答案"这种乱试。
+- **多步工作流加时间预算**：画图轮 240 秒上限，超了停止并如实汇报进度（原来能跑到 400+ 秒）。
+
+#### 实测（8 条验收用例）
+
+| 用例 | 结果 |
+| --- | --- |
+| 抓一下 https://example.com | ✅ `get`，9 秒 |
+| 帮我看看 www.gutenberg.org 写了啥 | ✅ `get` + 真实解读 |
+| 抓 https://www.cloudflare.com | ✅ `get` 被拦 → **自动升级 stealthy_fetch** 成功 |
+| 画一张小焦架构图 | ✅ 全链 read_skill→guide→read_schema→read_example→validate→**deliver**→visual_check，**47 秒**交付 HTML |
+| 最近漏洞 | ✅ `collect_vulnerabilities` |
+| 我的 IP 是多少 | ✅ `net_ip`，1 秒 |
+| 你好 | ✅ 0 工具调用 |
+| 今天天气怎么样 | ✅ 用了 `get_weather`（比硬搜更准） |
+
+> 全量测试 **248/249 · 100%**（离线 92 ｜ 应用逻辑 104 ｜ 安全 18 ｜ 联网 34/35，1 项按当天 NVD 数据跳过）；
+> 实机 36/36 ｜ UI 25/25 ｜ 预设 13/13 ｜ 文档 0 错误 ｜ Mermaid 42 图 0 问题 ｜ 原理 12/12 ｜ ruff 全过。
+
 ## [v1.1.0] - 2026-09-13
 
 ### 校验熔断：archify validate 不再来回改 7 次

@@ -4,7 +4,7 @@
   "tools": [
     {
       "name": "get_ip",
-      "description": "查询当前公网IP地址",
+      "description": "查本机公网 IP(只返回地址)。什么时候用：只要一个 IP 字符串；要归属地/ISP/时区请用 net_ip 或 get_ip_info；无参数；输出 IP 文本",
       "parameters": {"type": "object", "properties": {}},
       "method": "GET",
       "url": "https://api.ipify.org",
@@ -12,7 +12,7 @@
     },
     {
       "name": "get_ip_info",
-      "description": "查询IP归属地等信息(用 get_ip 的结果)",
+      "description": "查某个 IP 的归属地/ISP/时区。什么时候用：**已经知道**要查哪个 IP；输入 ip；输出 归属地 JSON。查自己机器的公网 IP 用 net_ip",
       "parameters": {"type": "object", "properties": {"ip": {"type": "string", "description": "IP地址"}}},
       "method": "GET",
       "url": "https://ipapi.co/{ip}/json",

@@ -12,7 +12,8 @@ class WeatherPlugin:
         return [
             {
                 "name": "get_weather",
-                "description": "查询城市天气",
+                "description": "查某个城市的天气。什么时候用：用户问「X 天气怎么样」；"
+                               "输入 city；输出 天气一行文本。(问新闻/资料类信息请用 web_search)",
                 "parameters": {"city": "城市名称"}
             }
         ]

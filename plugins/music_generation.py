@@ -34,7 +34,7 @@ class MusicGeneration:
     def get_tool_descriptions(self):
         return [{
             "name": "generate_music",
-            "description": "根据文字描述生成一段音乐(本地 MusicGen)。prompt=音乐描述(如'轻快的钢琴曲''电子游戏BGM'), duration=时长秒(默认5)。"
+            "description": "本地生成一段音乐(MusicGen)。什么时候用：用户要「来段音乐/BGM」；输入 prompt(风格描述)、duration(秒,默认5)；输出 音频链接。首次会自动下模型(~1.5G)，较慢。"
                            "第一次使用会自动下载模型(~1.5G)并安装依赖。返回音频链接。",
             "parameters": {"type": "object", "properties": {
                 "prompt": {"type": "string", "description": "音乐描述(中文/英文)"},

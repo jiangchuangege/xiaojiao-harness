@@ -128,6 +128,7 @@ _TOOL_RULES = ("\n[工具铁律] "
                "② **做事之前先看上面那份工具清单**：用户点名某个插件/工具（如 Archify）时，"
                "直接调那个工具，**不要**改用 web_search 去搜；清单里没有的才说「没有这个工具」。"
                "③ 多步任务按顺序拆开做（先校验/先读文件，再产出结果），每步都调对应工具。"
+               "\n【工具选择顺序】不确定就用这张表，别硬猜：\n① 用户给了网址/要求抓网页 → `get`；被拦或正文空 → `fetch`；再不行 → `stealthy_fetch`（开销最大，别一上来就用）\n② 用户要查资料/新闻/百科/天气这类**信息** → `web_search`（别去抓某个具体网页）\n③ 用户要画图（架构图/流程图/时序图/数据流/状态图）→ 走 archify 工作流：`archify_read_skill` → `archify_guide` → `archify_read_schema` → `archify_read_example` → `archify_validate` → `archify_deliver`（**一次搜索都不要发**）\n④ 用户要漏洞清单 → `collect_vulnerabilities`（不要用 web_search 凑）\n⑤ 用户要查本机公网 IP/归属地 → `net_ip`\n⑥ 用户纯聊天/寒暄/概念问答 → **不调任何工具**\n⑦ 要执行命令/写文件/读文件 → `run_command` / `write_file` / `edit_file` / `read_file`\n⑧ 上面都不沾边、又确实需要外部信息时 → 优先 `web_search` 找信息，不要硬猜工具。\n"
                "④ **校验/报错必须一次性改完**：`archify_validate`（或任何校验类工具）失败时，"
                "要**按返回的全部报错一起修**，改好再校验**一次**；禁止「改一条→校验→再改一条」"
                "这种逐条试错（实测同一张图来回校验 7 次、白烧 200 多秒）。同一工具连续失败 3 次"
@@ -545,16 +546,31 @@ def _record_usage(usage, model=""):
         LOG.debug("忽略异常(%s:%d): %s", __file__, 381, e)
 
 
-def _build_tools():
-    """把内置工具 + 已启用的插件工具合并成给模型的功能列表。"""
+def _build_tools(only=None):
+    """把内置工具 + 已启用的插件工具合并成给模型的功能列表。
+
+    `only`：只暴露这些工具名（按意图收窄）。真实缺陷（用户实测）：让 Archify 画架构图时，
+    模型在工具海里乱摸（跑去 read_memory），最后把记忆内容当答案吐出来 ——
+    收窄之后它只能在画图这条链里走。
+    """
     global _TOOL2PLUGIN
     _TOOL2PLUGIN = {}
     tools = list(TOOLS)
+    _only = {x.lower() for x in only} if only else None
+    _taken = {t["function"]["name"] for t in tools}       # 内置工具名先占位
     for pname, p in PLUGINS.items():
         if p.get("builtin") or not p.get("on"):
             continue
         for t in p.get("desc", []):
             if isinstance(t, dict) and t.get("name"):
+                # **真实缺陷防复发**：不同插件/内置用了同一个工具名时，后加载的会**覆盖**
+                # 路由表 _TOOL2PLUGIN，模型以为调的是 A，实际执行的是 B（"调错工具"的典型成因）。
+                # 现在：内置优先，重名直接跳过并告警 —— 插件作者看到日志就会去改名。
+                if t["name"] in _taken:
+                    LOG.warning("工具名冲突，已跳过：%s（来自插件 %s；同名工具已存在，请改名）",
+                                t["name"], pname)
+                    continue
+                _taken.add(t["name"])
                 # **真实缺陷**：外部清单类插件（`{"tools":[{...}]}` 且**没写 url**）里的工具
                 # 其实**执行不了**（execute 只会回一句"需对应运行时或填写 url"）。原来照样塞给
                 # 模型 → 模型真的去调它，拿到一句废话，用户看到的就是"调用了工具却没结果"
@@ -568,6 +584,9 @@ def _build_tools():
                 tools.append({"type": "function", "function": {
                     "name": t["name"], "description": t.get("description", ""),
                     "parameters": t.get("parameters", {"type": "object", "properties": {}})}})
+    if _only is not None:
+        tools = [t for t in tools if t["function"]["name"].lower() in _only]
+        _TOOL2PLUGIN = {k: v for k, v in _TOOL2PLUGIN.items() if k.lower() in _only}
     # 规范化: 每个工具的 parameters 必须是 JSON Schema object(严格API如deepseek要求)
     for t in tools:
         fn = t.get("function") or {}
@@ -1426,26 +1445,26 @@ TOOLS = [
      "parameters": {"type": "object", "properties": {"items": {"type": "string", "description": "要检测的工具, 逗号分隔"}}, "required": []}}},
     {"type": "function", "function": {"name": "suggest_organize", "description": "整理文件建议(只读): 扫描一个目录, 按类型/日期给出整理到哪里的建议。用于'整理桌面/文件夹'。只给建议清单, 确认才移动。",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "要整理的目录"}}, "required": ["path"]}}},
-    {"type": "function", "function": {"name": "run_command", "description": "运行一条系统命令并返回输出",
+    {"type": "function", "function": {"name": "run_command", "description": "跑一条系统命令并回显输出(PowerShell 语法)。什么时候用：要真的执行程序/脚本/安装/查系统信息；输入 command(多条命令用分号，不能用 && )，可选 timeout；输出 命令输出。写文件请用 write_file，别用它",
      "parameters": {"type": "object", "properties": {"command": {"type": "string", "description": "要执行的命令"},
                     "timeout": {"type": "number", "description": "超时秒数，默认30"}}, "required": ["command"]}}},
-    {"type": "function", "function": {"name": "open_app", "description": "打开一个应用或文件/网址",
+    {"type": "function", "function": {"name": "open_app", "description": "用系统默认方式打开一个应用/文件/网址。什么时候用：用户说「打开 XX」；输入 path(可执行名/文件绝对路径/网址)；输出 是否拉起",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "应用或文件或网址"}}, "required": ["path"]}}},
-    {"type": "function", "function": {"name": "list_files", "description": "列出目录内容",
+    {"type": "function", "function": {"name": "list_files", "description": "列目录里有什么。什么时候用：要知道某目录下的文件清单；输入 path；输出 条目列表(不含内容)",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "目录路径"}}, "required": ["path"]}}},
-    {"type": "function", "function": {"name": "read_file", "description": "读取一个文本文件的前若干字符",
+    {"type": "function", "function": {"name": "read_file", "description": "读文本文件内容。什么时候用：查看文件写了什么；输入 path(可选 max_chars)；输出 文件内容。只读，不会改文件",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径"},
                     "max_chars": {"type": "number", "description": "最多读多少字符"}}, "required": ["path"]}}},
-    {"type": "function", "function": {"name": "write_file", "description": "把文本写入文件",
+    {"type": "function", "function": {"name": "write_file", "description": "新建/覆盖写入文件(自动建目录)。什么时候用：要产出文件(代码/网页/文档/配置)；输入 path(Windows 绝对路径) + content；输出 写入结果。**改**已有文件请用 edit_file，避免整篇覆盖",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径"},
                     "content": {"type": "string", "description": "写入的内容"}}, "required": ["path", "content"]}}},
     {"type": "function", "function": {"name": "edit_file", "description": "在文本文件里精准替换一段内容(第一次出现的)。用于改代码/配置。path=文件, old_string=原文, new_string=新文。",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "文件路径"}, "old_string": {"type": "string", "description": "要被替换的原文"}, "new_string": {"type": "string", "description": "替换成的新文"}}, "required": ["path", "old_string", "new_string"]}}},
-    {"type": "function", "function": {"name": "search_files", "description": "按文件名模式查找文件(glob)。path=目录, pattern=如 *.txt 或 **/*.py。",
+    {"type": "function", "function": {"name": "search_files", "description": "按文件名找文件(glob)。什么时候用：找某个文件在哪；输入 path + pattern(如 **/*.py)；输出 文件路径列表。找**内容**请用 grep_files",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "要搜索的目录"}, "pattern": {"type": "string", "description": "文件名模式如 *.txt"}}, "required": ["path", "pattern"]}}},
-    {"type": "function", "function": {"name": "grep_files", "description": "在目录里的文件中搜索文本/正则内容。path=目录, pattern=关键词或正则。",
+    {"type": "function", "function": {"name": "grep_files", "description": "在文件**内容**里搜关键词/正则。什么时候用：找某段代码/配置在哪；输入 path + pattern；输出 命中行+文件+行号。找**文件名**请用 search_files",
      "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "要搜索的目录"}, "pattern": {"type": "string", "description": "关键词或正则"}}, "required": ["path", "pattern"]}}},
-    {"type": "function", "function": {"name": "fetch_url", "description": "读取一个网址/接口返回的内容(网页文本)。url=完整地址。",
+    {"type": "function", "function": {"name": "fetch_url", "description": "直接读一个网址/接口的返回内容(纯HTTP，最轻)。什么时候用：只想快速拿文本/JSON，不需要渲染或过风控；输入 url；输出 返回文本。复杂页面(要登录/JS渲染/被风控)用 get → fetch → stealthy_fetch",
      "parameters": {"type": "object", "properties": {"url": {"type": "string", "description": "网址"}}, "required": ["url"]}}},
     {"type": "function", "function": {"name": "ask_user", "description": "向用户提问并给出选项，等待用户选择。用于需要用户拍板时。question=问题, options=选项列表(逗号分隔)。",
      "parameters": {"type": "object", "properties": {"question": {"type": "string", "description": "要问的问题"}, "options": {"type": "string", "description": "选项，逗号分隔"}}, "required": ["question"]}}},
@@ -1712,7 +1731,7 @@ def _map_tool(name, args):
     return name, args
 
 
-def llm_chat_tools(messages, max_rounds=6, lean=False):
+def llm_chat_tools(messages, max_rounds=6, lean=False, tools_subset=None, budget_s=0):
     """带 function calling 的大脑调用：模型自己“想”并调用工具（优先），循环直到给出最终回答。
 
     返回 (answer, tool_trace)。兼容 OpenAI tool_calls 与 Qwen <tool_call> XML。
@@ -1733,11 +1752,20 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
     _targets = _llm_targets()
     _ti = 0                                          # 当前在用哪个大脑目标
     _fail_streak = {"tool": "", "n": 0}              # 同一工具连续失败次数（熔断用）
+    _bad_tools = {}                                  # 工具名 → 已失败次数（第 4 层：换候选/停止）
+    _t_start = time.time()                           # 本轮时间预算（画图这种多步链路防跑飞）
     for _ in range(max_rounds):
+        if budget_s and (time.time() - _t_start) > budget_s and tool_trace:
+            LOG.warning("本轮工具链已用 %d 秒，超过预算 %d 秒 → 停止继续调用",
+                        time.time() - _t_start, budget_s)
+            _last = tool_trace[-1].get("result") or ""
+            return ("⏱️ **已停止：本轮工具链超过 %d 秒预算。**\n\n已完成到「%s」。"
+                    "最后一步结果：\n\n```\n%s\n```\n\n（要接着做就说「继续」）"
+                    % (budget_s, tool_trace[-1].get("tool"), str(_last)[:800])), tool_trace
         _t = _targets[_ti]
         payload = {"model": _t["model"], "messages": m, "temperature": TEMPERATURE,
                    "max_tokens": (200 if lean else MAX_TOKENS),
-                   "tools": ([] if lean else _build_tools())}
+                   "tools": ([] if lean else _build_tools(only=tools_subset))}
         try:
             r, _code, _body = _llm_post(_t, payload, timeout=120)
             if _code != 200 or r is None:
@@ -1796,10 +1824,14 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
             tool_trace.append({"tool": tname, "args": targs, "result": result[:800]})
             if _tripped:
                 return _tripped, tool_trace
+            _stop = _layer4_after_call(_bad_tools, tname, result, tool_trace)
+            if _stop:
+                return _stop, tool_trace
+            _hint = _layer4_hint(_bad_tools, tname)
             if result.startswith("〔待确认〕"):
                 m.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
                 return result, tool_trace
-            m.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
+            m.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result + _hint})
     # 循环到上限但已执行工具 -> 用工具结果生成总结(不让用户看到空/报错)
     if tool_trace:
         # 挑一个"成功"的结果最后展示(跳过 路径不存在/失败/Error)
@@ -1855,6 +1887,44 @@ def _tool_breaker(streak, tool, result, tool_trace):
                 "最后一次报错原文如下（请据此修正后再说一次，或直接看这条报错）：\n\n```\n%s\n```"
                 % (tool, streak["n"], str(result or "").strip()[:1800]))
     return ""
+
+
+def _layer4_after_call(bad, tool, result, tool_trace):
+    """第 4 层：调错后的修正 —— 同一工具**连续失败 2 次**就停止并如实报告。
+
+    判据复用 _tool_failed（URL 不存在/参数格式不对/校验 FAIL 等都算）。
+    返回要交给用户的文本（停止）；没到阈值返回 ""。
+    """
+    if not _tool_failed(result):
+        bad.pop(tool, None)                          # 成功即清零
+        return ""
+    bad[tool] = bad.get(tool, 0) + 1
+    if bad[tool] >= 2:
+        cand = _tool_fallback_for(tool)
+        LOG.warning("工具 %s 连续 %d 次调错 → 停止重试（候选：%s）", tool, bad[tool], cand or "无")
+        tool_trace.append({"tool": tool, "args": {},
+                           "result": "已停止：连续 %d 次调错" % bad[tool]})
+        return ("⚠️ **已停止：%s 连续 %d 次调错。**\n\n最后一次报错原文：\n\n```\n%s\n```\n\n%s"
+                % (tool, bad[tool], str(result or "").strip()[:1500],
+                   ("建议换用：`%s`（或直接告诉我你想做什么，我来选工具）" % "` / `".join(cand))
+                   if cand else "请换个说法或告诉我更具体的目标。"))
+    return ""
+
+
+def _layer4_hint(bad, tool):
+    """失败时给模型的一句提示（插在工具结果后面）：别再调它，换候选。"""
+    if not _tool_failed_flag(bad, tool):
+        return ""
+    cand = _tool_fallback_for(tool)
+    pieces = ["用户输入" + tool + "失败了一次" if False else "（提示：`%s` 刚刚失败了，别再原样重试" % tool]
+    if cand:
+        pieces.append("，换用 `%s`" % "` 或 `".join(cand))
+    pieces.append("；若没有合适的工具，就直接如实说明失败原因。）")
+    return "".join(pieces)
+
+
+def _tool_failed_flag(bad, tool):
+    return bad.get(tool, 0) >= 1
 
 
 def _workflow_needs_more_rounds(user_input):
@@ -2246,6 +2316,32 @@ def _noarg_named_tool(text):
 # ================== 「别搜 / 直接用工具」闸门结束 ==================
 
 
+def _scrape_failed(res):
+    """这次抓取算不算"没成功"（决定要不要升级到下一个候选工具）。
+
+    判据：有 error 字段、HTTP 非 200/2xx、正文为空/过短、或明确的风控字样。
+    """
+    try:
+        j = json.loads(res)
+    except Exception:
+        return not str(res or "").strip()          # 非 JSON：没内容就算失败
+    if not isinstance(j, dict):
+        return False
+    if (j.get("error") or "").strip():
+        return True
+    if j.get("items"):                             # 批量：只要有成功项就算成功
+        return not any((it.get("content") or "").strip() for it in j["items"] if isinstance(it, dict))
+    st = j.get("status")
+    body = (j.get("content") or "").strip()
+    if st not in (None, 200) and not (isinstance(st, int) and 200 <= st < 300):
+        return True
+    if len(body) < 40:
+        return True
+    low = body[:400].lower()
+    return any(k in low for k in ("just a moment", "cloudflare", "enable javascript",
+                                  "attention required", "access denied", "验证您是人类"))
+
+
 def _scrape_direct(user_input, tool_trace):
     """"抓一下 <url>" 这类明确指令的**直通**执行：真调抓取工具，把正文原样给用户。
 
@@ -2261,8 +2357,24 @@ def _scrape_direct(user_input, tool_trace):
     except Exception as e:
         LOG.debug("忽略异常(%s:%d): %s", __file__, 1538, e)
     _tn, _ta = _sc
-    _res = _tool_result_str(run_tool(_tn, _ta, force=True))
-    tool_trace = list(tool_trace or []) + [{"tool": _tn, "args": _ta, "result": _trace_summary(_res)}]
+    # 第 4 层：抓取类**自动升级** —— get 失败(被拦/403/空正文) → fetch → stealthy_fetch。
+    # 用户实测："抓 https://www.cloudflare.com" 被风控挡住时原来直接报错；
+    # 该升级就自动升级，而不是把失败原样丢回给用户。
+    _chain = [_tn] + [x for x in _tool_fallback_for(_tn) if x != _tn]
+    _res, _used, _tried = "", _tn, []
+    for _name in _chain:
+        try:
+            _res = _tool_result_str(run_tool(_name, _ta, force=True))
+        except Exception as e:
+            _res = json.dumps({"error": "%s: %s" % (type(e).__name__, str(e)[:80])}, ensure_ascii=False)
+        _tried.append(_name)
+        if not _scrape_failed(_res):
+            _used = _name
+            break
+        LOG.info("抓取 %s 没成功，自动升级到下一个候选（已试：%s）", _name, _tried)
+    tool_trace = list(tool_trace or []) + [{"tool": _used, "args": _ta,
+                                            "result": _trace_summary(_res),
+                                            "tried": _tried}]
     try:
         _jd = json.loads(_res)
         _err = (_jd.get("error") or "").strip()
@@ -2380,6 +2492,51 @@ def _asks_own_ip(text):
 # （_TOOL_RULES 已上移到提示词分层区，见文件顶部「系统提示词的分层」）
 
 
+# ================== 入口关键词路由（第 3 层） ==================
+# 为什么要有它：模型选工具不稳（调错/乱试/漏调）。这里在**进模型之前**先用规则锁定意图，
+# 命中就直连对应工具（抓取/IP/漏洞），或明确告诉模型该走哪条链（画图），没命中再走正常流程。
+_URL_LIKE_RE = re.compile(r"https?://[^\s，。；、）)\]\"']+|\b[a-z0-9][a-z0-9\-]{1,60}\.(?:com|cn|net|org|io|dev|gov|edu|ai|co|me|app)\b", re.I)
+_DIAGRAM_HINTS = ("架构图", "流程图", "时序图", "数据流图", "状态图", "生命周期图", "画一张图",
+                  "画个图", "画图", "diagram", "archify")
+
+
+def _looks_like_url(text):
+    """句子里有没有网址（带协议或裸域名）。"""
+    return bool(_URL_LIKE_RE.search(text or ""))
+
+
+def _asks_diagram(text):
+    """是不是画图任务（要锁到 archify 工具链，不许去联网搜）。"""
+    q = (text or "").lower()
+    return any(h.lower() in q for h in _DIAGRAM_HINTS)
+
+
+def _asks_net_ip(text):
+    """问本机公网 IP / 归属地（本机自身信息 → net_ip 直答）。"""
+    q = (text or "")
+    if not re.search(r"(?<![a-z])ip(?![a-z])|公网|归属地|外网地址", q, re.I):
+        return False
+    if re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", q):      # 给了具体 IP 是要查那个地址
+        return False
+    return bool(re.search(r"(我|我的|本机|自己|当前|这台|这电脑|你|多少|是什么|归属)", q))
+
+
+# 候选工具表：某个工具失败时该换谁（第 4 层"调错后换下一个候选"用）
+_TOOL_FALLBACK = {
+    "get": ["fetch", "stealthy_fetch"],
+    "make_request": ["fetch", "stealthy_fetch"],
+    "fetch": ["stealthy_fetch"],
+    "search_files": ["grep_files"],
+    "grep_files": ["search_files"],
+    "web_search": ["get"],
+    "archify_validate": ["archify_read_schema"],       # 校验不过 → 回去读 schema 再改
+}
+
+
+def _tool_fallback_for(name):
+    return _TOOL_FALLBACK.get(name, [])
+
+
 # ================== 智能体 ==================
 def agent_run(user_input, lean=False):
     """全部问题统一走这条流程：记忆 → 联网检索 → 大脑(小焦模型/外接LLM) → 记忆自学习。
@@ -2462,7 +2619,7 @@ def agent_run(user_input, lean=False):
     #      内容却是模板占位符（`IP 地址: [查询结果]`）；换个问法（"你现在可以显示IP了吗"）
     #      它甚至**编了一个 IP**（103.152.24.108）。"查出来的东西"最不该由模型转述。
     #      触发条件：提到 IP ＋ 指向自己/当前 ＋ **没给具体 IP**（给了具体 IP 是要查那个 IP，别抢）。
-    if answer is None and _asks_own_ip(user_input):
+    if answer is None and (_asks_own_ip(user_input) or _asks_net_ip(user_input)):
         try:
             _build_tools()
             _ipres = _asset_result_text(_tool_result_str(run_tool("net_ip", {}, force=True)))
@@ -2490,8 +2647,15 @@ def agent_run(user_input, lean=False):
     #    另有两道硬闸：用户说"别搜/停止搜索"，或点名了已加载的工具 → 一次搜索都不发。
     info = []
     _named = _named_tools(user_input)
+    # ③a 句子里直接甩了网址 → 锁定抓取类：规则直连 get（失败自动 fetch → stealthy_fetch）
+    if answer is None and CAP.get("run_tools", True) and _looks_like_url(user_input) \
+            and not _asks_diagram(user_input):
+        answer, tool_trace = _scrape_direct(user_input, tool_trace)
+    _is_diagram = _asks_diagram(user_input)
     if CAP.get("web_search", True) and answer is None:
-        if _search_forbidden(user_input):
+        if _is_diagram:
+            LOG.info("画图任务：跳过自动检索，直接走 archify 工具链")
+        elif _search_forbidden(user_input):
             LOG.info("用户明确要求别搜，跳过自动检索：%s", (user_input or "")[:40])
         elif _named:
             LOG.info("用户点名了工具 %s，跳过自动检索（直接走工具）", _named[:3])
@@ -2544,10 +2708,25 @@ def agent_run(user_input, lean=False):
         _skills = _recall_skills(user_input)      # 小脑从过去"实际使用"里学到的工具经验
         if _skills:
             context += "（小脑学到的工具用法，可参考）\n" + _skills + "\n\n"
-        messages.append({"role": "user", "content": (context + "用户：" + user_input) if context else user_input})
+        _u = user_input
+        if _asks_diagram(user_input):
+            _u = (user_input + "\n\n（这是画图任务：请严格按 Archify 工作流——archify_read_skill → "
+                  "archify_guide → archify_read_schema → archify_read_example → archify_validate → "
+                  "archify_deliver → archify_visual_check；不要联网搜索，不要用别的画图方式。）")
+        messages.append({"role": "user", "content": (context + "用户：" + _u) if context else _u})
         if CAP.get("run_tools", True):
-            answer, tool_trace = llm_chat_tools(messages, lean=lean,
-                                                max_rounds=_workflow_needs_more_rounds(user_input))
+            # 按意图收窄本轮可用工具（第 3/4 层）：画图只给 archify 链；提到网址只给抓取类。
+            _subset, _budget = None, 0
+            if _asks_diagram(user_input):
+                _subset = [n for n in real_tool_names() if n.lower().startswith("archify")]
+                _subset += ["read_file", "open_app", "list_files"]
+                _budget = 240
+            elif _looks_like_url(user_input):
+                _subset = ["get", "make_request", "fetch", "stealthy_fetch", "bulk_get",
+                           "bulk_fetch", "scrape_with_selector", "download", "screenshot"]
+            answer, tool_trace = llm_chat_tools(
+                messages, lean=lean, max_rounds=_workflow_needs_more_rounds(user_input),
+                tools_subset=_subset, budget_s=_budget)
         else:
             answer = llm_chat(messages)
 

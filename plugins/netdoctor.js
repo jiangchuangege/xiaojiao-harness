@@ -17,9 +17,9 @@ async function httpGet(url, timeoutMs) {
 module.exports = {
   getToolDescriptions() {
     return [
-      { name: 'net_ip', description: '查询本机公网IP，可选含归属地/ISP/时区等', parameters: { type: 'object', properties: { geo: { type: 'boolean', description: '是否附带归属地(默认true)' } } } },
-      { name: 'net_dns', description: 'DNS 解析域名（A 记录 + MX 邮件记录）', parameters: { type: 'object', properties: { host: { type: 'string', description: '域名，如 baidu.com' } }, required: ['host'] } },
-      { name: 'net_port', description: '检查某个主机/端口是否可达（TCP 连接测试）', parameters: { type: 'object', properties: { host: { type: 'string', description: '主机，如 1.1.1.1' }, port: { type: 'number', description: '端口' } }, required: ['host', 'port'] } }
+      { name: 'net_ip', description: '查本机公网 IP(可带归属地/ISP/时区)。什么时候用：用户问「我的 IP/公网 IP/我在哪」；输入 geo(true 带归属地)；输出 IP+归属地一行。查具体某个 IP 用 get_ip_info', parameters: { type: 'object', properties: { geo: { type: 'boolean', description: '是否附带归属地(默认true)' } } } },
+      { name: 'net_dns', description: '解析域名的 DNS 记录。什么时候用：要知道某域名指向哪个 IP/有没有邮件记录；输入 domain；输出 A 记录 + MX 记录', parameters: { type: 'object', properties: { host: { type: 'string', description: '域名，如 baidu.com' } }, required: ['host'] } },
+      { name: 'net_port', description: '测主机/端口通不通(TCP)。什么时候用：排查「服务起没起/端口开没开」；输入 host(+port)；输出 可达性与耗时', parameters: { type: 'object', properties: { host: { type: 'string', description: '主机，如 1.1.1.1' }, port: { type: 'number', description: '端口' } }, required: ['host', 'port'] } }
     ];
   },
   async execute(name, params) {

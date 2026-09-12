@@ -11,7 +11,7 @@ class SearchPlugin:
     
     def get_tool_descriptions(self):
         return [
-            {"name": "web_search", "description": "在百度搜索信息", "parameters": {"query": "搜索关键词"}}
+            {"name": "web_search", "description": "上网搜资料(百度)。什么时候用：要查新闻/百科/天气/任何外部**信息**；输入 query(只写内容关键词，别把「帮我搜」这类功能字放进去)；输出 搜索结果列表", "parameters": {"query": "搜索关键词"}}
         ]
     
     def execute(self, tool_name, params):

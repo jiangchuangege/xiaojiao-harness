@@ -3,7 +3,7 @@ module.exports = {
   getToolDescriptions() {
     return [{
       name: "js_calc",
-      description: "用 JS 计算数学表达式（如 (3+4)*2），只能在纯数字/运算符的表达式上使用",
+      description: "算数学表达式(如 (3+4)*2)。什么时候用：用户要算数且不需要解释过程；输入纯数字/运算符表达式；输出 计算结果",
       parameters: { type: "object", properties: { expr: { type: "string", description: "数学表达式，如 (3+4)*2" } }, required: ["expr"] }
     }];
   },

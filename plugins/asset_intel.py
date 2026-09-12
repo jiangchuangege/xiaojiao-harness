@@ -91,14 +91,14 @@ class AssetIntelPlugin:
         return [
             {
                 "name": "asset_intel_lookup",
-                "description": "给 IP 查它命中的漏洞（免费，无需 Key）。参数: ips=IP 或用逗号/空格分隔的多个 IP",
+                "description": "给 IP 查它命中了哪些漏洞(免费，无需 Key)。什么时候用：用户给了具体 IP 想知道有没有已知漏洞；输入 ips(一个或多个公网 IP，逗号/空格分隔)；输出 IP→命中 CVE 表格(含端口/主机名)",
                 "parameters": {"type": "object",
                                "properties": {"ips": {"type": "string", "description": "一个或多个公网 IP，逗号/空格分隔"}},
                                "required": ["ips"]},
             },
             {
                 "name": "asset_intel_search",
-                "description": "按 CVE 或关键词反查受影响 IP（需 Shodan/ZoomEye/Fofa 的 Key）。参数: query, limit",
+                "description": "反过来查：某个 CVE/产品在**全网有哪些 IP** 受影响(需数据源 Key)。什么时候用：用户要「含这些漏洞的 IP」；输入 query(如 vuln:CVE-2024-1234)、limit；输出 IP 列表(未配 Key 时给配置指引)",
                 "parameters": {"type": "object",
                                "properties": {"query": {"type": "string", "description": "如 vuln:CVE-2024-1234 或 apache 2.4.49"},
                                               "limit": {"type": "integer", "description": "返回条数，默认 10"}},
@@ -106,7 +106,7 @@ class AssetIntelPlugin:
             },
             {
                 "name": "asset_intel_status",
-                "description": "资产测绘数据源接入状态：哪些可用、还差什么 Key、去哪拿",
+                "description": "看资产测绘数据源能不能用。什么时候用：反查失败或用户问「能查 IP 吗」；无参数；输出 各数据源状态 + 还缺哪个 Key + 去哪拿",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         ]
