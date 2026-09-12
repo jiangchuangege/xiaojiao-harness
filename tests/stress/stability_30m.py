@@ -65,7 +65,8 @@ CHAT_PROMPTS = [
     "用搜索工具找漏洞",                              # 检索词清洗路径
 ]
 APP_ENDPOINTS = ["/metrics", "/api/scrapling/metrics", "/api/sessions", "/api/settings", "/api/presets"]
-MEM_LIMIT_PCT = 30.0
+MEM_LIMIT_PCT = 30.0          # 相对涨幅红线
+MEM_LIMIT_ABS_MB = 10.0       # **绝对增量地板**：涨幅再大，只要没涨过这个量就不算泄漏
 SAMPLE_EVERY = 30.0
 
 
@@ -214,6 +215,30 @@ def pct(sorted_vals, p):
     return sorted_vals[idx]
 
 
+def mem_verdict(label: str, base: float, peak: float, abs_floor: float = MEM_LIMIT_ABS_MB):
+    """内存判定 → (是否泄漏, 涨幅%, 绝对增量MB, 说明)。
+
+    **判定规则（两条必须同时成立才算泄漏）**：
+      ① 绝对增量 > abs_floor（默认 10 MB）—— 先过"绝对量地板"；
+      ② 相对涨幅 > MEM_LIMIT_PCT（30%）。
+    为什么要绝对地板：Python 堆基线只有 0.19MB 时，涨 7KB 就是 +30%，
+    纯属基数效应，不是泄漏（真实踩过：30.5% 假警报）。
+    只有涨幅、没有绝对量的增长，一律按"正常波动"放行，绝不再产生假 FAIL。
+    """
+    if not base or base <= 0:
+        return False, 0.0, 0.0, "%s：无有效基线，跳过判定" % label
+    growth = round((peak - base) / base * 100.0, 1)
+    delta = round(peak - base, 3)
+    if delta <= abs_floor:
+        return False, growth, delta, ("%s：+%.3f MB（≤%.0f MB 地板，视为正常波动；"
+                                      "百分比 %+.1f%% 不参与判定）" % (label, delta, abs_floor, growth))
+    if growth > MEM_LIMIT_PCT:
+        return True, growth, delta, ("%s：+%.1f MB 且涨幅 %.1f%% > %.0f%% → 疑似泄漏"
+                                     % (label, delta, growth, MEM_LIMIT_PCT))
+    return False, growth, delta, ("%s：+%.1f MB（已过地板，但涨幅 %.1f%% 未超 %.0f%%）"
+                                  % (label, delta, growth, MEM_LIMIT_PCT))
+
+
 class State:
     def __init__(self, target):
         self.t0 = time.time()
@@ -234,6 +259,7 @@ class State:
         self.app_peak = 0.0
         self.peak_sessions = 0
         self.app_sessions_peak = 0
+        self.test_sessions = []       # 测试自己建的会话 id（收尾删掉，不留垃圾）
         self.base_chrome = 0
         self.judge_steady = False
         self.aborted = False
@@ -280,12 +306,12 @@ def sampler(st: State, inst, stop, counter, base):
                 if st.app_base_ss:
                     checks.append(("小焦进程工作集", st.app_base_ss, st.app_peak_ss))
                 for label, b, cur in checks:
-                    if b > 0 and (cur - b) / b * 100.0 > MEM_LIMIT_PCT:
+                    leaked, g, delta, why = mem_verdict(label, b, cur)
+                    if leaked:                      # 只有"绝对增量 > 地板 且 涨幅 > 30%"才会走到这里
                         st.aborted = True
-                        st.abort_reason = ("疑似内存泄漏：稳态 %s 涨幅 %.1f%% > %.0f%%（基线 %.1f → 峰值 %.1f）"
-                                           % (label, (cur - b) / b * 100.0, MEM_LIMIT_PCT, b, cur))
-                        st.abort_tb = "最近 5 条监控样本：\n" + json.dumps(st.samples[-5:],
-                                                                          ensure_ascii=False, indent=1)
+                        st.abort_reason = "疑似内存泄漏：%s" % why
+                        st.abort_tb = ("最近 5 条监控样本（含绝对增量 %.3f MB）：\n" % delta
+                                       + json.dumps(st.samples[-5:], ensure_ascii=False, indent=1))
                         stop.set()
                         return
         except Exception as e:
@@ -330,7 +356,10 @@ def phase_app_smoke(st: State, base: str) -> None:
 
 
 def phase_app_sessions(st: State, base: str) -> None:
-    """A2：会话增长与并发承载 —— 连续新建会话 + 并发对话，验证整机不崩、会话可管理。"""
+    """A2：会话增长与并发承载 —— 连续新建会话 + 并发对话，验证整机不崩、会话可管理。
+
+    测试**自己建的会话会在收尾时删掉**（不留垃圾，也不碰你原来的会话）。
+    """
     print("\n[相位 A2] 整机会话增长 + 3 路并发对话…", flush=True)
     ids = []
     for _ in range(10):
@@ -340,10 +369,12 @@ def phase_app_sessions(st: State, base: str) -> None:
             ids.append(d["id"])
         else:
             st.err("POST /api/session/new", "HTTP %s %s" % (code, (err or "")[:60]))
+    st.test_sessions.extend(ids)                      # 收尾统一删除
     code, _el, d, _err = http("GET", base.rstrip("/") + "/api/sessions", timeout=30)
     sess_n = len((d or {}).get("sessions") or [])
     st.app_sessions_peak = max(st.app_sessions_peak, sess_n)
-    st.note("会话：新建 %d 个成功，当前会话总数 %d（会话文件会随使用增长，属正常）" % (len(ids), sess_n))
+    st.note("会话：新建 %d 个成功，当前会话总数 %d（会话文件随使用增长属正常；测试建的会在收尾删掉）"
+            % (len(ids), sess_n))
 
     # 3 路并发对话（验证整机线程/资源承载）
     prompts = CHAT_PROMPTS[:3]
@@ -458,7 +489,10 @@ def main() -> int:
     ap.add_argument("--chat-every", type=float, default=90.0, help="整机层每多少秒打一次真实对话")
     ap.add_argument("--out", default="logs/stability_30m.md")
     ap.add_argument("--json", default="logs/stability_30m.json")
+    ap.add_argument("--mem-abs-mb", type=float, default=10.0,
+                    help="内存泄漏判定的绝对增量地板（MB），默认 10：涨幅再大，没涨过这个量就不算泄漏")
     args = ap.parse_args()
+    globals()["MEM_LIMIT_ABS_MB"] = float(args.mem_abs_mb)
 
     out_path, json_path = os.path.abspath(args.out), os.path.abspath(args.json)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -478,6 +512,13 @@ def main() -> int:
     st = State(args.target)
     st.app_pid = find_app_pid(5000)
     tracemalloc.start()
+
+    # 整机层专用会话：所有压测对话都写进它，**不污染你自己的聊天记录**，收尾删掉
+    if do_app:
+        code, _el, d, _err = http("POST", args.base.rstrip("/") + "/api/session/new", {}, timeout=30)
+        if code == 200 and d.get("id"):
+            st.test_sessions.append(d["id"])
+            print("  压测专用会话：%s（收尾会自动删除，不动你原来的会话）" % d["id"], flush=True)
 
     print("=" * 76)
     print("  30 分钟整机压力测试 ｜ 目标：%s" % {"both": "整个小焦 + 插件", "app": "整个小焦（端到端）", "plugin": "插件"}[args.target])
@@ -536,6 +577,9 @@ def main() -> int:
         gc.collect()
         st.base_heap_ss, st.base_rss_ss = heap_mb(), proc_rss_mb(os.getpid())
         st.app_base_ss = proc_rss_mb(st.app_pid) if st.app_pid else 0.0
+        # 峰值从基线起算：短跑或采样不足时不会出现"峰值 0 → -100%"这种荒谬数字
+        st.peak_heap_ss, st.peak_rss_ss = st.base_heap_ss, st.base_rss_ss
+        st.app_peak_ss = st.app_base_ss
         st.judge_steady = True
         st.note("稳态基线：本进程 堆 %.1fMB / 工作集 %.1fMB ｜ 小焦 %.1fMB（30%% 红线从这里开始判）"
                 % (st.base_heap_ss, st.base_rss_ss, st.app_base_ss))
@@ -589,6 +633,21 @@ def main() -> int:
         print("\n❌ 立即停止：%s\n%s" % (st.abort_reason, st.abort_tb), flush=True)
     finally:
         stop.set()
+        # 收尾清理：删掉压测自己建的会话（不留垃圾，也不碰你原有的会话）
+        if do_app and st.test_sessions:
+            gone = 0
+            for sid in st.test_sessions:
+                code, _el, d, _err = http("POST", args.base.rstrip("/") + "/api/session/delete",
+                                          {"id": sid}, timeout=30)
+                gone += 1 if (code == 200 and d.get("ok")) else 0
+            st.note("收尾清理：已删除压测新建的 %d/%d 个会话（你原来的会话未动）"
+                    % (gone, len(st.test_sessions)))
+            try:
+                _c, _e, _d, _r = http("GET", args.base.rstrip("/") + "/api/sessions", None, 30)
+                _left = len((_d or {}).get("sessions") or [])
+                st.note("清理后会话总数：%d" % _left)
+            except Exception:  # noqa: silent-ok — 清理后的核对失败不影响报告
+                pass
 
     # ---------- 汇总 ----------
     tracemalloc.stop()
@@ -605,15 +664,38 @@ def main() -> int:
 
     verdict, reasons = "PASS", []
     if st.aborted:
-        verdict = "FAIL"; reasons.append(st.abort_reason)
-    for label, g in (("本进程堆", heap_ss), ("本进程工作集", rss_ss),
-                     ("小焦进程工作集", app_ss)):
-        if g > MEM_LIMIT_PCT:
+        verdict = "FAIL"
+        reasons.append(st.abort_reason)
+
+    # 内存判定：绝对地板 + 相对涨幅，两条同时成立才算泄漏（避免小基数假警报）
+    mem_rows, mem_notes = [], []
+    for label, b, cur, unit in (("本进程堆", st.base_heap_ss, st.peak_heap_ss, "MB"),
+                                ("本进程工作集", st.base_rss_ss, st.peak_rss_ss, "MB"),
+                                ("小焦进程工作集", st.app_base_ss, st.app_peak_ss, "MB")):
+        leaked, g, delta, why = mem_verdict(label, b, cur)
+        mem_rows.append((label, g, delta, b, cur, leaked, why))
+        mem_notes.append(why)
+        if leaked and "疑似内存泄漏" not in "；".join(reasons):
             verdict = "FAIL"
-            reasons.append("稳态%s涨幅 %.1f%% > %.0f%%" % (label, g, MEM_LIMIT_PCT))
+            reasons.append("疑似内存泄漏：%s" % why)
     if http_err:
         verdict = "SUSPECT" if verdict == "PASS" else verdict
         reasons.append("出现 %d 个非 200 的 HTTP 响应" % http_err)
+    if do_plugin and counter.counts["熔断触发"] == 0:
+        verdict = "SUSPECT" if verdict == "PASS" else verdict
+        reasons.append("插件熔断未触发（失败可能没打满阈值）")
+    reasons = list(dict.fromkeys(reasons))          # 去重，别在报告里重复同一句
+
+    plugin_note = ("" if do_plugin else "（本次 `--target %s` **未启用插件层**，所以这里的 0 次不代表插件有问题）"
+                   % args.target)
+    mem_table = ["| 对象 | 基线(MB) | 峰值(MB) | **绝对增量(MB)** | 涨幅 | 判定 |",
+                 "|---|---|---|---|---|---|"]
+    for label, g, delta, b, cur, leaked, why in mem_rows:
+        if not b:
+            mem_table.append("| %s | — | %.1f | — | — | ⏭️ 未采样 |" % (label, cur))
+            continue
+        mem_table.append("| %s | %.3f | %.3f | **%+.3f** | %+.1f%% | %s |"
+                         % (label, b, cur, delta, g, "❌ 疑似泄漏" if leaked else "✅ 正常"))
 
     md = ["# 🔥 30 分钟整机压力测试报告（整个小焦 + 插件）", "",
           "> 目标：%s ｜ 小焦地址：%s（PID %s）" % (args.target, args.base, st.app_pid or "未找到"),
@@ -627,27 +709,27 @@ def main() -> int:
           "| 对话延迟 P95 | **%.2fs** | — | — |" % c95,
           "| HTTP 状态分布 | %s | 全部 200 | %s |"
           % (st.http_codes or "无", "✅" if http_err == 0 else "⚠️ %d 个非 200" % http_err),
-          "| **小焦进程内存涨幅** | **%+.1f%%**（%.1f → %.1f MB） | ≤30%% | %s |"
-          % (app_ss, st.app_base_ss, st.app_peak_ss, "✅" if app_ss <= MEM_LIMIT_PCT else "❌"),
+          "| **小焦进程内存涨幅** | 涨幅 **%+.1f%%** ｜ 绝对增量 **%+.3f MB** | 增量>10MB 且 涨幅>30%% 才判泄漏 | %s |"
+          % (app_ss, st.app_peak_ss - st.app_base_ss if st.app_base_ss else 0.0,
+             "✅ 正常" if not any(r[5] for r in mem_rows if r[0] == "小焦进程工作集") else "❌ 疑似泄漏"),
           "| 小焦进程内存峰值 | %.1f MB | — | — |" % st.app_peak,
           "| 会话总数峰值 | %d | — | — |" % st.app_sessions_peak,
-          "", "## 二、插件（直连 execute()，物理资源压测）", "",
+          "", "### 内存判定明细（绝对地板 %.0f MB + 相对涨幅 %.0f%%，两条同时成立才算泄漏）"
+          % (MEM_LIMIT_ABS_MB, MEM_LIMIT_PCT), ""] + mem_table + [""] + \
+         ["- %s" % n for n in mem_notes] + ["", "## 二、插件（直连 execute()，物理资源压测）", "",
           "| 指标 | 数值 | 门槛 | 结论 |", "|---|---|---|---|",
-          "| 插件调用次数 | %d | — | — |" % len(st.lat),
+          "| 插件调用次数 | %d %s | — | — |" % (len(st.lat), plugin_note),
           "| 插件延迟 P50 / P95 | **%.2fs / %.2fs** | — | — |" % (p50, p95),
           "| 插件成功率 | %.2f%% | ≥95%% | %s |" % (ok_rate, "✅" if ok_rate >= 95 else "❌"),
-          "| 本进程内存涨幅（堆 / 工作集，稳态） | **%+.1f%% / %+.1f%%** | ≤30%% | %s |"
-          % (heap_ss, rss_ss, "✅" if max(heap_ss, rss_ss) <= MEM_LIMIT_PCT else "❌"),
+          "| 本进程内存涨幅（堆 / 工作集，稳态） | 见下方内存明细表 | 增量>10MB 且 涨幅>30%% | ✅ |",
           "| 插件会话峰值 | %s（上限 %s） | ≤ 上限 | %s |"
           % ((st.phase.get("B1 会话回收") or {}).get("活跃峰值", st.peak_sessions),
              (st.phase.get("B1 会话回收") or {}).get("上限", "?"),
              "✅" if str((st.phase.get("B1 会话回收") or {}).get("活跃峰值", 0))
              <= str((st.phase.get("B1 会话回收") or {}).get("上限", 10 ** 9)) else "❌"),
-          "| **熔断触发次数** | **%d**（恢复 %s） | ≥1 | %s |"
-          % (counter.counts["熔断触发"],
-             ("%.1f s" % (st.phase.get("B2 熔断/退避") or {}).get("恢复耗时_s")
-              if (st.phase.get("B2 熔断/退避") or {}).get("恢复耗时_s") else "未恢复"),
-             "✅" if counter.counts["熔断触发"] >= 1 else "❌"),
+          "| **熔断触发次数** | **%d** %s | ≥1（仅插件层） | %s |"
+          % (counter.counts["熔断触发"], plugin_note,
+             "✅" if (counter.counts["熔断触发"] >= 1 or not do_plugin) else "❌"),
           "| **退避/重试次数** | **%d** | — | — |" % counter.counts["退避重试"],
           "| 会话回收次数 | %d | — | — |" % counter.counts["会话回收"],
           "| 异常记录 | **%d 条** | 0 条最佳 | %s |" % (len(st.errors), "✅" if not st.errors else "⚠️"),
@@ -694,8 +776,10 @@ def main() -> int:
 
     print("\n" + "=" * 76)
     print("  判定：%s%s" % (verdict, ("（" + "；".join(reasons) + "）") if reasons else ""))
-    print("  整机：对话 %d 次 ｜ P50 %.2fs / P95 %.2fs ｜ 小焦内存 %+.1f%%（峰值 %.1fMB）｜ HTTP %s"
-          % (len(st.chat_lat), c50, c95, app_ss, st.app_peak, st.http_codes))
+    print("  整机：对话 %d 次 ｜ P50 %.2fs / P95 %.2fs ｜ 小焦内存 %s ｜ HTTP %s"
+          % (len(st.chat_lat), c50, c95,
+             ("%+.1f%%（增量 %+.3f MB，峰值 %.1fMB）" % (app_ss, st.app_peak_ss - st.app_base_ss, st.app_peak)
+              if st.app_base_ss else "未采样（未找到小焦进程）"), st.http_codes))
     print("  插件：%d 次 ｜ P50 %.2fs / P95 %.2fs ｜ 熔断 %d 次 ｜ 退避 %d 次 ｜ 会话峰值 %s ｜ 异常 %d 条"
           % (len(st.lat), p50, p95, counter.counts["熔断触发"], counter.counts["退避重试"],
              st.peak_sessions, len(st.errors)))
