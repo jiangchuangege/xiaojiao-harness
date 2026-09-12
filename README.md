@@ -254,6 +254,52 @@ flowchart LR
 ---
 
 
+## 🎨 启用 Archify 画图功能
+
+小焦内置了 **Archify 画图插件**（`plugins/archify.py`，15 个工具）：说一句
+「**画一张小焦架构图**」，它会走完整工作流（读技能 → 取指南 → 读 schema → 读示例 → 校验 →
+交付 → 视觉核对），产出可交互的 HTML 架构图/流程图/时序图/数据流图/状态图。
+
+### 1) 安装 Archify
+
+```powershell
+npm install -g @tt-a1i/archify-dsh
+```
+
+### 2) 小焦会自动找到它
+
+插件启动时会按顺序自动检测常见安装位置，**一般不用手填**：
+
+1. `~/.dsh/profiles/web/node_modules/@tt-a1i/archify-dsh/skills/archify`
+2. `~/.dsh/profiles/default/node_modules/@tt-a1i/archify-dsh/skills/archify`
+3. `~/AppData/Roaming/npm/node_modules/@tt-a1i/archify-dsh/skills/archify`（Windows npm 全局）
+4. `./vendor/archify`（自备/离线包）
+5. 环境变量 `ARCHIFY_ROOT`
+
+> 判定标准：该目录下存在 `bin/archify.mjs`。命中的位置会写进日志
+> （`logs/xiaojiao.log`：`Archify 安装位置：…（来源：自动检测）`）。
+
+### 3) 自动检测失败时才手填
+
+在 `xiaojiao_control.json` 里加一段（`xiaojiao_control.json.example` 里已有这个字段）：
+
+```json
+"scrapling": {
+  "archify_root": "C:\\Users\\你的用户名\\.dsh\\profiles\\web\\node_modules\\@tt-a1i\\archify-dsh\\skills\\archify"
+}
+```
+
+优先级：**配置 `scrapling.archify_root` → 环境变量 `ARCHIFY_ROOT` → 自动检测**。
+填错了也没关系：插件会打印可读提示（要装什么、该填哪），其余功能照常工作，不会静默失效。
+
+### 4) 重启小焦即可用
+
+重启后对小焦说「**画一张小焦架构图**」（或让它先跑 `archify_doctor` 体检环境）。
+产物在 `logs/diagrams/*.html`，可以直接用浏览器打开，支持主题切换/缩放/搜索。
+
+> 提示：画图是**多步工作流**，同一工具连续失败 2 次会停下并把报错原文给你（不再空转）；
+> 单个画图任务还有 240 秒时间预算，超时会如实汇报进度。
+
 ## 🧩 玩法（给它加能力）
 
 

@@ -26,6 +26,7 @@
 
   "scrapling": {
     "_说明": "网页抓取插件（plugins/scrapling_bridge.py）：想抓啥抓啥",
+    "archify_root": "",                              "//archify_root": "Archify 画图插件的安装根目录。**留空即可**——插件会自动扫描常见位置（~/.dsh/profiles/*/node_modules/@tt-a1i/archify-dsh/skills/archify、npm 全局、./vendor/archify）。自动检测失败时才填，格式示例：C:\\Users\\你的用户名\\.dsh\\profiles\\web\\node_modules\\@tt-a1i\\archify-dsh\\skills\\archify",
     "mode": "auto",                                  "//mode": "auto=进程内优先(最稳) | mcp=强制走 MCP | inproc",
     "scrapling_mcp_url": "",                         "//scrapling_mcp_url": "仅 mcp+http 模式需要，如 http://127.0.0.1:8000/mcp",
     "executable_path": "",                           "//executable_path": "自备 Chrome 路径；留空=自动探测/用内置 Chromium",
