@@ -76,3 +76,13 @@ python -c "import xiaojiao_app as x; print(list(x.PLUGINS.keys()))"
 - 想联网/访问文件，直接用 `requests` / `os` / `datetime` 等标准库。
 
 > 危险：插件 `execute` 能做的事就是你的代码能做的事。写安全、自己可信的插件。
+
+## 七、现成的完整例子
+
+| 插件 | 干什么 | 值得抄的地方 |
+| --- | --- | --- |
+| `plugins/scrapling_bridge.py` | 抓网页/会话/截图/漏洞表（18 个工具） | 多工具分发、SSRF 闸门、会话回收、指标 |
+| `plugins/asset_intel.py` | **资产测绘：IP ↔ CVE 对应表** | 免费源+付费源混用、**未配 Key 时给可操作说明**、只查公网 IP、异常一律转中文 |
+| `plugins/code_intelligence.py` | 项目结构/依赖/代码统计 | 大结果截断（别把几万字塞给模型） |
+
+`asset_intel` 的接入说明见 [`docs/asset-intel.md`](asset-intel.md)（含各家 Key 怎么拿、填哪里、怎么验证）。

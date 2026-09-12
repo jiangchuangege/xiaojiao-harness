@@ -1000,6 +1000,60 @@ def append_msg(role, content):
 # 也照样这么糊过去，查都没法查。现在真实状态码 + 服务端原话一定带出来。
 _LAST_LLM_ERROR = ""
 _LLM_ERR_LOGGED = set()
+# 本次请求是不是"云端授权失败、自动改用本地大脑"答的（回答里会如实说明）
+_USED_LOCAL_FALLBACK = {"on": False, "model": ""}
+_LOCAL_PROBE = {"at": 0.0, "model": ""}
+
+
+def _local_brain_model(force=False):
+    """本机 llama-swap 上真正可用的模型 id（探到缓存 60 秒；探不到返回空串）。
+
+    为什么要它：云端 API Key 一旦失效（401/403），小焦原来只会反复回一句"模型调用出错"，
+    用户完全没法用。而**本地大脑就在本机**（llama-swap 9292），完全能顶上 —— 所以云端
+    授权失败时自动兜到本地，并在回答里如实说明，而不是把用户卡死在一句模板上。
+    """
+    global _LOCAL_PROBE
+    if not force and _LOCAL_PROBE["model"] and (time.time() - _LOCAL_PROBE["at"]) < 60:
+        return _LOCAL_PROBE["model"]
+    port = int((CONTROL.get("brain", {}) or {}).get("llama_swap_port", 9292) or 9292)
+    base = "http://127.0.0.1:%d/v1" % port
+    try:
+        r = requests.get(base + "/models", timeout=3)
+        if r.status_code == 200:
+            ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
+            # llama-swap 里 coder 是写代码用的，聊天优先用它之外的模型
+            pick = next((i for i in ids if "coder" not in str(i).lower()), (ids[0] if ids else ""))
+            _LOCAL_PROBE = {"at": time.time(), "model": pick, "base": base}
+            return pick
+    except Exception as e:  # noqa: silent-ok — 本地没起来就正常走云端，不要因此报错
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 1030, e)
+    _LOCAL_PROBE = {"at": time.time(), "model": ""}
+    return ""
+
+
+def _llm_targets():
+    """本次请求可以试的大脑目标（首选配置 + 云端授权失败时的本地兜底）。"""
+    primary = {"url": (LLM_BASE or "").rstrip("/") + "/chat/completions",
+               "key": LLM_KEY, "model": LLM_MODEL, "local": _is_local_base(LLM_BASE)}
+    out = [primary]
+    if not primary["local"]:
+        _lm = _local_brain_model()
+        if _lm:
+            out.append({"url": _LOCAL_PROBE.get("base", "http://127.0.0.1:9292/v1") + "/chat/completions",
+                        "key": "", "model": _lm, "local": True})
+    return out
+
+
+def _llm_headers(t):
+    h = {"Content-Type": "application/json"}
+    if t.get("key"):
+        h["Authorization"] = "Bearer " + t["key"]
+    return h
+
+
+def _fallback_worthy(status):
+    """这些失败值得换本地大脑再试（授权/路由/限流/网络），而不是直接放弃。"""
+    return status in (400, 401, 402, 403, 404, 429, 500, 502, 503)
 
 
 def _scrub_secret(s):
@@ -1060,21 +1114,33 @@ def llm_error_suffix():
     return "\n\n🔎 真实原因：%s%s" % (_LAST_LLM_ERROR, tip)
 
 
+def llm_fallback_note():
+    """云端挂了、这次是本地大脑顶上时，回答末尾如实标注一句（别让用户以为是云端答的）。"""
+    if not _USED_LOCAL_FALLBACK["on"]:
+        return ""
+    return ("\n\n---\n\nℹ️ 本次回答由**本地大脑**（%s）完成：你选的云端大脑调用失败（%s）。"
+            "要恢复云端：设置 → 大脑 里更新 API Key。" % (_USED_LOCAL_FALLBACK["model"], _LAST_LLM_ERROR))
+
+
 def llm_chat(messages):
-    """调用 OpenAI 兼容 /chat/completions。失败返回 None（原因记进 _LAST_LLM_ERROR）。"""
-    url = LLM_BASE.rstrip("/") + "/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if LLM_KEY:
-        headers["Authorization"] = "Bearer " + LLM_KEY
-    payload = {"model": LLM_MODEL, "messages": messages, "temperature": TEMPERATURE,
-               "max_tokens": MAX_TOKENS}
-    try:
-        r = requests.post(url, headers=headers, json=payload, timeout=90)
-        if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"].strip()
-        _note_llm_error("chat", r.status_code, r.text)
-    except Exception as e:
-        _note_llm_error("chat", None, "%s: %s" % (type(e).__name__, e))
+    """调用 OpenAI 兼容 /chat/completions（云端授权失败会自动兜到本地大脑）。
+
+    失败返回 None（真实原因记进 _LAST_LLM_ERROR）。
+    """
+    payload = {"messages": messages, "temperature": TEMPERATURE, "max_tokens": MAX_TOKENS}
+    for _t in _llm_targets():
+        _p = dict(payload, model=_t["model"])
+        try:
+            r = requests.post(_t["url"], headers=_llm_headers(_t), json=_p, timeout=90)
+            if r.status_code == 200:
+                if _t["local"] and not _is_local_base(LLM_BASE):
+                    _USED_LOCAL_FALLBACK.update({"on": True, "model": _t["model"]})
+                return r.json()["choices"][0]["message"]["content"].strip()
+            _note_llm_error("chat", r.status_code, r.text)
+            if not _fallback_worthy(r.status_code):
+                break
+        except Exception as e:
+            _note_llm_error("chat", None, "%s: %s" % (type(e).__name__, e))
     return None
 
 
@@ -1404,11 +1470,10 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
     """带 function calling 的大脑调用：模型自己“想”并调用工具（优先），循环直到给出最终回答。
 
     返回 (answer, tool_trace)。兼容 OpenAI tool_calls 与 Qwen <tool_call> XML。
+
+    云端大脑授权失败（401/403/404/429…）时自动兜到**本地大脑**再试一次 —— 免得用户被
+    "一句固定的模型调用出错"卡死（真实事故：Agnes Key 失效后整机等于残废）。
     """
-    url = LLM_BASE.rstrip("/") + "/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if LLM_KEY:
-        headers["Authorization"] = "Bearer " + LLM_KEY
     # 内存守卫: 生成前卸载另一个 llama 模型——8G 上保证单个 llama 占满显存(防龟速/OOM)
     try:
         if LLM_MODEL in ("coder", "xiaojiao"):
@@ -1419,27 +1484,42 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
         LOG.debug("忽略异常(%s:%d): %s", __file__, 938, e)
     m = list(messages)
     tool_trace = []
+    _targets = _llm_targets()
+    _ti = 0                                          # 当前在用哪个大脑目标
     for _ in range(max_rounds):
-        payload = {"model": LLM_MODEL, "messages": m, "temperature": TEMPERATURE,
+        _t = _targets[_ti]
+        payload = {"model": _t["model"], "messages": m, "temperature": TEMPERATURE,
                    "max_tokens": (200 if lean else MAX_TOKENS),
                    "tools": ([] if lean else _build_tools())}
         try:
-            r = requests.post(url, headers=headers, json=payload, timeout=120)
+            r = requests.post(_t["url"], headers=_llm_headers(_t), json=payload, timeout=120)
             if r.status_code != 200:
                 # 限流/临时错误 -> 等2s重试一次
-                import time as _t
-                _t.sleep(2)
-                r = requests.post(url, headers=headers, json=payload, timeout=120)
+                import time as _t2
+                _t2.sleep(2)
+                r = requests.post(_t["url"], headers=_llm_headers(_t), json=payload, timeout=120)
                 if r.status_code != 200:
                     _note_llm_error("chat+tools", r.status_code, r.text)   # 真实原因必须留痕
+                    if _fallback_worthy(r.status_code) and _ti + 1 < len(_targets):
+                        _ti += 1                 # 换成下一个目标（通常是本地大脑）再试
+                        _targets[_ti]["local"] = True
+                        LOG.warning("云端大脑不可用，自动改用本地大脑（%s）继续回答",
+                                    _targets[_ti]["model"])
+                        continue
                     return None, tool_trace
+            if _t.get("local") and not _is_local_base(LLM_BASE):
+                _USED_LOCAL_FALLBACK.update({"on": True, "model": _t["model"]})
             msg = r.json()["choices"][0]["message"]
             try:
-                _record_usage(r.json().get("usage"), LLM_MODEL)
+                _record_usage(r.json().get("usage"), _t["model"])
             except Exception as e:
                 LOG.debug("忽略异常(%s:%d): %s", __file__, 958, e)
         except Exception as e:
             _note_llm_error("chat+tools", None, "%s: %s" % (type(e).__name__, e))
+            if _ti + 1 < len(_targets):
+                _ti += 1
+                LOG.warning("云端大脑连不上，自动改用本地大脑（%s）继续回答", _targets[_ti]["model"])
+                continue
             return None, tool_trace
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
@@ -1520,18 +1600,16 @@ def detect_tool_intent(q):
 
 
 def _llm_ask_raw(prompt):
-    url = LLM_BASE.rstrip("/") + "/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if LLM_KEY:
-        headers["Authorization"] = "Bearer " + LLM_KEY
-    try:
-        r = requests.post(url, headers=headers,
-                          json={"model": LLM_MODEL, "messages": [{"role": "user", "content": prompt}],
-                                "temperature": 0.2, "max_tokens": MAX_TOKENS}, timeout=90)
-        if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        LOG.debug("忽略异常(%s:%d): %s", __file__, 1051, e)
+    """一次性小提问（给工具结果写总结用）；同样享受云→本地兜底。"""
+    for _t in _llm_targets():
+        try:
+            r = requests.post(_t["url"], headers=_llm_headers(_t),
+                              json={"model": _t["model"], "messages": [{"role": "user", "content": prompt}],
+                                    "temperature": 0.2, "max_tokens": MAX_TOKENS}, timeout=90)
+            if r.status_code == 200:
+                return r.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1051, e)
     return ""
 
 
@@ -1784,7 +1862,50 @@ def _asks_asset_list(text):
         return True
     if re.search(r"ip\s*地址", ql):
         return True
+    if re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", ql):   # 直接甩了几个 IP 过来，也算资产诉求
+        return True
     return any(k in ql for k in ("主机", "资产", "受影响的机器", "哪些机器", "哪些服务器", "网段"))
+
+
+def _asset_result_text(res):
+    """把资产插件返回的 JSON 取成正文（失败就给一句中文说明）。"""
+    try:
+        _j = json.loads(res)
+        if isinstance(_j, dict):
+            return str(_j.get("content") or _j.get("error") or "").strip()
+    except Exception as e:
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 1521, e)
+    return str(res or "").strip()
+
+
+def _asset_answer(user_input, vuln_table):
+    """资产类提问的回答：真的去查资产数据源，查不到就说清差什么、怎么补。
+
+    - 问题里带了 IP → 走 `asset_intel_lookup`（Shodan InternetDB，免费无 Key）真查出
+      "这个 IP 命中了哪些 CVE"，并列表对应上；
+    - 只给了 CVE/关键词（"全网哪些 IP 受影响"）→ 走 `asset_intel_search`；没配 Key 时
+      插件会返回一段**中文可操作**的说明（去哪拿 Key、填哪里、怎么验证），直接给用户看；
+    - 最后仍然附上 NVD 漏洞本身，方便先按受影响软件/版本筛查。
+    """
+    _ips = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", user_input or "")
+    _cves = re.findall(r"CVE-\d{4}-\d{4,7}", user_input or "", re.I)
+    try:
+        _build_tools()                       # 确保资产插件的三个工具已注册
+    except Exception as e:
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 1540, e)
+    head = ""
+    if _ips:
+        head = _asset_result_text(_tool_result_str(run_tool(
+            "asset_intel_lookup", {"ips": ", ".join(_ips), "cves": ", ".join(_cves)}, force=True)))
+    else:
+        _q = _cves[0] if _cves else resolve_search_query(user_input)[0]
+        if _q:
+            head = _asset_result_text(_tool_result_str(run_tool(
+                "asset_intel_search", {"query": ("vuln:%s" % _q) if _cves else _q, "limit": 10}, force=True)))
+    if not head:
+        head = ("⚠️ 资产测绘这一步没返回内容（插件 `plugins/asset_intel.py` 在不在？"
+                "对我说「资产测绘状态」可以看各数据源是否可用）。")
+    return head + "\n\n---\n\n**这些漏洞本身（NVD 实时数据）**：\n\n" + vuln_table
 
 
 # ================== 智能体 ==================
@@ -1833,15 +1954,23 @@ def agent_run(user_input, lean=False):
                 if _asks_asset_list(user_input):
                     # **真实缺陷**：用户问的是"含这些漏洞的 IP / 主机 / 资产"，而这条路只会
                     # 把同一张 NVD 表原样吐回去 —— 于是不管怎么问，看到的都是"那张表，一点没变"。
-                    # NVD 根本没有 IP 数据，必须**正面说清能力边界**，再给能给的部分。
-                    answer = (
-                        "🔎 **先对齐一下能查什么**：你要的是「网络上含这些漏洞的 IP 地址（资产测绘）」，"
-                        "而 NVD 只发布「CVE → 受影响软件/版本(CPE)」，**不发布任何公网 IP** —— "
-                        "这一半我查不到，不是给你复制模板。\n\n"
-                        "要做到「IP ↔ CVE 对应表」，得接一个资产测绘数据源（Shodan / Censys / ZoomEye / Fofa 之类）；"
-                        "小焦目前没接。接法很简单：写成插件（`get_tool_descriptions()` + `execute()` 两件套）"
-                        "丢进 `plugins/`，我这边就能按你要的列成表。\n\n"
-                        "下面是这些漏洞本身（NVD 实时数据，可以先用它筛出**受影响软件与版本**）：\n\n") + _vbody
+                    # NVD 根本没有 IP 数据。现在：真去查资产数据源（插件 asset_intel），
+                    # 查得到就给「IP ↔ CVE」对应表；查不到（没配 Key）就说清差什么、怎么配。
+                    answer = _asset_answer(user_input, _vbody)
+
+    # 1b2. 资产测绘"状态/数据源"类提问 → 直通插件（4B 模型不会自己选这个工具，
+    #      实测问"资产测绘状态"它自己写了一篇科普，用户要的是"哪个数据源能用"）。
+    if CAP.get("run_tools", True) and answer is None and re.search(
+            r"资产测绘|数据源|测绘状态|asset", (user_input or ""), re.I):
+        try:
+            _build_tools()
+            _ares = _asset_result_text(_tool_result_str(run_tool("asset_intel_status", {}, force=True)))
+            if _ares:
+                tool_trace.append({"tool": "asset_intel_status", "args": {},
+                                   "result": "资产测绘数据源状态"})
+                answer = _ares
+        except Exception as e:
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1520, e)
 
     # 2. 联网检索（受操控文件 capabilities 控制）
     #    检索词必须先过闸门：整句/功能字一律清洗，清洗后为空就干脆不搜（不再拿"用"去搜百科）。
@@ -1971,6 +2100,9 @@ def agent_run(user_input, lean=False):
     # 5. 落地上下文（顺手剥掉模型偶尔吐出的 <think> 思维标签，别让标签进聊天记录）
     if answer:
         answer = _strip_think(answer)
+        _fb = llm_fallback_note()                # 云端挂了、本地顶上 → 回答里如实标注
+        if _fb and not any(k in answer for k in ("本地大脑", "本地兜底")):
+            answer += _fb
         needs_confirm = PENDING is not None and answer.startswith("〔待确认〕")
         return answer, True, info, needs_confirm, tool_trace
 
@@ -3121,6 +3253,24 @@ def _local_served_model(base_url, want):
     return want, []
 
 
+def _cloud_key_problem(base, key, model):
+    """切到云端模型时先探一下：Key 不通就**当场告诉用户**，别等他问半天才发现。
+
+    真实事故：用户切到云端模型后每次提问都只得到一句"模型调用出错"，而他并不知道
+    是 Key 失效（401）。现在选中即提示，且小焦仍会用本地大脑兜底回答。
+    """
+    try:
+        r = requests.get((base or "").rstrip("/") + "/models",
+                         headers=({"Authorization": "Bearer " + key} if key else {}), timeout=5)
+        if r.status_code == 200:
+            return "已切到云端大脑 %s（Key 有效）" % model
+        if r.status_code in (401, 403):
+            return "这个云端模型的 Key 无效或已过期（HTTP %s）→ 小焦会先用本地大脑顶，抽空更新 Key" % r.status_code
+        return "已切到云端大脑 %s，但接口返回 HTTP %s（小焦会先用本地大脑顶）" % (model, r.status_code)
+    except Exception as e:
+        return "云端接口连不上（%s）→ 小焦会先用本地大脑顶" % str(e)[:40]
+
+
 @app.route("/api/model/select", methods=["POST"])
 def api_model_select():
     """切换当前大脑到某个已配置模型。"""
@@ -3148,6 +3298,7 @@ def api_model_select():
                                 "api_key": "", "model": model or "xiaojiao"}
             else:
                 brain["api"] = {"base_url": base, "api_key": m.get("api_key", ""), "model": model}
+                note = _cloud_key_problem(base, m.get("api_key", ""), model)   # 云端 Key 不通就当场说
             _save_control(brain=brain)
             return jsonify({"ok": True, "engine": brain["engine"], "name": name,
                             "model": brain["api"]["model"], "note": note})
@@ -4337,7 +4488,11 @@ async function loadModels(){try{const r=await fetch('/api/models');const d=await
   }
   sel.innerHTML=ms.map(m=>'<option value="'+esc(m.name)+'">'+esc(m.name)+'</option>').join('');
   sel.value=(d&&d.current)||((ms[0]&&ms[0].name)||'');}catch(e){document.getElementById('modelSel').innerHTML='<option value="">模型加载失败</option>';}}
-async function selectModel(){const v=document.getElementById('modelSel').value;await fetch('/api/model/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:v})});}
+async function selectModel(){const v=document.getElementById('modelSel').value;
+  try{const r=await fetch('/api/model/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:v})});
+    const d=await r.json();
+    if(d&&d.note)toast((d.ok?'✅ ':'⚠️ ')+d.note);          // 选中就能立刻知道能不能用、坏在哪
+  }catch(e){toast('⚠️ 切换失败：'+e);}}
 async function loadHistory(){try{const r=await fetch('/api/history');const hs=await r.json();if(Array.isArray(hs)&&hs.length){hs.forEach(h=>add(h.role==='用户'?'user':'bot',h.content));}}catch(e){}}
 async function loadSessions(){try{const r=await fetch('/api/sessions');const d=await r.json();const el=document.getElementById('sessionList');
   el.innerHTML=(d.sessions||[]).map(s=>'<div class="srow'+(s.id===d.current?' active':'')+'">'

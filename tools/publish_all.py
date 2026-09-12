@@ -94,18 +94,26 @@ def main() -> int:
         remote_sha = m.group(1) if m else ""      # fetch 不通时也能给出真实的远端提交
 
     print("\n③ 本地引用对齐远端…")
-    rc, out = run(["git", "fetch", "origin"], timeout=60)
-    if rc == 0:
-        rc2, t1 = run(["git", "rev-parse", "%s^{tree}" % branch])
-        rc3, t2 = run(["git", "rev-parse", "origin/%s^{tree}" % branch])
-        if t1.strip() == t2.strip():
-            run(["git", "reset", "--hard", "origin/%s" % branch])
-            rc4, now = run(["git", "rev-parse", "--short", "HEAD"])
-            print("   ✅ 已对齐到 origin/%s（HEAD %s）" % (branch, now.strip()))
-        else:
-            print("   ⚠️ 本地/远端 tree 不一致，未重置（请核对）")
+    # **真实缺陷复盘**：这里原来无条件 `git reset --hard origin/main`。只要发布时工作区里
+    # 还有**没提交**的改动（正常开发中很常见），这一步就会把它们**静默删掉** —— 我这次就被
+    # 吃掉了刚写的补丁（文件回退到上次提交的样子，自己还没察觉）。现在：工作区不干净就不重置。
+    rc_st, dirty = run(["git", "status", "--porcelain"], timeout=30)
+    if rc_st == 0 and dirty.strip():
+        print("   ⚠️ 工作区有 %d 处未提交改动 → **跳过 reset --hard**（绝不吞掉你的代码）；"
+              "要自动对齐请先 commit" % len(dirty.strip().splitlines()))
     else:
-        print("   · fetch 不通（不影响发布结果，稍后再对齐）")
+        rc, out = run(["git", "fetch", "origin"], timeout=60)
+        if rc == 0:
+            rc2, t1 = run(["git", "rev-parse", "%s^{tree}" % branch])
+            rc3, t2 = run(["git", "rev-parse", "origin/%s^{tree}" % branch])
+            if t1.strip() == t2.strip():
+                run(["git", "reset", "--hard", "origin/%s" % branch])
+                rc4, now = run(["git", "rev-parse", "--short", "HEAD"])
+                print("   ✅ 已对齐到 origin/%s（HEAD %s）" % (branch, now.strip()))
+            else:
+                print("   ⚠️ 本地/远端 tree 不一致，未重置（请核对）")
+        else:
+            print("   · fetch 不通（不影响发布结果，稍后再对齐）")
 
     if args.tag and not args.skip_release:
         print("\n④ 对齐 tag / Release（%s）…" % args.tag)

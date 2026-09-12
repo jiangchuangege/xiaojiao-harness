@@ -216,5 +216,32 @@ def run(res: Results) -> Results:
               not app._asks_asset_list("抓取最近 7 天的高危漏洞"), "")
     res.check("资产问答", "zip/clip 这类词不会被当成 ip",
               not app._asks_asset_list("帮我把这个 zip 包解压一下"), "")
+    res.check("资产问答", "直接甩 IP 地址也算资产诉求",
+              app._asks_asset_list("帮我查 1.1.1.1 和 8.8.8.8 命中了哪些漏洞"), "")
+
+    # ---------- 13. 资产测绘插件（IP ↔ CVE 对应表）契约 ----------
+    # 真实缺陷：问"含这些漏洞的 IP"永远只回同一张 NVD 表 —— 因为根本没有资产数据源。
+    # 现在有了 plugins/asset_intel.py：方向①免费无 Key；方向②没配 Key 要说清怎么配。
+    import importlib.util as _ilu
+    _p = os.path.join(REPO_ROOT, "plugins", "asset_intel.py")
+    _spec = _ilu.spec_from_file_location("asset_intel_under_test", _p)
+    _ai = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_ai)
+    _inst = _ai.AssetIntelPlugin()
+    _tools = [t["name"] for t in _inst.get_tool_descriptions()]
+    res.check("资产插件", "三个工具都在（查IP/反查/状态）",
+              {"asset_intel_lookup", "asset_intel_search", "asset_intel_status"} <= set(_tools), str(_tools))
+    _st = _inst.status()
+    res.check("资产插件", "状态里说明免费那一半可用（无需 Key）",
+              "InternetDB" in _st and "无需 Key" in _st, _st[:50].replace("\n", " "))
+    _nokey = _inst.search("vuln:CVE-2024-1234")
+    res.check("资产插件", "没配 Key 时给出可操作说明（去哪拿、填哪里、怎么验证）",
+              all(k in _nokey for k in ("account.shodan.io", "SHODAN_API_KEY", "状态")), _nokey[:50])
+    res.check("资产插件", "内网/本机地址被拒（不假装查了）",
+              "没识别到公网 IP" in _inst.lookup("192.168.1.1, 127.0.0.1"), "")
+    res.check("资产插件", "未知工具给中文提示而不是异常",
+              "未知工具" in _inst.execute("nope", {}), "")
+    res.check("资产插件", "插件绝不把异常抛给调用方",
+              isinstance(_inst.execute("asset_intel_lookup", {"ips": None}), str), "")
 
     return res
