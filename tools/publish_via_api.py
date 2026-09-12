@@ -33,11 +33,23 @@ DEFAULT_REPO = "jiangchuangege/xiaojiao-harness"
 
 
 def git(*args: str) -> str:
-    r = subprocess.run(["git"] + list(args), capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+    # core.quotepath=false 很重要：否则中文路径会被 git 转义成 "\344\270\200..."，
+    # 拿去建 tree 就会在远端生成一串**乱码路径的重复文件**（真实的坑）。
+    r = subprocess.run(["git", "-c", "core.quotepath=false"] + list(args),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise RuntimeError("git %s 失败: %s" % (" ".join(args), r.stderr.strip()[:200]))
     return r.stdout
+
+
+def local_entries() -> dict:
+    """本地 HEAD 的完整文件清单：路径 → (mode, blob_sha)。"""
+    out = {}
+    for line in git("ls-tree", "-r", "HEAD").splitlines():
+        meta, path = line.split("\t", 1)
+        mode, _typ, sha = meta.split()
+        out[path] = (mode, sha)
+    return out
 
 
 def get_token(repo: str) -> str:
@@ -69,6 +81,73 @@ class Api:
                                % (method, path, e.code, e.read().decode("utf-8", "ignore")[:300]))
 
 
+def remote_entries(repo: str, api, tree_sha: str) -> dict:
+    """远端某个 tree 的完整文件清单：路径 → blob sha。"""
+    out = {}
+
+    def walk(sha: str, prefix: str = "") -> None:
+        t = api("/repos/%s/git/trees/%s" % (repo, sha))
+        for e in t.get("tree", []):
+            p = prefix + e["path"]
+            if e["type"] == "tree":
+                walk(e["sha"], p + "/")
+            else:
+                out[p] = e.get("sha")
+
+    walk(tree_sha)
+    return out
+
+
+def sync_tree(args, api) -> int:
+    """让远端分支的内容与本地 HEAD **完全一致**：只补差异（新增/修改/删除），不动历史。
+
+    什么时候用：API 兜底发布过的分支，提交 SHA 与本地不同；万一某次发布漏了删除或多写了文件，
+    用这个把内容对齐（不 force、不改历史，只是在分支头上加一个"对齐"提交）。
+    """
+    remote_head = api("/repos/%s/git/ref/heads/%s" % (args.repo, args.branch))["object"]["sha"]
+    remote_tree = api("/repos/%s/git/commits/%s" % (args.repo, remote_head))["tree"]["sha"]
+    remote = remote_entries(args.repo, api, remote_tree)
+    local = local_entries()
+    print("远端 %d 个文件 / 本地 %d 个文件" % (len(remote), len(local)))
+
+    add = sorted(p for p in local if p not in remote or remote[p] != local[p][1])
+    rm = sorted(p for p in remote if p not in local)
+    if not add and not rm:
+        print("✅ 远端内容与本地 HEAD 已完全一致，无需同步")
+        return 0
+    for p in add:
+        print("  + 更新 %s" % p)
+    for p in rm:
+        print("  - 删除 %s" % p)
+    if args.dry_run:
+        print("\n--dry-run：未提交。")
+        return 0
+
+    entries = []
+    for p in add:
+        blob = subprocess.run(["git", "show", "HEAD:%s" % p], capture_output=True).stdout
+        b = api("/repos/%s/git/blobs" % args.repo, "POST",
+                {"content": base64.b64encode(blob).decode("ascii"), "encoding": "base64"})
+        entries.append({"path": p, "mode": local[p][0], "type": "blob", "sha": b["sha"]})
+    for p in rm:
+        entries.append({"path": p, "mode": "100644", "type": "blob", "sha": None})
+    tree = api("/repos/%s/git/trees" % args.repo, "POST", {"base_tree": remote_tree, "tree": entries})
+    msg = "chore(sync): 远端内容对齐本地 HEAD（%d 改 / %d 删）\n\n" \
+          "由 tools/publish_via_api.py --sync-tree 生成：只补差异，不改写历史。" % (len(add), len(rm))
+    commit = api("/repos/%s/git/commits" % args.repo, "POST",
+                 {"message": msg, "tree": tree["sha"], "parents": [remote_head]})
+    api("/repos/%s/git/refs/heads/%s" % (args.repo, args.branch), "PATCH",
+        {"sha": commit["sha"], "force": False})
+    print("✅ 已对齐：%s → %s" % (remote_head[:12], commit["sha"][:12]))
+
+    now_tree = api("/repos/%s/git/commits/%s" % (args.repo, commit["sha"]))["tree"]["sha"]
+    local_tree = git("rev-parse", "%s^{tree}" % args.local_head).strip()
+    ok = now_tree == local_tree
+    print("内容一致性：%s（本地 %s / 远端 %s）" % ("✅ 一致" if ok else "❌ 仍不一致",
+                                              local_tree[:12], now_tree[:12]))
+    return 0 if ok else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="用 GitHub API 发布本地提交（git push 被网络拦截时的兜底）")
     ap.add_argument("--repo", default=DEFAULT_REPO)
@@ -76,11 +155,16 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force-ref", action="store_true",
                     help="允许非快进更新分支引用（仅在需要清理远端重复提交等特殊情况使用）")
+    ap.add_argument("--sync-tree", action="store_true",
+                    help="让远端分支内容与本地 HEAD 完全一致（只补增/改/删差异，不动历史）")
     args = ap.parse_args()
 
     api = Api(args.repo, get_token(args.repo))
+    args.local_head = git("rev-parse", "HEAD").strip()
+    if args.sync_tree:
+        return sync_tree(args, api)
     remote_head = api("/repos/%s/branches/%s" % (args.repo, urllib.parse.quote(args.branch)))["commit"]["sha"]
-    local_head = git("rev-parse", "HEAD").strip()
+    local_head = args.local_head
     if remote_head == local_head:
         print("远端与本地一致，无需发布")
         return 0
@@ -140,11 +224,23 @@ def main() -> int:
 
         entries = []
         for path in files:
+            # ⚠️ 删除的文件必须用 sha=None 告诉 GitHub "移除这个路径"；
+            # 早期版本照样 `git show`（拿到空内容）→ 远端留下一个**0 字节空文件**（真实的坑）。
+            exists = subprocess.run(["git", "cat-file", "-e", "%s:%s" % (sha, path)]).returncode == 0
+            if not exists:
+                entries.append({"path": path.replace("\\", "/"), "mode": "100644",
+                                "type": "blob", "sha": None})
+                continue
             blob = subprocess.run(["git", "show", "%s:%s" % (sha, path)],
                                   capture_output=True).stdout
             b = api("/repos/%s/git/blobs" % args.repo, "POST",
                     {"content": base64.b64encode(blob).decode("ascii"), "encoding": "base64"})
-            entries.append({"path": path.replace("\\", "/"), "mode": "100644",
+            mode = "100644"
+            try:
+                mode = git("ls-tree", sha, "--", path).split()[0]     # 保留可执行位等真实模式
+            except Exception:  # noqa: silent-ok — 取不到模式就用默认 100644
+                pass
+            entries.append({"path": path.replace("\\", "/"), "mode": mode,
                             "type": "blob", "sha": b["sha"]})
         parent_tree = api("/repos/%s/git/commits/%s" % (args.repo, parent))["tree"]["sha"]
         tree = api("/repos/%s/git/trees" % args.repo, "POST", {"base_tree": parent_tree, "tree": entries})
