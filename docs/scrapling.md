@@ -242,8 +242,36 @@ URL 去重 → 逐条限速（≥1s/域）→ 遇 429 指数退避（1→2→4�
 | `circuit_breaker_timeout` | `30` | 熔断后多久自动恢复（秒）|
 | `solve_cloudflare` | `true` | 隐身模式尝试自动过 Cloudflare 验证 |
 | `headless` | `true` | 浏览器是否无头 |
+| `max_sessions` | `20` | **会话回收**：同时最多保留几个会话，超出踢掉最久未用的（LRU）|
+| `session_ttl` | `1800` | **会话回收**：单个会话最长存活秒数（到期强制回收）|
+| `session_idle` | `300` | **会话回收**：空闲多少秒没用就回收 |
 
-环境变量覆盖：`XIAOJIAO_SCRAPLING_MODE` / `_MCP_URL` / `_CHROME` / `_TIMEOUT` / `_RATE`
+环境变量覆盖：`XIAOJIAO_SCRAPLING_MODE` / `_MCP_URL` / `_CHROME` / `_TIMEOUT` / `_RATE` / `_MAX_SESSIONS` / `_SESSION_TTL` / `_SESSION_IDLE`
+
+### 5.1 会话回收（为什么必须要有）
+
+`open_session` 每调用一次就真起一个浏览器上下文。用户或模型忘了 `close_session`，会话就会**一直占内存**，几十个之后机器明显变卡，而且没人知道为什么。
+
+`SessionManager` 用三条规则兜住（任一命中即回收，并真正调用 `close_session`）：
+
+```mermaid
+flowchart TB
+    A["open_session 成功"] --> R["登记: 创建时间 / 最后使用时间"]
+    R --> G{"巡检（每 60 秒）"}
+    G -->|"存活 > session_ttl"| K["回收"]
+    G -->|"空闲 > session_idle"| K
+    G -->|"数量 > max_sessions"| K2["踢最久未用(LRU) → 回收"]
+    K --> C["close_session 真关闭 + 记日志"]
+    K2 --> C
+    C --> S["消失并记录回收原因 / 时间 / 是否成功"]
+    U["session_fetch / screenshot / make_request"] -.->|"续期 last_used"| R
+```
+
+- 配置非法（`0` / 负数 / 非数字）→ **回退默认值并中文告警**，不会让插件起不来
+- 关闭失败（会话已不存在）不算失败：目标是"别留着"，不是"必须由我关掉"
+- 后台线程按需启动（首次登记才起），daemon 线程 + 可 `stop()`，对测试友好
+
+复测结果（真实开会话 + 真关）：LRU 踢最久未用 ✅、TTL 到期回收 ✅、空闲回收且"用过的留下" ✅、真实会话被回收器关掉 ✅、用户主动 close 从回收表移除 ✅ —— 共 **10/10 通过**。
 
 ---
 

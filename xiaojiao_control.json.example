@@ -35,7 +35,12 @@
     "max_retries": 3,
     "circuit_breaker_threshold": 3,                  "//circuit_breaker_threshold": "连续失败几次触发熔断",
     "circuit_breaker_timeout": 30,                   "//circuit_breaker_timeout": "熔断冷却秒数（到点自动恢复）",
-    "allow_robots_skip": false,                      "//allow_robots_skip": "true=robots.txt 明确禁止时也抓（默认 false；也可在对话里说「忽略 robots 抓一次」）"
+    "allow_robots_skip": false,                      "//allow_robots_skip": "true=robots.txt 明确禁止时也抓（默认 false；也可在对话里说「忽略 robots 抓一次」）",
+
+    "_会话回收": "开一次会话就真起一个浏览器，忘了关会一直占内存 —— 下面三条规则任一命中即自动回收",
+    "max_sessions": 20,                              "//max_sessions": "同时最多保留几个会话；超出时踢掉最久未使用的（LRU）",
+    "session_ttl": 1800,                             "//session_ttl": "单个会话最长存活秒数（默认 30 分钟，到期强制回收）",
+    "session_idle": 300,                             "//session_idle": "空闲多少秒没用就回收（默认 5 分钟）"
   },
 
   "capabilities": {

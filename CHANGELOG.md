@@ -7,6 +7,7 @@
 **🕷️ 网页抓取能力 + 🧠 小脑成为必需项 + 🛠️ 安装器分级与体验修复。**
 
 ### Added
+- 🧹 **会话自动回收（SessionManager）**：`open_session` 每开一次就真起一个浏览器，忘了 `close_session` 会一直占内存。现在三条规则任一命中即自动回收并真关闭：**TTL**（`session_ttl`，默认 30 分钟）/ **空闲**（`session_idle`，默认 5 分钟）/ **上限**（`max_sessions`，默认 20，超出踢最久未用 LRU）；后台线程每 60 秒巡检；配置非法（0/负数/非数字）回退默认并中文告警。实测 **10/10 通过**（LRU、TTL、空闲、真实会话回收、用户主动关闭从回收表移除）。
 - 🕷️ **内置 Scrapling**（`plugins/scrapling_bridge.py` 桥接插件）：小焦从此**想抓啥抓啥**——网页 / 动态页 / 接口 JSON / 批量列表 / 登录态页面 / 下载任意文件。**Scrapling 原生 13 个工具 1:1 全部暴露（工具名与官方一致）**，另加 3 个小焦增强（`get` 友好别名 / `scrape_with_selector` 自适应选择器 / `download` 任意文件下载），并保留 `browser_session` 聚合入口 → 对外共 **17 个工具**：
   - 原生 13：`make_request` / `bulk_get` / `fetch` / `bulk_fetch` / `stealthy_fetch` / `bulk_stealthy_fetch` / `open_session` / `open_request_session` / `close_session` / `list_sessions` / `session_fetch` / `session_make_request` / `screenshot`
   - 小焦增强 3：`get`（`make_request` 的中文友好别名）/ `scrape_with_selector`（自适应选择器，防站点改版）/ 🆕 `download`（**下载任意文件** PDF/EPUB/ZIP/图片/音视频…，Scrapling 原生没有这个能力）

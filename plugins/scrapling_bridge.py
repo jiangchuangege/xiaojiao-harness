@@ -62,7 +62,7 @@ import urllib.robotparser
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutTimeout
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 # =====================================================================
 # 常量（所有魔法数字集中在此，便于调优）
@@ -90,6 +90,12 @@ ROBOTS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 # 抓到的 JSON 展示上限：超过就美化后折叠（避免把几十 KB 压缩 JSON 糊满聊天窗）
 JSON_DISPLAY_LINES: int = 120
 JSON_DISPLAY_CHARS: int = 3500
+
+# ---------- 会话回收（改进 1）默认值 ----------
+DEFAULT_MAX_SESSIONS: int = 20          # 同时最多保留几个会话（超出踢最久未用）
+DEFAULT_SESSION_TTL: int = 1800         # 单个会话最长存活 30 分钟（到期强制回收）
+DEFAULT_SESSION_IDLE: int = 300         # 空闲 5 分钟没用 → 回收
+SESSION_SWEEP_INTERVAL: int = 60        # 后台巡检间隔（秒）
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SELECTOR_STORE = os.path.join(SCRIPT_DIR, ".scrapling_selectors.json")
 CONTROL_FILE = os.path.join(os.path.dirname(SCRIPT_DIR), "xiaojiao_control.json")
@@ -414,6 +420,20 @@ class BridgeConfig:
     allow_robots_skip: bool = False          # True=robots 禁止也抓（默认严格遵守，禁止）
     headless: bool = True
     solve_cloudflare: bool = True            # 隐身模式尝试自动过 Cloudflare 验证
+    # ---- 会话回收策略（改进 1）：见 SessionConfig / SessionManager ----
+    max_sessions: int = DEFAULT_MAX_SESSIONS
+    session_ttl: int = DEFAULT_SESSION_TTL
+    session_idle: int = DEFAULT_SESSION_IDLE
+
+    # ---- 会话回收策略（改进 1）----
+    # 配置来源（优先级从高到低）：
+    #   ① xiaojiao_control.json → scrapling.max_sessions / session_ttl / session_idle
+    #   ② 环境变量 XIAOJIAO_SCRAPLING_MAX_SESSIONS / _SESSION_TTL / _SESSION_IDLE
+    #   ③ 下面的默认值
+    # 语义：ttl=会话最长存活（不管用不用），idle=多久没用就回收，max=同时最多几个（超了踢最久未用）
+    max_sessions: int = DEFAULT_MAX_SESSIONS
+    session_ttl: int = DEFAULT_SESSION_TTL
+    session_idle: int = DEFAULT_SESSION_IDLE
 
     @staticmethod
     def load() -> "BridgeConfig":
@@ -440,6 +460,9 @@ class BridgeConfig:
             "XIAOJIAO_SCRAPLING_CHROME": "executable_path",
             "XIAOJIAO_SCRAPLING_TIMEOUT": "timeout",
             "XIAOJIAO_SCRAPLING_RATE": "rate_limit",
+            "XIAOJIAO_SCRAPLING_MAX_SESSIONS": "max_sessions",
+            "XIAOJIAO_SCRAPLING_SESSION_TTL": "session_ttl",
+            "XIAOJIAO_SCRAPLING_SESSION_IDLE": "session_idle",
         }
         for env_k, attr in env_map.items():
             v = os.environ.get(env_k)
@@ -447,6 +470,8 @@ class BridgeConfig:
                 try:
                     if attr in ("timeout", "rate_limit"):
                         setattr(cfg, attr, float(v))
+                    elif attr in ("max_sessions", "session_ttl", "session_idle"):
+                        setattr(cfg, attr, int(float(v)))
                     else:
                         setattr(cfg, attr, v)
                 except Exception:
@@ -785,6 +810,150 @@ class BatchManager:
                 continue
             allowed.append(u)
         return allowed, blocked
+
+
+# =====================================================================
+# 五、会话回收（改进 1）：TTL / 空闲 / LRU 上限 + 后台巡检
+# =====================================================================
+class SessionManager:
+    """会话生命周期管理：**不让浏览器会话无限堆积**。
+
+    背景：`open_session` 每开一次就真起一个浏览器上下文，用户（或模型）忘了
+    `close_session` 就会一直占内存，几十个会话能把机器拖垮 —— 而且没人会发现。
+
+    三条回收规则（任一命中即回收）：
+      ① **TTL**：会话自创建起最多活 `session_ttl` 秒（默认 30 分钟）
+      ② **空闲**：`session_idle` 秒内没有任何操作（默认 5 分钟）
+      ③ **上限**：同时存在超过 `max_sessions` 个（默认 20）时，**踢掉最久未使用**的
+    后台线程每 `SESSION_SWEEP_INTERVAL` 秒（默认 60s）巡检一次；也可随时手动 sweep。
+
+    设计取舍：
+      · 只记录"我们自己开出来的会话"（register 时才登记），不去猜 Scrapling 内部状态；
+      · 回收失败（会话已不存在）视为成功 —— 目标是"别留着"，不是"必须由我关掉"；
+      · 线程是 daemon 且**首次登记时才启动**，避免 import 就拉线程（对测试/文档生成友好）。
+    """
+
+    def __init__(self, cfg: "BridgeConfig", closer: Optional[Callable[[str], Any]] = None,
+                 interval: float = SESSION_SWEEP_INTERVAL, autostart: bool = True) -> None:
+        self.max_sessions = self._pos(cfg.max_sessions, DEFAULT_MAX_SESSIONS, "max_sessions")
+        self.ttl = self._pos(cfg.session_ttl, DEFAULT_SESSION_TTL, "session_ttl")
+        self.idle = self._pos(cfg.session_idle, DEFAULT_SESSION_IDLE, "session_idle")
+        self.interval = max(5.0, float(interval))
+        self._closer = closer                      # 由 bridge 注入：真正调用 close_session
+        self._sessions: Dict[str, Dict[str, Any]] = {}
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._started = False
+        self._autostart = autostart
+        self.reclaimed: List[Dict[str, Any]] = []   # 最近回收记录（便于观测/测试）
+        self.log = logger
+
+    # ---------- 配置校验 ----------
+    @staticmethod
+    def _pos(value: Any, default: int, name: str) -> int:
+        """把配置值转成正整数；非法值（0/负数/非数字）回退默认并给中文告警。"""
+        try:
+            v = int(value)
+        except Exception:
+            logger.warning("会话回收配置 %s 不是整数(%r)，已用默认值 %d", name, value, default)
+            return default
+        if v <= 0:
+            logger.warning("会话回收配置 %s 必须为正整数(收到 %r)，已用默认值 %d", name, value, default)
+            return default
+        return v
+
+    # ---------- 后台巡检 ----------
+    def _ensure_thread(self) -> None:
+        if self._started or not self._autostart:
+            return
+        self._started = True
+        t = threading.Thread(target=self._loop, name="xj-session-sweeper", daemon=True)
+        t.start()
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.interval):
+            try:
+                self.sweep("periodic")
+            except Exception as e:                 # 巡检线程绝不能死
+                logger.warning("会话巡检异常(忽略并继续): %s", sanitize(e))
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    # ---------- 登记 / 续期 / 注销 ----------
+    def register(self, sid: str, stype: str = "") -> None:
+        if not sid:
+            return
+        with self._lock:
+            now = time.time()
+            self._sessions[sid] = {"created": now, "last_used": now, "type": stype or "?"}
+        self._ensure_thread()
+        self._enforce_limit()
+
+    def touch(self, sid: str) -> None:
+        with self._lock:
+            rec = self._sessions.get(sid)
+            if rec:
+                rec["last_used"] = time.time()
+
+    def forget(self, sid: str) -> None:
+        with self._lock:
+            self._sessions.pop(sid, None)
+
+    def stats(self) -> Dict[str, Any]:
+        with self._lock:
+            now = time.time()
+            return {"active": len(self._sessions), "max_sessions": self.max_sessions,
+                    "ttl_seconds": self.ttl, "idle_seconds": self.idle,
+                    "sessions": [{"id": k, "type": v["type"],
+                                  "age_s": round(now - v["created"], 1),
+                                  "idle_s": round(now - v["last_used"], 1)}
+                                 for k, v in self._sessions.items()],
+                    "reclaimed_recent": self.reclaimed[-10:]}
+
+    # ---------- 回收 ----------
+    def _expired(self, now: float) -> List[Tuple[str, str]]:
+        out = []
+        with self._lock:
+            for sid, rec in self._sessions.items():
+                age, idle = now - rec["created"], now - rec["last_used"]
+                if age > self.ttl:
+                    out.append((sid, "ttl(%.0fs>%ds)" % (age, self.ttl)))
+                elif idle > self.idle:
+                    out.append((sid, "idle(%.0fs>%ds)" % (idle, self.idle)))
+        return out
+
+    def _enforce_limit(self) -> List[Tuple[str, str]]:
+        """超过 max_sessions → 踢最久未使用的（LRU）。"""
+        out = []
+        with self._lock:
+            overflow = len(self._sessions) - self.max_sessions
+            if overflow <= 0:
+                return out
+            lru = sorted(self._sessions.items(), key=lambda kv: kv[1]["last_used"])[:overflow]
+            out = [(sid, "lru(超出上限 %d)" % self.max_sessions) for sid, _ in lru]
+        self._close_all(out)
+        return out
+
+    def sweep(self, reason: str = "manual") -> Dict[str, Any]:
+        """执行一次回收，返回 {reclaimed: [...], active: n}。"""
+        out = self._expired(time.time())
+        out += self._enforce_limit()
+        self._close_all(out, reason)
+        return {"reclaimed": [{"id": s, "why": w} for s, w in out], "active": self.stats()["active"]}
+
+    def _close_all(self, items: Sequence[Tuple[str, str]], reason: str = "") -> None:
+        for sid, why in items:
+            self.forget(sid)
+            ok, err = True, ""
+            if self._closer:
+                try:
+                    self._closer(sid)
+                except Exception as e:
+                    ok, err = False, str(e)[:120]
+            self.reclaimed.append({"id": sid, "why": why, "closed": ok, "error": err,
+                                   "at": time.strftime("%Y-%m-%d %H:%M:%S"), "by": reason})
+            self.log.info("会话回收 %s（%s）%s", sid, why, "" if ok else "关闭失败: " + err)
 
 
 # =====================================================================
@@ -1228,6 +1397,10 @@ _SELECTORS = SelectorManager()
 _BREAKER = CircuitBreaker(_CONFIG.circuit_breaker_threshold, _CONFIG.circuit_breaker_timeout)
 _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="xj-scrapling")
 _CLIENT = MCPClient(_CONFIG)
+# 会话回收器（改进 1）：closer 用 _CLIENT 真正关掉会话；后台线程按需启动
+_SESSIONS = SessionManager(_CONFIG, closer=lambda sid: _CLIENT.call_tool(
+    "close_session", {"session_id": sid}, timeout=20))
+atexit.register(_SESSIONS.stop)
 _STEALTH_LAST = [0.0]                  # 隐身模式上次请求时间（限流用）
 
 
@@ -1738,18 +1911,25 @@ class ScraplingBridge:
                 args["session_id"] = sid
             if self._cfg.executable_path:
                 args["executable_path"] = self._cfg.executable_path
-            return self._session_call("open_session", args)
+            out = self._session_call("open_session", args)
+            _SESSIONS.register(_sid_of(out), stype)          # 改进 1：登记，纳入回收
+            return out
 
         if tool == "open_request_session":
             args = {}
             if sid:
                 args["session_id"] = sid
-            return self._session_call("open_request_session", args)
+            out = self._session_call("open_request_session", args)
+            _SESSIONS.register(_sid_of(out), "static")
+            return out
 
         if tool == "close_session":
             if not sid:
                 return fmt_result(0, "", "", "close_session 需要提供 session_id")
-            return self._session_call("close_session", {"session_id": sid})
+            out = self._session_call("close_session", {"session_id": sid})
+            if not _is_err(out):
+                _SESSIONS.forget(sid)                        # 用户主动关掉 → 从回收表移除
+            return out
 
         if tool == "list_sessions":
             out = self._session_call("list_sessions", {})
@@ -1777,6 +1957,7 @@ class ScraplingBridge:
                               "%s 需要提供 session_id（先调用 open_session / open_request_session）" % tool)
 
         if tool == "session_fetch":
+            _SESSIONS.touch(sid)                       # 改进 1：用过就算"活着"，不会因空闲被回收
             # solve_cloudflare 只有 stealthy 会话支持，按需才传
             args = {"url": url, "session_id": sid, "extraction_type": _EXTRACT_TYPE}
             if p.get("wait_selector"):
@@ -1788,12 +1969,14 @@ class ScraplingBridge:
             return self._session_call("session_fetch", args)
 
         if tool == "session_make_request":
+            _SESSIONS.touch(sid)
             out = self._session_call("session_make_request",
                                      {"url": url, "session_id": sid, "method": "GET",
                                       "extraction_type": _EXTRACT_TYPE})
             return _session_mismatch_hint(out, sid, "session_make_request")
 
         if tool == "screenshot":
+            _SESSIONS.touch(sid)
             out = self._session_call("screenshot",
                                      {"url": url, "session_id": sid,
                                       "image_type": p.get("image_type") or "png",
@@ -1925,6 +2108,22 @@ def _bound_client_timeout(tool: str, user_timeout: float, default_timeout: float
     if not user_timeout or user_timeout <= 0:
         return default_timeout
     return max(3.0, min(default_timeout, user_timeout + 5.0))
+
+
+def _sid_of(out: str) -> str:
+    """从 open_session / open_request_session 的返回里取出 session_id（取不到返回空串）。"""
+    try:
+        d = json.loads(out)
+        body = d.get("content") or ""
+        if isinstance(body, str):
+            m = re.search(r'"session_id"\s*:\s*"([^"]+)"', body)
+            if m:
+                return m.group(1)
+        if isinstance(body, dict):
+            return str(body.get("session_id") or "")
+    except Exception:
+        pass
+    return ""
 
 
 def _session_mismatch_hint(out: str, sid: str, tool: str) -> str:
