@@ -68,6 +68,7 @@ def main() -> int:
         return 0
 
     pushed = False
+    remote_sha = ""
     if not args.api_only:
         print("\n① git push（超时 %ds，不通就转 API）…" % args.git_timeout)
         rc, out = run(["git", "push", "origin", branch], timeout=args.git_timeout)
@@ -88,6 +89,9 @@ def main() -> int:
         if "不一致" in out:
             print("❌ 远端与本地内容不一致，需人工核对（不要继续对齐 tag）")
             return 1
+        import re as _re
+        m = _re.search(r"指向\s+([0-9a-f]{7,40})", out)
+        remote_sha = m.group(1) if m else ""      # fetch 不通时也能给出真实的远端提交
 
     print("\n③ 本地引用对齐远端…")
     rc, out = run(["git", "fetch", "origin"], timeout=60)
@@ -110,7 +114,10 @@ def main() -> int:
         if rc != 0:
             print("   ⚠️ tag/Release 未对齐（可稍后重跑 tools/sync_release.py）")
 
-    print("\n完成。核对：本地 %s ｜ 远端 %s" % (local, run(["git", "rev-parse", "--short", "origin/%s" % branch])[1].strip()))
+    rc, fetched = run(["git", "rev-parse", "--short", "origin/%s" % branch])
+    _r = remote_sha[:12] if remote_sha else (fetched.strip() if rc == 0 else "（未知，fetch 不通）")
+    print("\n完成。核对：本地 %s ｜ 远端 %s%s"
+          % (local, _r, "" if remote_sha else "（本地引用可能未刷新）"))
     return 0
 
 
