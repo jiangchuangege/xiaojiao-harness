@@ -142,6 +142,37 @@ class XXPlugin:
 - `memory.py` → `save_memory` / `read_memory`（持久化到 `xiaojiao_memory.txt`）
 - `search.py` → `web_search`（打开百度搜索）
 - `weather.py` → `get_weather`（wttr.in 天气）
+- 🕷️ `scrapling_bridge.py` → **抓取 9 工具**（get/bulk_get/fetch/bulk_fetch/stealthy_fetch/bulk_stealthy_fetch/scrape_with_selector/browser_session/download）→ 详见 [scrapling.md](scrapling.md)
+
+### 6.1 🕷️ 抓取插件（scrapling_bridge）架构要点
+
+```mermaid
+flowchart LR
+    REQ["用户：抓一下 xxx / 下载电子书"] --> DI["抓取意图识别<br/>_detect_scrape_intent()"]
+    DI --> SEC["SecurityGuard<br/>SSRF·robots·限速·UA"]
+    SEC --> CB["CircuitBreaker<br/>3 次失败→暂停 30s"]
+    CB --> BM["BatchManager<br/>去重·429退避·代理轮换·隔离"]
+    BM --> AR["AsyncRunner<br/>专用事件循环线程"]
+    AR --> MC["MCPClient<br/>连接池·健康检查·重连·超时"]
+    MC --> IP["inproc 直连（默认）"]
+    MC --> MP["MCP stdio / http"]
+    IP --> OUT["正文 / books/*.md / downloads/*.epub / 截图"]
+    MP --> OUT
+    OUT --> EX["_explain_content() 📖 解读"]
+    OUT --> LE["_learn_skill() 🧠 经验沉淀 → 向量库"]
+    LE -. 检索复用 .-> DI
+
+    classDef s fill:#eef2ff,stroke:#6366f1,color:#312e81;
+    classDef o fill:#ecfdf5,stroke:#34d399,color:#064e3b;
+    class REQ,DI,SEC,CB,BM,AR,MC,IP,MP s;
+    class OUT,EX,LE o;
+```
+
+**与插件接口的关系**：`ScraplingBridge` 仍遵循上表的 `get_tool_descriptions()/execute()` 约定，因此对小焦而言它只是"一个多了 9 个工具的普通插件"——复杂逻辑（异步桥接、安全闸门、熔断、批量、双通道）全部封装在插件内部，对外只暴露简单参数。
+
+**两条关键设计**：
+1. **意图直通**（在 `xiaojiao_app.py` 侧）：4B 模型 function-calling 不稳，小焦用规则识别「抓/爬/下载 + 网址」→ 直接构造工具调用（`_detect_scrape_intent`），失败才回落到模型自主调用。
+2. **用户使用时学习**：每次使用后把「需求→工具→参数→结果」沉淀进 `self_learn/tool_skills.txt` + 向量库（成功记用法、失败记反思），下次 `_recall_skills()` 命中即注入上下文复用 —— 让小脑**越用越会**。
 
 ---
 
@@ -287,7 +318,7 @@ flowchart LR
 - **学进小焦**：写进 `xiaojiao_knowledge_memory.json`，键 `学会:*`（主人事实）与 `猫娘说话风格`。
 - **N.E.K.O. 插件**：`%LOCALAPPDATA%\N.E.K.O\plugins\xiaojiao_install\`，提供「装小焦」体检 + 安装指引。
 
-> 详细见 [docs/neko.md](neko.md)。随 `python start_xiaojiao.py` 自动拉起。
+> 详细见 [docs/neko.md](neko.md)。`python start_xiaojiao.py` 启动时**先问一句**（`[Y/n]`）再决定是否拉起猫娘；答 `n` 或非交互式环境**不拉也不影响小焦**（`XIAOJIAO_NEKO_AUTO=1` 可免询问）。
 
 - **Agent 预设**：`presets/*.json`（人格+大脑+工具开关），设置页卡片管理，Web 编辑/增删，**保存即应用**（合并配置 + 热更新，不重启）。
 - **大脑仓库监控**：`/monitor` 实时看所有大脑状态/显存/内存/任务，直接切换/调优/添加大脑。

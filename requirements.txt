@@ -28,6 +28,17 @@ accelerate>=0.30
 # 🎵 音乐生成（ACE-Step 只带 API server, 由 music_service 调用）
 # 说明：ACE-Step 独立运行, 不需要 pip 装进本环境；ComfyUI 用自带 python_embeded。
 
+# ---------- 🕷️ 网页抓取（plugins/scrapling_bridge.py 插件）----------
+# 让小焦能抓网页/动态页面/绕 Cloudflare（get / fetch / stealthy_fetch / 批量 / 选择器）
+scrapling[fetchers]>=0.4.15     # 抓取内核（Fetcher / DynamicFetcher / StealthyFetcher）
+markdownify>=1.0                # 抓取内容转 Markdown（4B 模型更易读）
+mcp>=1.0                        # 可选：仅当 scrapling.mode="mcp"（走 MCP 服务）时需要
+# 浏览器渲染用；可自备 Chrome，把路径填到 xiaojiao_control.json 的
+# scrapling.executable_path（如 D:\tools\chrome-win64\chrome.exe）
+# 或用 `scrapling install` 安装 Chromium。
+# 安装（国内镜像）：
+#   python -m pip install "scrapling[fetchers]" markdownify mcp -i https://pypi.tuna.tsinghua.edu.cn/simple
+
 # ---------- 说明 ----------
 # · 本地模块（不入库）无需 pip 安装：vstore / xiaojiao_app / xiaojiao_harness 等。
 # · 大脑模型不写死：放任意 GGUF 到 C:/llama 自动识别, 或配置里填任意 OpenAI 兼容 API。

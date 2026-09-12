@@ -150,9 +150,26 @@ def _find_tts_dir():
     ctl = _load_control().get("brain", {}).get("tts_model_dir")
     if ctl and os.path.isdir(ctl):
         return ctl
-    # 扫描常见位置
-    for base in [r"G:\模型文件\语音模型", r"G:\模型文件", r"C:\模型文件"]:
-        for d in glob.glob(os.path.join(base, "*")):
+    # 扫描常见位置（项目目录 / 家目录 / 下载）+ 盘符关键词目录 —— 不写死用户路径
+    _here = os.path.dirname(os.path.abspath(__file__))
+    bases = [os.path.join(os.path.dirname(_here), "语音模型"), _here, os.getcwd(),
+             os.path.expanduser("~"), os.path.join(os.path.expanduser("~"), "Downloads"),
+             "C:\\llama"]
+    try:
+        import install_all as _ia
+        _kws = ("语音", "tts", "voice", "model", "模型")
+        for _drv in _ia._drives():
+            for _t in _ia._top_dirs(_drv):
+                if _ia._hit_keyword(_t, _kws) or _ia._hit_keyword(_t, ("downloads", "下载")):
+                    bases.append(os.path.join(_drv, _t))
+    except Exception:
+        pass
+    for base in bases:
+        try:
+            subs = [base] + glob.glob(os.path.join(base, "*"))
+        except Exception:
+            continue
+        for d in subs:
             if os.path.isdir(d) and os.path.exists(os.path.join(d, "tokenizer.json")):
                 return d
     return None

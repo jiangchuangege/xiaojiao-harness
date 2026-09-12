@@ -91,6 +91,10 @@ _start_app.bat
 # ---------- 生成产物 / 个人记录 ----------
 videos/
 media/
+# 抓取产物（Scrapling 桥接插件下载/保存的网页与文件，属用户本地内容，不入库）
+books/
+downloads/
+test.db
 cost_daily.json
 *.mp4
 *.png
@@ -107,3 +111,10 @@ _launch*
 _fix_*
 _temp_*
 push_*.py
+
+# ---------- 个人本地插件 / 临时脚本（本人自用，不入库） ----------
+plugins/db_helper.py
+plugins/code_intelligence.py
+plugins/workspace_search.py
+plugins/xiaojiao-plugins-main/
+create_db.py

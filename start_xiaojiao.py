@@ -82,20 +82,25 @@ def start_neko():
           入口 = 桌面客户端 N.E.K.O.exe; 它会连带拉起 projectneko_server.exe(监听 48911/48912 后端)。
           【主界面是桌面客户端, 不是 web 页面】
       - 源码克隆版: 任意 N.E.K.O-main/launcher.py + .venv
-    路径可改(用户下载位置不同): XIAOJIAO_NEKO_DIR 环境变量优先。"""
+    路径可改(用户下载位置不同): XIAOJIAO_NEKO_DIR 环境变量优先, 其余**自动探测, 不写死**。"""
     import subprocess as _sp
-    # 1) 定位 N.E.K.O. 项目根: 优先环境变量 -> Steam 版 -> 源码克隆版候选
+    # 1) 定位 N.E.K.O. 项目根: 优先环境变量 -> Steam 版 -> 源码克隆版候选（含全盘自动探测）
     roots = []
     env_neko = os.environ.get("XIAOJIAO_NEKO_DIR", "")
     if env_neko:
         roots.append(env_neko)
     roots += [
-        r"G:\SteamLibrary\steamapps\common\n.e.k.o",        # Steam 版(你实际的)
         r"C:\Program Files (x86)\Steam\steamapps\common\n.e.k.o",
         r"C:\Program Files\Steam\steamapps\common\n.e.k.o",
-        r"G:\moxing__xiaojiao\maoniang\N.E.K.O-main",       # 源码克隆版
-        r"G:\模型文件\猫娘\N.E.K.O-main", r"C:\NEKO\N.E.K.O-main",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "N.E.K.O"),
+        os.path.expanduser("~/N.E.K.O"),
     ]
+    # Steam 库可能装在任意盘: 扫各盘 steamapps\common\n.e.k.o
+    import string as _str
+    for _L in _str.ascii_uppercase:
+        for _lib in ("SteamLibrary", "Steam", "Games", "游戏"):
+            roots.append(os.path.join(_L + ":\\", _lib, "steamapps", "common", "n.e.k.o"))
+            roots.append(os.path.join(_L + ":\\", _lib, "steamapps", "common", "N.E.K.O"))
     # 先找含 N.E.K.O.exe(Steam版) 或 launcher.py(源码版) 的根
     root = None
     for r_ in roots:
@@ -103,6 +108,16 @@ def start_neko():
             root = r_; break
     if not root:
         root = next((r_ for r_ in roots if os.path.exists(os.path.join(r_, "launcher.py"))), None)
+    if not root:
+        # 上面的常见位置都没命中 → 才做较慢的全盘自动探测（不写死路径）
+        try:
+            import install_all as _ia
+            root = _ia.discover_neko()   # 返回猫娘根目录，或 None
+            if root and not (os.path.exists(os.path.join(root, "N.E.K.O.exe"))
+                             or os.path.exists(os.path.join(root, "launcher.py"))):
+                root = None
+        except Exception:
+            root = None
     if not root:
         print("⚠️ 未找到 N.E.K.O. 猫娘(设 XIAOJIAO_NEKO_DIR 指向其目录, 或装 Steam 版于 n.e.k.o)")
         return None
@@ -155,17 +170,21 @@ def start_neko():
 
 def start_llama_swap():
     """自动启动 llama-swap(多大脑热切换管理器)。独立端口9292, 不冲突直接大脑8080。
-    路径多候选自动检测(不写死, 兼容移动位置): 环境变量/常见位置。"""
+    路径自动探测(不写死, 兼容移动位置): 环境变量 → 项目目录 → 全盘扫描。"""
     env_exe = os.environ.get("XIAOJIAO_LLAMA_SWAP", "")
     cands = [env_exe] if env_exe else []
-    cands += [
-        r"G:\moxing__xiaojiao\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe",
-        r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe",
-        r"G:\模型文件\大脑秒计切换\llama-swap.exe",
-        r"G:\moxing__xiaojiao\大脑秒计切换\llama-swap.exe",
-    ]
-    cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama-swap.yaml")
+    _here = os.path.dirname(os.path.abspath(__file__))
+    cands += [os.path.join(_here, "llama-swap.exe"),
+              os.path.join(_here, "llama-swap", "llama-swap.exe")]
     exe = next((c for c in cands if c and os.path.exists(c)), "")
+    if not exe:
+        # 全盘自动探测兜底（关键词 + 有限深度 + where /r）
+        try:
+            import install_all as _ia
+            exe = _ia.discover_exe("llama-swap.exe", ("llama-swap", "swap", "秒切", "大脑")) or ""
+        except Exception:
+            exe = ""
+    cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama-swap.yaml")
     if not (exe and os.path.exists(cfg)):
         print("  [llama-swap] 未找到(exe或配置)，跳过 —— 聊天大脑不会跟起，请设 XIAOJIAO_LLAMA_SWAP 或检查 llama-swap.exe")
         return None
@@ -188,9 +207,21 @@ def start_llama_swap():
         print("  [llama-swap] 启动失败: %s" % e); return None
 
 
+def ask_start_neko():
+    """询问是否启动 N.E.K.O. 猫娘（可选；不启动不影响小焦本体）。
+    设环境变量 XIAOJIAO_NEKO_AUTO=1 可免询问直接启动(自动化用)；非交互环境默认不启动。"""
+    if os.environ.get("XIAOJIAO_NEKO_AUTO") == "1":
+        return True
+    try:
+        ans = input("🐱 是否启动 N.E.K.O. 猫娘桌面伙伴？(可选，不启动不影响小焦) [Y/n]: ").strip().lower()
+    except Exception:
+        return False   # 被脚本/后台调用(非交互)时不擅自拉起猫娘
+    return ans in ("", "y", "yes", "是", "1")
+
+
 def main():
     print("=" * 50)
-    print("  小焦 · XiaoJiao (含 DSH 插件生态)")
+    print("  小焦 · XiaoJiao")
     print(f"  模型名: {MODEL_NAME}")
     print(f"  大脑:   {ENGINE}")
     print("=" * 50)
@@ -214,8 +245,12 @@ def main():
         port = int(CONTROL.get("web_port", os.environ.get("PORT", 5000)))
     os.environ["PORT"] = str(port)
 
-    # 3c. 融合 N.E.K.O. 猫娘: 起它的服务 + 后台学习你的需求 + 打开猫娘页
-    neko_root = start_neko()
+    # 3c. N.E.K.O. 猫娘（可选）：先询问用户；不启动也不影响小焦本体
+    neko_root = None
+    if ask_start_neko():
+        neko_root = start_neko()
+    else:
+        print("🐱 已跳过 N.E.K.O. 猫娘（不影响小焦启动；想开时单独运行本脚本并选 y 即可）")
 
     # 4. 打开浏览器
     print(f"🌐 启动小焦 Web: http://127.0.0.1:{port}")

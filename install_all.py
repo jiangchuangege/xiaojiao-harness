@@ -197,6 +197,49 @@ def discover_node_dir(prefix):
     return None
 
 
+def discover_brain_all():
+    """全盘自动探测小脑模型候选（*.pth）与词表(vocab*.pkl) —— 不写死任何路径。
+    模型与词表可跨目录，自动配对（同目录优先，否则用探测到的词表）。
+    排序：体积大优先（更像训练好的完整模型）。返回 [(model, vocab, size_bytes), ...]。"""
+    kws = ("xiaonao", "小脑", "brain", "xiaojiao", "model", "模型")
+    models, vocabs = [], []
+    for drv in _drives():
+        for t in _top_dirs(drv):
+            if not (_hit_keyword(t, DISCOVER_KEYWORDS) or _hit_keyword(t, kws)):
+                continue
+            base = os.path.join(drv, t)
+            for dp, dns in _walk_limit(base, 3):
+                try:
+                    names = os.listdir(dp)
+                except Exception:
+                    continue
+                v_here = [f for f in names if f.lower().startswith("vocab") and f.lower().endswith(".pkl")]
+                for f in v_here:
+                    vocabs.append(os.path.join(dp, f))
+                for f in sorted(names):
+                    if not f.lower().endswith(".pth"):
+                        continue
+                    p = os.path.join(dp, f)
+                    try:
+                        sz = os.path.getsize(p)
+                    except Exception:
+                        continue
+                    if sz < 1_000_000:      # 跳过占位/无关小文件
+                        continue
+                    models.append((p, os.path.join(dp, v_here[0]) if v_here else "", sz))
+    out = []
+    for p, v, sz in models:
+        out.append((p, v or (vocabs[0] if vocabs else ""), sz))
+    out.sort(key=lambda x: -x[2])        # 体积大优先
+    return out
+
+
+def discover_brain():
+    """全盘自动探测小脑模型（取最佳候选）。返回 (model_path, vocab_path)。"""
+    r = discover_brain_all()
+    return (r[0][0], r[0][1]) if r else (None, None)
+
+
 def discover_neko():
     """自动找 N.E.K.O. 猫娘根目录。不猜目录名、不写死路径，识别两种形态:
       - Steam 版桌面客户端: 目录含 N.E.K.O.exe
@@ -425,8 +468,61 @@ def main():
             print("   好，跳过。先启动本地大脑(start_xiaojiao.py)或稍后再配 API。")
             missing.append("大脑模型(本地大脑服务或云端API — 需协议连通)")
 
+    # 3b) 小脑（自研蒸馏模型 · 必需 · 项目核心）—— 路径不写死：配置/环境变量/自动探测
+    print("\n[3b/11] 小脑 (自研蒸馏模型 · 必需 · 项目核心) ...")
+    import glob as _g
+    _xjc = (c.get("brain") or {}).get("xiaojiao") or {}
+    _bm = os.environ.get("XIAOJIAO_BRAIN_MODEL") or _xjc.get("model_path") or ""
+    _bv = os.environ.get("XIAOJIAO_BRAIN_VOCAB") or _xjc.get("vocab_path") or ""
+    _bc = os.environ.get("XIAOJIAO_BRAIN_CONFIG") or _xjc.get("config_path") or ""
+    if not (_bm and os.path.exists(_bm)):                 # 自动探测(不写死文件名)
+        _c = sorted(_g.glob(os.path.join(ROOT, "*.pth")))
+        _bm = _c[0] if _c else ""
+    if not (_bv and os.path.exists(_bv)):
+        _c = sorted(_g.glob(os.path.join(ROOT, "vocab*.pkl")))
+        _bv = _c[0] if _c else ""
+    if not (_bc and os.path.exists(_bc)):
+        _c = sorted(_g.glob(os.path.join(ROOT, "model_config*.json")))
+        _bc = _c[0] if _c else ""
+    # 项目目录没有 → 全盘自动探测（不写死任何路径）
+    if not (_bm and os.path.exists(_bm)):
+        print("   🔎 项目目录没有小脑，正在全盘自动探测(找 *.pth + vocab*.pkl)...")
+        _cands = discover_brain_all()
+        if _cands:
+            if len(_cands) > 1:
+                print("   找到 %d 个候选（选中的是第 1 个；想换改 brain.xiaojiao.model_path）:" % len(_cands))
+                for _p, _v, _s in _cands[:5]:
+                    print("      · %s (%.0f MB)%s" % (_p, _s / 1e6, " +词表" if _v else ""))
+            _bm = _cands[0][0]
+            if _cands[0][1] and not (_bv and os.path.exists(_bv)):
+                _bv = _cands[0][1]
+            print("   🔎 自动选用小脑:", _bm)
+    # 找到就写进配置（运行时按配置加载；你也可以随时自己改）
+    if _bm and os.path.exists(_bm) and _bv and os.path.exists(_bv):
+        c.setdefault("brain", {}).setdefault("xiaojiao", {})
+        c["brain"]["xiaojiao"]["model_path"] = _bm
+        c["brain"]["xiaojiao"]["vocab_path"] = _bv
+        if _bc and os.path.exists(_bc):
+            c["brain"]["xiaojiao"]["config_path"] = _bc
+        print("   ✅ 已写入 xiaojiao_control.json → brain.xiaojiao（想换模型改这里即可）")
+    _has_harness = os.path.exists(os.path.join(ROOT, "xiaojiao_harness.py"))
+    if _bm and _bv:
+        print("   ✅ 小脑就绪: %s + %s (%.0f MB)" % (os.path.basename(_bm), os.path.basename(_bv),
+                                                     os.path.getsize(_bm) / 1e6))
+        print("      (想换模型当小脑：改 xiaojiao_control.json 的 brain.xiaojiao.model_path，或设 XIAOJIAO_BRAIN_MODEL)")
+        if not _has_harness:
+            print("   ⚠️ 缺 xiaojiao_harness.py（小脑推理代码），请补上")
+            missing.append("xiaojiao_harness.py(小脑推理)")
+    else:
+        print("   ❌ 未找到小脑模型（必需 · 项目核心）")
+        print("      需要：模型(*.pth) + 词表(vocab*.pkl)。可自行指定：")
+        print("        · 改 xiaojiao_control.json → brain.xiaojiao.model_path / vocab_path")
+        print("        · 或设环境变量 XIAOJIAO_BRAIN_MODEL / XIAOJIAO_BRAIN_VOCAB")
+        print("        · 或训练一个：python train_model.py（先 massive_distill.py 蒸馏语料）")
+        missing.append("小脑模型(核心 · *.pth + vocab*.pkl)")
+
     # 4) llama-swap
-    print("\n[4/11] llama-swap (秒级切换) ...")
+    print("\n[4/11] llama-swap (秒级切换 · 必需) ...")
     sw = os.environ.get("XIAOJIAO_LLAMA_SWAP") or ""
     ok_sw = bool(sw) and os.path.exists(sw)
     if not ok_sw:
@@ -466,8 +562,8 @@ def main():
         c["brain"]["llama_swap_port"] = 9292
         print("   ✅ llama-swap:", sw)
 
-    # 5) ComfyUI
-    print("\n[5/11] ComfyUI (视频大脑) ...")
+    # 5) ComfyUI —— 可选(视频大脑)
+    print("\n[5/11] ComfyUI (可选 · 视频大脑) ...")
     comfy = os.environ.get("XIAOJIAO_COMFY_DIR") or ""
     ok_comfy = bool(comfy) and os.path.exists(os.path.join(comfy, "main.py"))
     if not ok_comfy:
@@ -479,18 +575,18 @@ def main():
     elif comfy:
         print("   ✅ ComfyUI:", comfy)
     if not ok_comfy:
-        print("   ❌ 未找到 ComfyUI（较大 ~2GB，脚本不自动下）")
+        print("   ⓘ 未找到 ComfyUI（可选；缺了只是不能生成视频，不影响聊天）")
         p = input("   请粘贴 ComfyUI 目录(main.py 所在, 回车跳过): ").strip().strip('"')
         if p and os.path.exists(os.path.join(p, "main.py")):
             comfy = p
             ok_comfy = True
         else:
-            missing.append("ComfyUI")
+            opt_miss.append("ComfyUI → 🎬 真·文生视频")
     if comfy:
         print("   ✅ ComfyUI:", comfy)
 
-    # 5b) 视频秒级切换必需节点: AnyDeviceOffload + WanVideoWrapper(装进 ComfyUI custom_nodes)
-    print("\n[5b/11] 视频秒级切换节点(必需) ...")
+    # 5b) 视频节点 —— 可选(仅视频功能用)
+    print("\n[5b/11] 视频节点 (可选 · 仅视频用) ...")
     cn_dir = os.path.join(comfy, "custom_nodes") if comfy else ""
     node_missing = []
     for node in ("ComfyUI-AnyDeviceOffload", "ComfyUI-WanVideoWrapper"):
@@ -513,10 +609,10 @@ def main():
             if not got:
                 node_missing.append(node)
     if node_missing:
-        missing.append("视频节点:" + ",".join(node_missing))
+        opt_miss.append("视频节点:" + ",".join(node_missing) + " → 🎬 文生视频")
 
-    # 6) Wan 视频模型三件套
-    print("\n[6/11] Wan2.1 视频模型三件套 ...")
+    # 6) Wan 视频模型三件套 —— 可选(仅视频功能用)
+    print("\n[6/11] Wan2.1 视频模型 (可选 · 仅视频用) ...")
     # 视频模型根目录: 环境变量优先, 否则自动探测(找含 dit_fp8.safetensors 的目录)
     vroot = os.environ.get("XIAOJIAO_VIDEO_ROOT") or ""
     if not vroot or not os.path.isdir(vroot):
@@ -534,25 +630,31 @@ def main():
     va = os.path.join(vroot, "vae_fp8.safetensors")
     ok3 = all(os.path.exists(x) for x in (ck, tc, va))
     if not ok3:
-        print("   ❌ 缺视频模型(必需！):", [os.path.basename(x) for x in (ck, tc, va) if not os.path.exists(x)])
-        print("   自动从 hf-mirror 下载 Wan2.1-1.3B 三件套(必需, 共~2.5GB)...")
-        os.makedirs(vroot, exist_ok=True)
-        base = HF_MIRROR + "/Wan-AI/Wan2.1-T2V-1.3B-Diffusers/resolve/main/"
-        for f, d in [("dit_fp8.safetensors", ck), ("umt5_fp8.safetensors", tc), ("vae_fp8.safetensors", va)]:
-            if not os.path.exists(d):
-                download(base + f, d, f)
+        print("   ⓘ 缺视频模型(可选，不影响聊天):", [os.path.basename(x) for x in (ck, tc, va) if not os.path.exists(x)])
+        ans = "n"
+        try:
+            ans = input("   是否现在自动下载 Wan2.1 三件套(约2.5GB)? [y/N]: ").strip().lower()
+        except Exception:
+            ans = "n"
+        if ans in ("y", "yes", "是", "1"):
+            print("   自动从 hf-mirror 下载 Wan2.1-1.3B 三件套...")
+            os.makedirs(vroot, exist_ok=True)
+            base = HF_MIRROR + "/Wan-AI/Wan2.1-T2V-1.3B-Diffusers/resolve/main/"
+            for f, d in [("dit_fp8.safetensors", ck), ("umt5_fp8.safetensors", tc), ("vae_fp8.safetensors", va)]:
+                if not os.path.exists(d):
+                    download(base + f, d, f)
         if not all(os.path.exists(x) for x in (ck, tc, va)):
-            missing.append("Wan 视频模型")
+            opt_miss.append("Wan 视频模型 → 🎬 文生视频")
     else:
         print("   ✅ 三件套齐全")
 
-    # 7) Node.js
-    print("\n[7/11] Node.js (js 插件) ...")
+    # 7) Node.js —— 可选(js 插件用)
+    print("\n[7/11] Node.js (可选 · JS 插件) ...")
     if shutil.which("node"):
         print("   ✅ node:", shutil.which("node"))
     else:
-        print("   ❌ 未装 Node.js → 到 https://nodejs.org 装 LTS(默认一路下一步)")
-        missing.append("Node.js")
+        print("   ⓘ 未装 Node.js（可选；缺了只是 .js 插件不可用）→ https://nodejs.org 装 LTS")
+        opt_miss.append("Node.js → 🟨 JS 插件")
 
     # 8) NVIDIA GPU
     print("\n[8/11] NVIDIA GPU ...")
@@ -625,17 +727,33 @@ def main():
     save_cfg(c)
     print("   ✅ xiaojiao_control.json 已配置(keep_warm/llama-swap/路径)")
 
-    # 10) 报告
+    # 10) 报告（分级：必需 / 可选）
     print("\n[10/11] 结果报告")
+    print("   ── 必需项（缺了无法启动小焦）──")
+    if missing:
+        for m in sorted(set(missing)):
+            print(R("     ❌ " + m))
+    else:
+        print(G("     ✅ 全部就绪"))
+    print("   ── 可选功能（缺了只是对应功能不可用，不影响聊天）──")
+    if opt_miss:
+        for m in sorted(set(opt_miss)):
+            print("     ⓘ " + m)
+    else:
+        print(G("     ✅ 全部就绪"))
+
     if not missing:
-        print(G("   🎉 全部必需项就绪！运行 `python start_xiaojiao.py` 即可进入小焦（秒级切换可用）。"))
+        print(G("\n   🎉 必需项就绪！运行 `python start_xiaojiao.py` 即可进入小焦（聊天 + 秒级切换可用）。"))
+        if opt_miss:
+            print("   ℹ️ 上面的可选项不影响启动，想要对应功能再按提示补。")
         print("\n[11/11] 启动小焦 ...")
         if ask("   现在启动? [Y/n] "):
             subprocess.run([sys.executable, os.path.join(ROOT, "start_xiaojiao.py")])
     else:
-        print(R("   ⛔ 缺少必需项，无法进入小焦：%s" % ", ".join(sorted(set(missing)))))
-        print(R("   秒级切换所需工具(llama-swap/llama.cpp/Wan模型等)为硬性必需，缺一不可。"))
-        print("   补上后再运行本脚本，或按上方提示配置。")
+        print(R("\n   ⛔ 缺必需项，无法进入小焦：%s" % ", ".join(sorted(set(missing)))))
+        print("   必需项只有：Python依赖 / llama.cpp(聊天大脑) / 大脑模型 / llama-swap(秒级切换)。")
+        print("   （ComfyUI、视频模型、Node.js、猫娘等都属于可选，缺了不影响聊天。）")
+        print("   补上必需项后再运行本脚本。")
     print("完成。")
 
 

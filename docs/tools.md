@@ -30,13 +30,13 @@
 ### llama-swap（LLM 秒级切换）
 | 项 | 位置 | 说明 |
 |---|---|---|
-| **llama-swap.exe** | `G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\`，或 `XIAOJIAO_LLAMA_SWAP` | 热切换管理器（9292），启动时自动拉起 |
+| **llama-swap.exe** | 环境变量 `XIAOJIAO_LLAMA_SWAP` 或**全盘自动探测**（关键词 + 盘符 + `where /r`），**不写死** | 热切换管理器（端口 `brain.llama_swap_port`，默认 9292），启动时自动拉起 |
 | 配置 `llama-swap.yaml` | 项目根 | 定义 xiaojiao 模型路由 |
 
 ## 4. 视频大脑（ComfyUI + Wan2.1）
 | 项 | 位置 | 说明 |
 |---|---|---|
-| **ComfyUI 便携版** | `G:\模型文件\视频模型\ComfyUI_windows_portable_nvidia_cu126\...`，或 `XIAOJIAO_COMFY_DIR` | 视频生成引擎（8188），keep_warm 常驻 |
+| **ComfyUI 便携版** | `xiaojiao_control.json → brain.comfy_dir` / `XIAOJIAO_COMFY_DIR` / **全盘自动探测**，**不写死** | 视频生成引擎（8188），`brain.keep_warm` 常驻（**可选**，缺了只少视频功能） |
 | **dit_fp8.safetensors**（Wan2.1-1.3B-FP8） | ComfyUI `models/checkpoints/` | 生成本体 |
 | **umt5_fp8.safetensors**（文本编码器） | ComfyUI `models/text_encoders/` | 理解提示词 |
 | **vae_fp8.safetensors**（VAE） | ComfyUI `models/vae/` | 解码画面 |

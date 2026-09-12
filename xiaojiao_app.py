@@ -209,7 +209,12 @@ def load_plugins():
             if fn.endswith(".py") and not fn.startswith("__"):
                 spec = ilu.spec_from_file_location(base, p)
                 mod = ilu.module_from_spec(spec)
-                spec.loader.exec_module(mod)
+                sys.modules[base] = mod          # 注册进 sys.modules：Py3.13 下 dataclass/typing 等依赖它
+                try:
+                    spec.loader.exec_module(mod)
+                except Exception:
+                    sys.modules.pop(base, None)  # 加载失败则清理，避免污染 sys.modules
+                    raise
                 for attr in dir(mod):
                     obj = getattr(mod, attr)
                     if isinstance(obj, type) and hasattr(obj, "get_tool_descriptions") and hasattr(obj, "execute"):
@@ -325,14 +330,27 @@ def _find_tts_model_dir():
     _cfg_dir = CONTROL.get("brain", {}).get("tts_model_dir", "")
     if _cfg_dir and os.path.isdir(_cfg_dir) and all(os.path.exists(os.path.join(_cfg_dir, f)) for f in _TTS_FILES):
         return _cfg_dir
-    # ③ 扫描常见位置
-    cands = [r"G:\模型文件\语音模型", r"C:\xiaojiao\xiaojiao harness", r"C:\llama",
-             r"G:\模型文件", os.path.expanduser("~")]
+    # ③ 扫描常见位置（项目目录 / 家目录 / 下载；再按关键词扫盘 —— 不写死用户路径）
+    cands = [os.path.dirname(os.path.abspath(__file__)), os.getcwd(),
+             os.path.expanduser("~"), os.path.join(os.path.expanduser("~"), "Downloads"),
+             os.path.join(os.path.expanduser("~"), "Documents"), "C:\\llama"]
+    try:
+        import install_all as _ia
+        _kws = ("语音", "tts", "voice", "model", "模型", "xiaojiao") + tuple(_ia.DISCOVER_KEYWORDS)
+        for _drv in _ia._drives():
+            for _t in _ia._top_dirs(_drv):
+                if _ia._hit_keyword(_t, _kws) or _ia._hit_keyword(_t, ("downloads", "下载")):
+                    cands.append(os.path.join(_drv, _t))
+    except Exception:
+        pass
     for c in cands:
-        if os.path.isdir(c):
-            for d in [c] + [os.path.join(c, x) for x in os.listdir(c) if os.path.isdir(os.path.join(c, x))]:
-                if all(os.path.exists(os.path.join(d, f)) for f in _TTS_FILES):
-                    return d
+        try:
+            subs = [c] + [os.path.join(c, x) for x in os.listdir(c) if os.path.isdir(os.path.join(c, x))]
+        except Exception:
+            continue
+        for d in subs:
+            if all(os.path.exists(os.path.join(d, f)) for f in _TTS_FILES):
+                return d
     return None
 
 
@@ -1035,6 +1053,177 @@ def _llm_ask_raw(prompt):
     return ""
 
 
+# ===== 抓取意图直通（scrapling_bridge 插件）=====
+# 4B 模型自己不会稳定地选择抓取工具，这里用规则兜底：
+# 用户说"抓/爬 + 网址"时，直接构造工具调用交给插件执行，保证"说抓就抓"，不让模型胡编代码。
+_SCRAPE_TOOL_HINTS = [
+    ("stealthy_fetch", ("隐身", "stealthy", "cloudflare", "绕过防护", "过验证", "被墙")),
+    ("fetch", ("浏览器", "渲染", "动态页面", "js渲染", "js 渲染", "登录后", "点开")),
+    ("get", ("抓取", "爬取", "爬一下", "抓一下", "抓个", "抓网页", "取网页", "请求网页", "抓取网页")),
+]
+_SCRAPE_URL_RE = re.compile(r"https?://[^\s，。；、）)\]\"']+")
+_SCRAPE_DOMAIN_RE = re.compile(r"\b([a-z0-9][a-z0-9\-]*\.(?:com|cn|org|net|io|dev|gov|edu|ai|co|me|app)"
+                               r"(?:/[^\s，。；、）)\]\"']*)?)", re.I)
+
+
+def _detect_scrape_intent(q):
+    """识别"抓网页"意图 → 返回 (工具名, 参数)；识别不到返回 None。
+
+    支持的表达：抓取/爬一下/抓网页 + 网址（可带多个网址 → 自动走批量工具）。
+    """
+    ql = (q or "").lower()
+    tool = None
+    for name, kws in _SCRAPE_TOOL_HINTS:
+        if any(k.lower() in ql for k in kws):
+            tool = name
+            break
+    if not tool:
+        return None
+    urls = _SCRAPE_URL_RE.findall(q or "")
+    if not urls:
+        m = _SCRAPE_DOMAIN_RE.search(q or "")
+        if m:
+            urls = ["https://" + m.group(1)]
+    if not urls:
+        return None
+    if len(urls) > 1:      # 多个网址 → 批量工具
+        bulk = {"get": "bulk_get", "fetch": "bulk_fetch", "stealthy_fetch": "bulk_stealthy_fetch"}[tool]
+        return bulk, {"urls": urls[:20]}
+    return tool, {"url": urls[0]}
+
+
+def _trace_summary(res: str) -> str:
+    """把抓取结果压成一行摘要，避免把原始 JSON 塞进工具轨迹（界面好读、4B 也好读）。"""
+    try:
+        d = json.loads(res)
+    except Exception:
+        return (res or "")[:160]
+    if not isinstance(d, dict):
+        return (res or "")[:160]
+    if d.get("items"):
+        ok = sum(1 for i in d["items"] if not i.get("error"))
+        return "批量抓取：成功 %d / 共 %d" % (ok, len(d["items"]))
+    if d.get("error"):
+        return "失败：" + str(d["error"])[:120]
+    _c = d.get("content") or ""
+    return "已抓取 %s（HTTP %s，正文 %d 字）" % (d.get("url", ""), d.get("status", ""), len(_c))
+
+
+def _auto_outline(body: str, limit: int = 6) -> str:
+    """规则兜底解读：抽出标题/链接/要点。模型不可用或输出太短时用它，保证用户总有结构可看。"""
+    body = body or ""
+    lines = []
+    for h in re.findall(r"^#{1,3}\s+(.+)$", body, re.M)[:3]:
+        lines.append("· 标题：%s" % h.strip()[:60])
+    for t, u in re.findall(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", body)[:3]:
+        lines.append("· 链接：%s" % (t.strip()[:40] or u))
+    paras = [p.strip() for p in re.split(r"\n\s*\n", body) if len(p.strip()) > 20]
+    for p in paras[:3]:
+        lines.append("· 内容：%s" % p[:80].replace("\n", " "))
+    return "\n".join(lines[:limit])
+
+
+def _explain_content(text: str, url: str = "") -> str:
+    """让大脑对抓到的内容做**逐条解读**，帮用户快速看懂含义、快速上手。
+
+    设计意图：抓取只给"原料"，用户（尤其面对陌生网页/英文页）看不懂重点。
+    这里让大脑按固定结构讲一遍：这是什么页面 → 关键要点 → 怎么用。
+    强调"只依据抓到的内容、不要编造"，避免小模型幻觉；模型不可用则退回规则提纲。
+    """
+    body = (text or "")[:3000]
+    if not body.strip():
+        return ""
+    prompt = (
+        "下面是刚抓取到的网页内容（来源：%s）：\n---\n%s\n---\n\n"
+        "请用中文逐条解读，帮用户快速看懂这个页面、知道怎么用：\n"
+        "第一行：一句话说明这是什么页面；\n"
+        "然后列 3-6 条要点，每条以「· 」开头，简短直白；\n"
+        "若页面里有可点的链接或可用的数据，说明它能用来干什么。\n"
+        "只根据上面的内容讲，不要编造；总字数不超过 400。" % (url or "网页", body)
+    )
+    try:
+        out = (_llm_ask_raw(prompt) or "").strip()
+    except Exception:
+        out = ""
+    if len(out) < 20:                     # 模型没给出有效解读 → 规则兜底
+        out = _auto_outline(text)
+    return out
+
+
+# ===== 【用户使用时学习】小脑从"实际使用"中积累工具经验 =====
+# 设计意图：不是从插件代码/文档学，而是**用户每次让小焦干活时**，
+# 把"什么需求 → 用了哪个工具 → 参数 → 结果（成功/失败+反思）"沉淀成经验：
+#   · 成功 → 记住正确用法，下次同类需求直接照做（命中检索即可复用，不用重新推理）
+#   · 失败 → 记住原因与"下次怎么改"，形成反思
+# 存两份：可读日志 tool_skills.txt + 向量库（语义检索）。
+_SELF_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "self_learn")
+_SKILL_LOG = os.path.join(_SELF_DIR, "tool_skills.txt")
+
+
+def _reflect(tool: str, err: str) -> str:
+    """失败反思：给出"下次怎么改"，让小脑积累的是经验而不只是报错。"""
+    e = err or ""
+    if "robots" in e:
+        return "遇到 robots 限制要提示用户换站点或说明原因"
+    if "SSRF" in e or "禁止访问" in e:
+        return "内网/本机地址属安全拦截，直接告诉用户不可抓"
+    if "超时" in e or "timeout" in e.lower():
+        return "可加大 timeout，或改用更轻的 get"
+    if "markdownify" in e:
+        return "缺 markdownify 依赖，pip install markdownify"
+    if "MCP 未运行" in e:
+        return "应先启动 Scrapling（scrapling mcp）"
+    if "session_id" in e:
+        return "会话类操作要先 action=open 开会话"
+    return "下次先检查参数与网络再重试"
+
+
+def _learn_skill(user_input: str, tool: str, args, ok: bool, detail: str) -> None:
+    """把一次工具使用沉淀成小脑的"能力经验"（用户使用时学习）。"""
+    if not tool:
+        return
+    try:
+        try:
+            _args = json.dumps(args or {}, ensure_ascii=False)[:120]
+        except Exception:
+            _args = str(args)[:120]
+        if ok:
+            line = "用户 %s → 小焦用「%s」成功%s：%s" % (
+                (user_input or "")[:50], tool, (" 参数" + _args) if _args else "", (detail or "")[:100])
+        else:
+            line = "用户 %s → 小焦用「%s」失败：%s；经验：%s" % (
+                (user_input or "")[:50], tool, (detail or "")[:80], _reflect(tool, detail))
+        os.makedirs(_SELF_DIR, exist_ok=True)
+        with open(_SKILL_LOG, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        try:                            # 向量库：语义检索命中即可复用
+            if _SELF_DIR not in sys.path:
+                sys.path.insert(0, _SELF_DIR)
+            import vstore
+            vstore.add(line, tag="tool_skill")
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            print("学习沉淀失败(不影响使用): %s" % str(e)[:80])
+        except Exception:
+            pass
+
+
+def _recall_skills(query: str, k: int = 3) -> str:
+    """检索小脑学到的"工具用法"，注入给大脑参考（越用越会）。"""
+    try:
+        if _SELF_DIR not in sys.path:
+            sys.path.insert(0, _SELF_DIR)
+        import vstore
+        r = vstore.search(query, k=k, threshold=0.12)
+        if not r.get("hit"):
+            return ""
+        return "\n".join("- " + str(t[1])[:120] for t in (r.get("top") or [])[:k])
+    except Exception:
+        return ""
+
+
 def plan_tool(user_input):
     """让大脑把请求转成一个工具调用 JSON，返回 (tool, args)；失败返回 (None, None)。"""
     prompt = ("用户请求：%s\n\n请把该请求转换为一个工具调用，只输出一个 JSON 对象，不要任何说明。\n"
@@ -1114,13 +1303,57 @@ def agent_run(user_input, lean=False):
             context += "（相关记忆）\n" + mem_text + "\n\n"
         if web_text:
             context += "（联网检索到的资料）\n" + web_text + "\n\n"
+        _skills = _recall_skills(user_input)      # 小脑从过去"实际使用"里学到的工具经验
+        if _skills:
+            context += "（小脑学到的工具用法，可参考）\n" + _skills + "\n\n"
         messages.append({"role": "user", "content": (context + "用户：" + user_input) if context else user_input})
         if CAP.get("run_tools", True):
             answer, tool_trace = llm_chat_tools(messages, lean=lean)   # 模型推理并调用工具
         else:
             answer = llm_chat(messages)
 
-    # ② 兜底：大模型没调用任何工具，但这是"执行类操作" → 用 plan 强制生成一次工具调用
+    # ② 兜底：抓取类意图直通（4B 模型规划弱，不指望它自己选抓取工具）
+    if not tool_trace and CAP.get("run_tools", True) and has_llm:
+        _sc = _detect_scrape_intent(user_input)
+        if _sc:
+            try:
+                _build_tools()          # 填充 _TOOL2PLUGIN，确保插件工具可被调用
+            except Exception:
+                pass
+            _tn, _ta = _sc
+            _res = _tool_result_str(run_tool(_tn, _ta, force=True))
+            tool_trace.append({"tool": _tn, "args": _ta, "result": _trace_summary(_res)})
+            # 抓取结果直接把正文给用户看（不要交给 4B 模型"总结"，它会把正文吃掉）
+            try:
+                _jd = json.loads(_res)
+                _err = (_jd.get("error") or "").strip()
+                _body = (_jd.get("content") or "").strip()
+                if _err:
+                    answer = "⚠️ 抓取失败：%s" % _err
+                elif _jd.get("items"):                       # 批量抓取：逐项给正文 + 解读
+                    _lines = []
+                    for _idx, _it in enumerate(_jd["items"]):
+                        _h = "**%s** · HTTP %s" % (_it.get("url"), _it.get("status"))
+                        if _it.get("error"):
+                            _lines.append(_h + "\n\n⚠️ " + str(_it["error"]))
+                            continue
+                        _c = (_it.get("content") or "")[:1500]
+                        _lines.append(_h + "\n\n" + _c)
+                        if _idx < 3:                          # 逐条解读（限前 3 条，避免过慢）
+                            _e = _explain_content(_c, _it.get("url", ""))
+                            if _e:
+                                _lines.append("📖 **解读**\n\n" + _e)
+                    answer = "🌐 批量抓取完成\n\n" + "\n\n---\n\n".join(_lines)
+                else:                                         # 单页：正文 + 逐条解读
+                    answer = "🌐 **%s** · HTTP %s\n\n%s" % (
+                        _jd.get("url", ""), _jd.get("status", ""), _body[:4000] or "(页面无正文)")
+                    _exp = _explain_content(_body, _jd.get("url", ""))
+                    if _exp:
+                        answer += "\n\n---\n\n📖 **小焦解读**\n\n" + _exp
+            except Exception:
+                answer = _res[:3000]                         # 非 JSON 就原样给
+
+    # ②b 兜底：其它"执行类操作" → 用 plan 强制生成一次工具调用
     if not tool_trace and CAP.get("run_tools", True) and has_llm:
         it = detect_tool_intent(user_input)
         if it:
@@ -1145,6 +1378,15 @@ def agent_run(user_input, lean=False):
     learned = [c for _, _, c in info[:3]]
     if learned and CAP.get("memory", True):
         remember(user_input, learned)
+
+    # 4b. 【用户使用时学习】把这次用到的工具经验沉淀进小脑（成功记用法、失败记反思）
+    try:
+        for _t in (tool_trace or []):
+            _r = str(_t.get("result") or "")
+            _bad = any(k in _r for k in ("失败", "错误", "Error", "error", "禁止", "超时", "不可用"))
+            _learn_skill(user_input, _t.get("tool", ""), _t.get("args"), not _bad, _r)
+    except Exception:
+        pass
 
     # 5. 落地上下文
     if answer:
@@ -1685,6 +1927,68 @@ def api_session(sid):
 
 
 
+_DISCOVER_CACHE = {"_started": False}
+
+
+def _discover_probe():
+    """后台慢探测：全盘找 ComfyUI / 视频模型根 / llama-swap（复用安装器探测函数）。"""
+    d = {}
+    try:
+        import install_all as _ia
+        d["comfy"] = _ia.discover_comfy() or ""
+        d["video_root"] = _ia.discover_video_root() or ""
+        d["swap"] = _ia.discover_exe("llama-swap.exe", ("llama-swap", "swap", "秒切")) or ""
+    except Exception:
+        pass
+    _DISCOVER_CACHE.update(d)
+
+
+def _discover_paths(kick=True):
+    """体检/引导用：拿 ComfyUI / 视频模型根 / llama-swap 的真实位置。
+
+    优先级：控制文件(xiaojiao_control.json) → 环境变量 → 全盘自动探测（复用 install_all）。
+    **不写死任何用户路径**；配置/环境变量毫秒级返回，慢的全盘扫描丢后台线程，结果缓存复用，
+    这样体检页面永远不会因为扫盘而卡住。
+    """
+    if kick and not _DISCOVER_CACHE.get("_started"):
+        _DISCOVER_CACHE["_started"] = True
+        try:
+            threading.Thread(target=_discover_probe, daemon=True).start()
+        except Exception:
+            pass
+    root = os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(os.path.join(root, "xiaojiao_control.json"), encoding="utf-8") as f:
+            c = json.load(f)
+    except Exception:
+        c = {}
+    b = c.get("brain", {}) or {}
+    comfy = (b.get("comfy_dir") or os.environ.get("XIAOJIAO_COMFY_DIR") or "").strip()
+    swap = (os.environ.get("XIAOJIAO_LLAMA_SWAP") or "").strip()
+    vroot = ""
+    # 视频模型可能就在 ComfyUI 目录里，或在便携包外层任意一层（零成本检查，不用扫盘）
+    _d = comfy.rstrip("\\/")
+    for _ in range(5):
+        if not _d:
+            break
+        if os.path.exists(os.path.join(_d, "dit_fp8.safetensors")):
+            vroot = _d
+            break
+        _nd = os.path.dirname(_d)
+        if _nd == _d:
+            break
+        _d = _nd
+    if not vroot and comfy:
+        for cand in (os.path.join(comfy, "models", "diffusion_models"),
+                     os.path.join(comfy, "models", "checkpoints")):
+            if os.path.exists(os.path.join(cand, "dit_fp8.safetensors")):
+                vroot = cand
+                break
+    return {"comfy": _DISCOVER_CACHE.get("comfy") or comfy,
+            "video_root": _DISCOVER_CACHE.get("video_root") or vroot,
+            "swap": _DISCOVER_CACHE.get("swap") or swap}
+
+
 @app.route("/api/env")
 def api_env():
     """环境检查：检测用户电脑缺什么(安装向导)。"""
@@ -1708,8 +2012,7 @@ def api_env():
     except Exception:
         pass
     _ll = _cfg.get("brain", {}).get("llama", {}) or {}
-    _ap = _cfg.get("brain", {}).get("api", {}) or {}
-    # Python
+    _ap = _cfg.get("brain", {}).get("api", {}) or {}    # Python
     add("Python", True, "v" + __import__("sys").version.split()[0], "已装", "")
     # llama-server(大脑, 路径走配置/环境变量)
     ls = os.environ.get("XIAOJIAO_LLAMA_SERVER") or _ll.get("server") or "llama-server"
@@ -1757,43 +2060,38 @@ def api_env():
     except Exception:
         _bp = 9292
     add("聊天大脑(llama-swap:%d) 在线" % _bp, port_up(_bp), "现在" + ("在线" if port_up(_bp) else "未启动"), "启动后自动拉起", "")
-    # ComfyUI + 视频模型 (多路径自动识别: 旧位置 + G:\moxing__xiaojiao\ + 环境变量)
-    comfy_dirs = [
-        r"G:\模型文件\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI",
-        r"G:\moxing__xiaojiao\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI_windows_portable\ComfyUI",
-        r"G:\moxing__xiaojiao\视频模型\ComfyUI_windows_portable_nvidia_cu126\ComfyUI",
-    ]
-    if os.environ.get("XIAOJIAO_COMFY_DIR"):
-        comfy_dirs.insert(0, os.environ["XIAOJIAO_COMFY_DIR"])
-    comfy = None
-    for cd in comfy_dirs:
-        if exists(os.path.join(cd, "main.py")) or exists(os.path.join(cd, "ComfyUI", "main.py")):
-            comfy = cd; break
+    # ComfyUI + 视频模型（配置 → 环境变量 → 全盘自动探测；不写死任何路径）
+    _dp = _discover_paths()
+    comfy = _dp.get("comfy") or ""
+    if comfy and not os.path.exists(os.path.join(comfy, "main.py")):
+        comfy = ""   # 配的路径失效就当作没找到（下面提示怎么补）
     add("ComfyUI(视频大脑)", bool(comfy), ("位于 " + comfy if comfy else "未找到"), "做法：下载 ComfyUI 便携版(N卡版) → 解压 → 设 XIAOJIAO_COMFY_DIR=你的\\ComfyUI 目录", "github.com/comfyanonymous/ComfyUI/releases")
+    _vroot = (_dp.get("video_root") or "").rstrip("\\/")
     def _find_model(*names):
-        for b in [r"G:\模型文件\视频模型", r"G:\moxing__xiaojiao\视频模型"]:
+        bases = [b for b in [_vroot,
+                             os.path.join(comfy, "models", "diffusion_models") if comfy else "",
+                             os.path.join(comfy, "models", "text_encoders") if comfy else "",
+                             os.path.join(comfy, "models", "vae") if comfy else ""] if b]
+        for b in bases:
             for n in names:
                 for ext in ["", ".safetensors"]:
                     p = os.path.join(b, n + ext)
                     if exists(p): return p
-        return None
-    ck = _find_model("dit_fp8") or r"G:\模型文件\视频模型\dit_fp8.safetensors"
-    tc = _find_model("umt5_fp8") or r"G:\模型文件\视频模型\umt5_fp8.safetensors"
-    va = _find_model("vae_fp8") or r"G:\模型文件\视频模型\vae_fp8.safetensors"
+        return ""
+    ck = _find_model("dit_fp8")
+    tc = _find_model("umt5_fp8")
+    va = _find_model("vae_fp8")
     add("视频模型三件套(Wan2.1)", exists(ck) and exists(tc) and exists(va),
         "模型/编码器/VAE " + ("齐全" if exists(ck) and exists(tc) and exists(va) else "缺"), "下 dit_fp8/umt5/vae 放对应目录", "")
     # 视频大脑(8188): 按需启动(生成视频时才起, 不算缺/不用装, ok=True 以免猫娘误报"缺")
     _v8 = port_up(8188)
     add("视频大脑(8188) 在线", True if _v8 else True, "现在" + ("在线" if _v8 else "未启动(按需,生成视频时自动拉起,正常)"), "生成时自动起", "")
-    # llama-swap(热切换) 多路径识别
-    sw_cands = [os.environ.get("XIAOJIAO_LLAMA_SWAP", "")] if os.environ.get("XIAOJIAO_LLAMA_SWAP") else []
-    sw_cands += [
-        r"G:\模型文件\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe",
-        r"G:\moxing__xiaojiao\大脑秒计切换\llama-swap_251_windows_amd64\llama-swap.exe",
-        r"G:\moxing__xiaojiao\大脑秒计切换\llama-swap.exe",
-    ]
-    sw = next((s for s in sw_cands if s and exists(s)), "")
-    ok = bool(sw)
+    # llama-swap(热切换)：环境变量 → 全盘自动探测（不写死路径）
+    sw = _dp.get("swap") or ""
+    ok = bool(sw) and os.path.exists(sw)
+    if not ok and port_up(9292):
+        # 路径还没探测出来，但它确实在跑 → 不算缺（避免误报"未找到"）
+        sw, ok = "llama-swap.exe", True
     add("llama-swap(秒切管理)", ok, ("位于 " + os.path.basename(sw) if ok else "未找到"), "做法：解压 llama-swap.exe → 设 XIAOJIAO_LLAMA_SWAP=路径", "github.com/mostlygeek/llama-swap/releases")
     add("llama-swap(9292) 在线", port_up(9292), "多大脑秒切管理" + ("在线" if port_up(9292) else "未启动"), "start_xiaojiao 会自动拉起", "")
     # Node.js(.js 插件)
@@ -2146,11 +2444,16 @@ def api_model_addlocal():
         CONTROL["models"].append({"name": name, "engine": "llama",
                                   "base_url": "http://127.0.0.1:9292/v1", "api_key": "", "model": mid})
         json.dump(CONTROL, open(os.path.join(root, "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    # ④ 重启 llama-swap
+    # ④ 重启 llama-swap（路径自动探测，不写死）
     try:
-        _sp.Popen(["powershell", "-NoProfile", "-Command",
-                   "Get-Process llama-swap -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1; "
-                   "Start-Process 'G:/模型文件/大脑秒计切换/llama-swap_251_windows_amd64/llama-swap.exe' -ArgumentList '-config \\\"%s\\\" -listen 127.0.0.1:9292' -WindowStyle Hidden" % yp])
+        _sw = _discover_paths().get("swap") or ""
+        if _sw and os.path.exists(_sw):
+            _sp.Popen(["powershell", "-NoProfile", "-Command",
+                       "Get-Process llama-swap -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1; "
+                       "Start-Process '%s' -ArgumentList '-config \\\"%s\\\" -listen 127.0.0.1:9292' -WindowStyle Hidden" % (_sw.replace("'", "''"), yp)])
+        else:
+            return jsonify({"ok": True, "model_id": mid, "name": name,
+                            "note": "已写入配置；但没找到 llama-swap.exe，请手动重启它（或设 XIAOJIAO_LLAMA_SWAP）"})
     except Exception:
         pass
     return jsonify({"ok": True, "model_id": mid, "name": name, "note": "llama-swap 正在重启, 约10秒后可用"})
@@ -2447,7 +2750,7 @@ HTML = r"""<!DOCTYPE html>
   .tooltrace b{color:#4ade80}
   #feed{flex:1;overflow-y:auto;padding:24px;width:100%;display:flex;flex-direction:column;align-items:center}
   #feed>*{width:100%;max-width:860px}
-  .m{display:flex;margin-bottom:14px;gap:10px}
+  .m{display:flex;margin-bottom:14px;gap:10px;flex-wrap:wrap}
   .m.user{justify-content:flex-end}.m.bot{justify-content:flex-start}
   .b{max-width:82%;padding:11px 16px;border-radius:16px;line-height:1.65;font-size:15px;white-space:pre-wrap;word-break:break-word;box-shadow:none}
   .user .b{background:linear-gradient(135deg,#5b5ff5,#7c5cf0);color:#fff;border-bottom-right-radius:5px}
@@ -2457,7 +2760,7 @@ HTML = r"""<!DOCTYPE html>
   .srcbtn{background:#1a2030;border:1px solid #2a3140;color:#a78bfa;border-radius:14px;padding:4px 12px;font-size:12px;cursor:pointer;margin-top:6px;white-space:nowrap;width:auto;align-self:flex-start;display:inline-flex;align-items:center;gap:4px}
   .srcbtn:hover{background:#232c42;border-color:#405a99}
   .srcbtn:hover{background:#263349}
-  .srcbox{display:none;white-space:normal;font-size:11px;color:#8b93a3;margin-top:6px;background:#11141c;border:1px solid #252b38;border-radius:8px;padding:8px 10px;max-height:180px;overflow-y:auto}
+  .srcbox{display:none;white-space:normal;font-size:11px;color:#8b93a3;margin-top:6px;background:#11141c;border:1px solid #252b38;border-radius:8px;padding:8px 10px;max-height:180px;overflow-y:auto;flex-basis:100%;width:100%;box-sizing:border-box}
   .srci{margin-bottom:8px}
   .srci .st{color:#9bb0e1;font-size:12px;margin-bottom:2px}
   .srci .sc{color:#aab2c0;font-size:11px;line-height:1.5}
@@ -2488,6 +2791,15 @@ HTML = r"""<!DOCTYPE html>
   .msgbot button:hover{background:#2a3140}
   .msgbot .fb{font-size:14px;padding:2px 8px}
   .b strong{color:#fff}
+  /* Markdown 标题（抓取正文常用）*/
+  .b .mdh{font-size:16px;font-weight:700;color:#fff;margin:10px 0 6px;padding-bottom:5px;border-bottom:1px solid #2a3140}
+  .b .mdh:first-child{margin-top:2px}
+  .b a{color:#a78bfa;text-decoration:none;border-bottom:1px solid #a78bfa55}
+  .b a:hover{color:#c4b5fd;border-bottom-color:#c4b5fd}
+  /* 抓取结果卡片：把"抓来的网页内容"和对话正文区分开 */
+  .fetchcard{background:#0f1520;border:1px solid #223049;border-left:3px solid #45d483;border-radius:10px;padding:12px 14px;margin:8px 0;font-size:14px;line-height:1.7;color:#cbd0dc}
+  .fetchhead{font-size:12px;color:#45d483;margin-bottom:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .fetchhead .u{color:#8b93a3;font-weight:400}
   .b ul,.b ol{padding-left:20px;margin:6px 0}
   .b h1,.b h2,.b h3{color:#fff;margin:10px 0 6px}
   footer{padding:12px 20px;background:#11141c;border-top:1px solid #20263a}
@@ -2690,7 +3002,7 @@ HTML = r"""<!DOCTYPE html>
   <div class="modal modal-env">
     <h3>🗄️ 一键添加本地模型</h3>
     <label>模型显示名</label><input id="lm_name" placeholder="如 数学大脑">
-    <label>GGUF 文件绝对路径</label><input id="lm_gguf" placeholder="如 G:/模型文件/xxx.gguf">
+    <label>GGUF 文件绝对路径</label><input id="lm_gguf" placeholder="如 D:/models/xxx.gguf（填你自己模型的真实路径）">
     <label>上下文 ctx（默认 20000）</label><input id="lm_ctx" type="number" value="20000">
     <div class="m-actions"><button onclick="closeAddLocal()">取消</button><button class="primary" onclick="saveAddLocal()">🚀 一键添加</button></div>
     <div class="think" id="lm_msg" style="margin-top:12px"></div>
@@ -2792,6 +3104,7 @@ function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>'
 function inline(t){t=t.replace(/\*\*([^\n*]+)\*\*/g,'<strong>$1</strong>')
   .replace(/(^|\n)#{1,6}\s+([^\n]+)/g,'<h3>$2</h3>')
   .replace(/`([^`\n]+)`/g,'<code>$1</code>')
+  .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>')
   .replace(/^[-*]\s+/gm,'· ')
   .replace(/\n/g,'<br>');return t;}
 // 简单关键词高亮（在已转义文本上）
@@ -2863,7 +3176,7 @@ async function confirmVideo(){const q=window._vq||'', rf=window._vr||'';
         try{fetch('/api/message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role:'小焦',content:'🎬 视频生成完成：\n[video]'+st.url+'[/video]'+(st.refined_prompt?'\n📝 提示词：'+st.refined_prompt:'')})});}catch(e){}}
       else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
       else if((st.refined_prompt)&&!sp){b.innerHTML='🎬 正在生成视频…<div class="vpvmini" style="margin-top:6px">📝 用提示词：<span style="color:#a78bfa">'+esc(st.refined_prompt)+'</span></div>';sp=true;}
-      else if(st.state==='unknown'){clearInterval(iv);b.innerHTML='⚠️ 任务状态丢失。请重新生成，或到 8188 查看。';}
+      else if(st.state==='unknown'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){}b.textContent='（视频任务已结束，如需生成请重新点 🎬）';}
       else if(n*5>2700){clearInterval(iv);b.innerHTML='⏱️ 超时，到 ComfyUI(8188) 看是否完成。';}
       else{var pr=(st.progress&&st.progress.max)?Math.round(100*st.progress.value/st.progress.max):0;var msg='🎬 '+((st.message||"生成中…")+(pr?'（第 '+st.progress.value+'/'+st.progress.max+' 步，'+pr+'%）':''))+'（已等 '+Math.round(n*5)+'s）';b.textContent=msg;if(pr>0){var bar=b.nextElementSibling;if(!bar||!bar.classList.contains("pvbar")){bar=document.createElement("div");bar.className="pvbar";b.after(bar);}bar.style.width=pr+"%";}}
      }catch(e){}
@@ -2908,7 +3221,7 @@ async function resumeVideoJob(){let job='';
       if(st.state==='done'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){}
         b.innerHTML='<video src="'+st.url+'" controls style="max-width:100%;border-radius:12px"></video><div style="font-size:12px;color:#8b93a3;margin-top:6px">🎬 真·AI 视频（刷新前生成）</div>';feed.scrollTop=feed.scrollHeight;}
       else if(st.state==='error'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){};b.innerHTML='⚠️ '+esc(st.message||'生成失败');}
-      else if(st.state==='unknown'){clearInterval(iv);b.innerHTML='⚠️ 任务状态丢失（可能已结束或服务器重启）。请重新生成，或到 8188 查看。';}
+      else if(st.state==='unknown'){clearInterval(iv);try{localStorage.removeItem('xj_video_job');}catch(e){}m.remove();}
       else if(n*5>2700){clearInterval(iv);b.textContent='⏱️ 超时，到 8188 看是否完成。';}
       else{var pr=(st.progress&&st.progress.max)?Math.round(100*st.progress.value/st.progress.max):0;var msg='🎬 '+((st.message||"生成中…")+(pr?'（第 '+st.progress.value+'/'+st.progress.max+' 步，'+pr+'%）':''))+'（已等 '+Math.round(n*5)+'s）';b.textContent=msg;if(pr>0){var bar=b.nextElementSibling;if(!bar||!bar.classList.contains("pvbar")){bar=document.createElement("div");bar.className="pvbar";b.after(bar);}bar.style.width=pr+"%";}}
     }catch(e){}
@@ -3011,7 +3324,8 @@ function renderBlocks(seg){
   // 按空行分块；识别：分割线/引用块/表格，否则行内 md
   if(!seg)return '';
   let blocks=seg.split(/\n\s*\n/),html='';
-  blocks.forEach(b=>{
+  blocks.forEach((b,bi)=>{
+    if(bi>0)html+='<br>';          // 空行分块 → 块之间补一个换行，避免段落粘连成一行
     const line=(b||'').trim();
     // --- / *** / ___ 分割线
     if(/^([-*_])\1{2,}\s*$/.test(line)){html+='<hr style="border:none;border-top:1px solid #2a3140;margin:12px 0">';return;}
@@ -3211,6 +3525,12 @@ def main():
     else:
         port = int(CONTROL.get("web_port", os.environ.get("PORT", 5000)))
     os.environ["PORT"] = str(port)
+    # 启动即预热"路径自动探测"（ComfyUI / llama-swap / 视频模型），体检页面秒开、不卡盘
+    try:
+        _discover_paths(kick=True)
+        print("  🔎 路径自动探测已在后台预热(ComfyUI / llama-swap / 视频模型)")
+    except Exception:
+        pass
     threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 

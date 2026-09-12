@@ -34,10 +34,10 @@ flowchart LR
 
 ### 1. 启动小焦
 ```powershell
-cd C:\xiaojiao\xiaojiao harness
+cd xiaojiao-harness
 python start_xiaojiao.py
 ```
-它会一起启动：llama-swap(9292) 接管聊天大脑 + 小焦 Web(5000) + N.E.K.O. 猫娘(48911/48912)。小焦自身无需单独的 DSH 桥接服务——DSH 通过把 base_url 指向小焦 `/v1` 即可把小焦当模型接入。
+它会一起启动：llama-swap(9292) 接管聊天大脑 + 小焦 Web(5000)。**猫娘是可选的**——启动时会问你一句「是否同时启动猫娘宠物」，答 `y` 才拉起 N.E.K.O.(48911/48912)，**答 `n` 不影响小焦**（`XIAOJIAO_NEKO_AUTO=1` 可免询问）。小焦自身无需单独的 DSH 桥接服务——DSH 通过把 base_url 指向小焦 `/v1` 即可把小焦当模型接入。
 
 ### 2. 在 DSH 添加模型提供方
 DSH → **设置 → 模型** → 添加提供方，填：

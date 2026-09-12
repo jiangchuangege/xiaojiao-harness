@@ -68,6 +68,10 @@
 | 🛠️ | **装小焦体检** | N.E.K.O. 插件点「🛠️ 装小焦」→ 秒级环境体检 ✅/❌ 逐条显示已装/缺什么 |
 | 🔌 | **插件万能桥** | `_make_tools_plugin` 自动把 OpenAI/Claude/DSH tool manifest 转成小焦工具（`plugins/*.json`） |
 | 🎙️ | **播客大脑** | `/podcast` 给它一个主题 → 自己写稿+配音+出封面，生成一段真·中文播客（LLM+Chatterbox+SD1.5） |
+| 🕷️ | **网页抓取（Scrapling 桥接）** | 抓网页/动态页/绕反爬/批量抓/登录态抓取，9 个工具覆盖 Scrapling 全部能力（`plugins/scrapling_bridge.py`）|
+| 📚 | **电子书下载** | `download` 一句话把 PDF/EPUB/TXT 下载到本地；网页连载可抓正文直接存成文件（`books/`）|
+| 📖 | **抓完自动解读** | 抓到内容后大脑按「是什么 / 关键要点 / 怎么用」逐条讲，看不懂的网页也能快速上手 |
+| 🧠 | **用户使用时学习** | 每次你让它干活（抓取/下载…）→ 经验沉淀进小脑 + 向量库 → 下次同类需求检索命中直接复用（越用越会）|
 
 ---
 
@@ -103,7 +107,8 @@ python start_xiaojiao.py
 - **开/关工具**：右上角「🛠️ 工具」（🟢开 / 🔴关）。
 - **建会话**：左边「＋ 新对话」；点历史会话切换，右上角「⟨」收起侧边栏。
 - **换端口**：`python start_xiaojiao.py --port 8081`，或改 `xiaojiao_control.json` 的 `web_port`。
-- **🐱 N.E.K.O. 猫娘**：`python start_xiaojiao.py` 会自动拉起你的 **N.E.K.O. 桌面客户端（`N.E.K.O.exe`，Steam 版）**，它连带拉起后端 `main_server(48911)` + `memory_server(48912)`（这两个是后端端口，不是网页入口）+ 后台学习通道。
+- **🐱 N.E.K.O. 猫娘（可选，会先问你）**：`python start_xiaojiao.py` 启动时会问「是否启动 N.E.K.O. 猫娘桌面伙伴？[Y/n]」——选 `n` **不影响小焦启动**（两者不绑死）。要免询问直接启动，设环境变量 `XIAOJIAO_NEKO_AUTO=1`。启动后拉起 Steam 桌面客户端（`N.E.K.O.exe`）+ 后端 `main_server(48911)` + `memory_server(48912)`（后端端口，不是网页入口）+ 后台学习通道。
+- **🧠 小脑（项目核心，必需）**：小焦的自研蒸馏模型。模型路径**不写死**：优先环境变量 `XIAOJIAO_BRAIN_MODEL` → 配置 `brain.xiaojiao.model_path` → 项目目录探测 → **全盘自动探测**（按关键词找 `*.pth`，模型与词表可跨目录配对、体积大的优先）。想换任意自训模型当小脑，改配置或用环境变量指过去即可。
 - **装小焦体检**：N.E.K.O. 插件「装小焦」→ 秒出环境清单 ✅/❌。
 - **成本看板**：打开 `http://127.0.0.1:5000/cost` 看今日花费。
 - **视觉识图**：设环境变量 `XIAOJIAO_VISION_URL=http://127.0.0.1:8082/v1` 后，拍照识图。
@@ -297,7 +302,9 @@ xiaojiao-harness/
 ├── ai_generate.py                #   手动投喂
 ├── validator.py                  #   数据校验
 ├── web_monitor.py                #   蒸馏监控面板
-├── plugins/                      #   插件（memory/search/weather/…）
+├── plugins/                      #   插件（memory/search/weather/scrapling_bridge/…）
+├── downloads/                    #   download 工具下载的文件（电子书 PDF/EPUB/TXT…）
+├── books/                        #   抓取正文存这里（save_to 参数）
 ├── docs/                         #   一堆说明
 ├── xiaojiao_control.json         # ★ 操控文件：人设/大脑/工具/参数/端口
 ├── xiaojiao_config.json.example
@@ -328,6 +335,7 @@ xiaojiao-harness/
 | [播客大脑](docs/podcast.md) | 给主题→写稿+配音+封面，生成播客 |
 | [N.E.K.O. 猫娘集成](docs/neko.md) | 桌面 Live2D 猫娘伙伴，学猫娘与主人的对话 |
 | [多脑秒切](docs/brain-switch.md) | 聊天/视频/播客/图像 大脑按需切换 |
+| [网页抓取 · 电子书下载](docs/scrapling.md) | Scrapling 桥接插件：9 工具/原理/配置/安全边界/架构图 |
 | [依赖检测逻辑](docs/dependency-check.md) | 模型/依赖为何按"协议连通"检测 |
 | [更新记录](CHANGELOG.md) | 每个版本改了什么 |
 | [行为准则](CODE_OF_CONDUCT.md) | 社区友好共识 |
@@ -483,7 +491,8 @@ flowchart TD
 
 | 版本 | 内容 |
 | --- | --- |
-| **v1.0.0（当前）** | 全新发布：N.E.K.O. 猫娘桌面伙伴集成(一键拉起+后台学对话) + 多大脑秒切(brain_manager/llama-swap) + 视觉/成本/插件全家桶 + 完整文档 |
+| **v1.1.0（当前）** | 🕷️ **网页抓取/电子书下载**（Scrapling 桥接插件 9 工具 + 抓完自动解读 + 用户使用时学习）+ 🧠 **小脑改为必需项**（路径不写死、全盘自动探测）+ 🛠️ 安装器检测分级（必需/可选分离）+ 🐱 猫娘询问式启动 + 一批渲染/加载器/熔断等修复 |
+| v1.0.0 | 全新发布：N.E.K.O. 猫娘桌面伙伴集成(一键拉起+后台学对话) + 多大脑秒切(brain_manager/llama-swap) + 视觉/成本/插件全家桶 + 完整文档 |
 | *历史开发版本* | v2.3.0(视觉/成本桥接) → v2.2(v2 会话侧栏) → v2.1(历史持久化) → v2.0(function calling) —— 均为 v1.0.0 之前的演进快照，已并入当前版 |
 
 ---
@@ -545,7 +554,7 @@ flowchart TD
 小焦暴露一个 **OpenAI 兼容接口**（`/v1`），DeepSeek Harness（DSH）可直接把它当**模型**接入，从而用上小焦的人格 + 工具 + 记忆，并在 DSH 里跑它的社区插件。
 
 ### 步骤
-1. **启动小焦**：`python start_xiaojiao.py`（llama-swap:9292 接管大脑 + Web 5000 + N.E.K.O. 猫娘 48911/48912 一起启动）。
+1. **启动小焦**：`python start_xiaojiao.py`（llama-swap:9292 接管大脑 + Web 5000）；脚本会**先问一句是否同时启动猫娘宠物**（答 `y` 才拉起 N.E.K.O. 48911/48912，答 `n` 或非交互式则不拉，小焦照常启动）。
 2. 在 DSH 的 **设置 → 模型** → 添加一个模型提供方：
    - Base URL：`http://127.0.0.1:5000/v1`
    - API Key：留空（本地免鉴权）
@@ -624,6 +633,14 @@ flowchart LR
         TRAIN["train_model.py 重训"]
     end
 
+    subgraph SCRAPE["🕷️ 抓取插件 scrapling_bridge（9 工具）"]
+        direction TB
+        SD["抓取意图识别 → 安全闸门<br/>SSRF·robots·限速·熔断·批量策略"]
+        SDUAL["双通道<br/>inproc 直连 / MCP(stdio·http)"]
+        SOUT["产出<br/>正文+📖解读 · books/*.md<br/>downloads/*.epub · 网页截图"]
+        SD --> SDUAL --> SOUT
+    end
+
     NEKO["🐱 N.E.K.O. 猫娘<br/>(48911/48912)"]
     ST["▶ start_xiaojiao.py"]
     DSHPLUG["🔌 DSH 功能型插件<br/>工具/接口/技能"]
@@ -643,6 +660,9 @@ flowchart LR
     ST --> NEKO
     NEKO -->|每5分钟| KNOW
     DSHPLUG -->|插件万能桥<br/>_make_tools_plugin| TOOLS
+    TOOLS <-->|"抓取 / 下载 / 截图"| SD
+    SOUT -->|"📖 解读"| A
+    SOUT -->|"经验沉淀(成功=用法/失败=反思)"| KNOW
     W --> COST_PAGE
 
     classDef in fill:#f1f5f9,stroke:#94a3b8,color:#1e293b;
@@ -652,6 +672,7 @@ flowchart LR
     classDef gen fill:#ecfdf5,stroke:#34d399,color:#064e3b;
     classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
     classDef neko fill:#fce7f3,stroke:#f472b6,color:#831843;
+    classDef scr fill:#eef2ff,stroke:#6366f1,color:#312e81;
     class U,DSH,DSHPLUG in;
     class W,A,COST_PAGE web;
     class M,S,TOOLS ag;
@@ -659,9 +680,10 @@ flowchart LR
     class VID,COMFY,OUTV gen;
     class LOG,FB,KNOW,TRAIN lrn;
     class NEKO,ST,BR neko;
+    class SD,SDUAL,SOUT scr;
 ```
 
-**调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；点 🎬 → video_service **按需切换**（卸大脑→ComfyUI+Wan2.1 生成→恢复大脑）出真视频；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + N.E.K.O. 猫娘。
+**调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；点 🎬 → video_service **按需切换**（卸大脑→ComfyUI+Wan2.1 生成→恢复大脑）出真视频；要抓资料/下电子书 → **抓取插件**（意图识别→安全闸门→双通道抓取→正文+解读/存文件），抓完的经验还会**沉淀进小脑**，下次同类需求直接复用；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + N.E.K.O. 猫娘。
 
 ---
 
@@ -832,8 +854,331 @@ flowchart LR
 - **学你与猫娘的对话**：`learn_from_neko.py` 读猫娘 `facts.json`/`persona.json` → 写进小焦记忆（`学会:*` / `猫娘说话风格`）。
 - **N.E.K.O. 插件**：`%LOCALAPPDATA%\N.E.K.O\plugins\xiaojiao_install\` 提供「装小焦」体检 + 安装指引。
 
-> 详细见 [docs/neko.md](docs/neko.md)。猫娘随 `python start_xiaojiao.py` 自动拉起。
+> 详细见 [docs/neko.md](docs/neko.md)。猫娘由 `python start_xiaojiao.py` 在启动时**先询问**再决定是否拉起。
 
+
+## 🛠️ 一键安装 · 检测分级（v1.1.0）
+
+> 一句话：安装脚本不再"一把抓"——它把 11+ 项检测拆成 **必需** 和 **可选** 两组：**缺可选只会少一个功能，绝不会拦着你进小焦**。所有路径都**靠检测得到，一个都不写死**。
+
+```mermaid
+flowchart TB
+    START(["双击 一键安装.bat<br/>或 python install_all.py"]) --> SCAN["全盘扫描<br/>关键词 + 盘符探测 + where /r 兜底"]
+
+    SCAN --> REQ{"必需项齐全?"}
+    REQ -->|"否"| BLOCK["❌ 列出缺什么 + 怎么补（不继续装）"]
+    REQ -->|"是"| OK["✅ 环境就绪，可以启动"]
+
+    subgraph MUST["必需（缺了进不去小焦）"]
+        direction TB
+        M1["Python 3.13 + requirements.txt 依赖"]
+        M2["🧠 小脑 MiniGPT · 项目核心<br/>mini_gpt_model.pth + vocab.pkl + model_config.json"]
+    end
+
+    subgraph OPT["可选（缺了只是少个功能）"]
+        direction TB
+        O1["llama-server.exe（文字大脑）"]
+        O2["llama-swap 9292（秒级切换）"]
+        O3["ComfyUI（视频大脑）"]
+        O4["🐱 猫娘 N.E.K.O. · 启动前先问 y/N"]
+        O5["Scrapling 抓取栈（网页/电子书）"]
+    end
+
+    MUST --> OK
+    OPT -.->|"不影响启动"| OK
+    OK --> RUN["python start_xiaojiao.py → 小焦上线 :5000"]
+
+    classDef req fill:#fee2e2,stroke:#ef4444,color:#7f1d1d;
+    classDef opt fill:#eef2ff,stroke:#6366f1,color:#312e81;
+    classDef go fill:#ecfdf5,stroke:#34d399,color:#064e3b;
+    class M1,M2,BLOCK req;
+    class O1,O2,O3,O4,O5 opt;
+    class OK,RUN go;
+```
+
+**必需项**（缺了小焦起不来 / 只剩空壳）
+
+| 必需项 | 为什么必需 | 检测方式（不写死路径） |
+|---|---|---|
+| Python 3.13 + 依赖包 | 运行本体 | 探测解释器 + 逐个 `import` 验证，缺啥点名 |
+| 🧠 **小脑 MiniGPT** | **项目核心**——没有它小焦不会"想" | `discover_brain_all()` 全盘找 `*.pth`（体积优先）+ 跨目录配 `vocab*.pkl` |
+
+**可选项**（缺了对应功能静默降级，不挡启动）
+
+| 可选项 | 缺了会怎样 |
+|---|---|
+| `llama-server.exe` | 文字大脑不可用（仍可用小脑/API 模型） |
+| `llama-swap` | 没有秒级切换，一次只挂一颗模型 |
+| ComfyUI | 视频生成不可用（其余功能正常） |
+| 🐱 猫娘 N.E.K.O. | 没有桌面宠物（**先询问，答 n 照常启动**） |
+| Scrapling 抓取栈 | 网页抓取 / 电子书下载不可用 |
+
+### 🧠 小脑（必需 · 项目核心 · 三种模型都能当）
+
+- 小脑是**唯一"必需"的 AI 组件**：它是小焦的"直觉层"，负责秒回、情绪、轻量判断。
+- **什么模型都能当小脑**：只要是 `*.pth + vocab*.pkl + model_config.json` 三件套，在 `xiaojiao_control.json` 里改 `brain.xiaojiao` 指向即可，**代码一行不动**。
+- **路径三级解析，永不写死**（`xiaojiao_harness.py → _resolve_brain_paths()`）：
+
+```mermaid
+flowchart LR
+    A["① 环境变量<br/>XIAOJIAO_BRAIN_MODEL 等"] --> B["② xiaojiao_control.json<br/>brain.xiaojiao.model_path / vocab_path / config_path"]
+    B --> C["③ 全盘 glob<br/>*.pth + vocab*.pkl 就近配对"]
+    C --> D["加载 → 📊 词表 6305 · embed=512 heads=8 layers=8"]
+
+    classDef s fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef d fill:#ecfdf5,stroke:#34d399,color:#064e3b;
+    class A,B,C s;
+    class D d;
+```
+
+### 🐱 猫娘（可选 · 启动前先问，绝不绑死）
+
+`start_xiaojiao.py → ask_start_neko()` 在启动时问一句 `是否同时启动猫娘宠物？ [Y/n]`：
+
+- 答 `y` → 拉起 `N.E.K.O.exe`（连带后端 48911/48912）+ 后台学习通道；
+- 答 `n`、直接回车（默认 N）、或**非交互式环境**（脚本 / CI / 无终端）→ **不拉**，小焦照常启动；
+- 环境变量 `XIAOJIAO_NEKO_AUTO=1` → 跳过询问直接自动拉起。
+
+> **猫娘和小焦互不依赖**：没有猫娘，小焦一切正常；没有小焦，猫娘照跑。想彻底分开，就答 `n`。
+
+### 🗺️ v1.1.0 改动全景（一张图看完所有改过的文件与原则）
+
+```mermaid
+flowchart TB
+    P["🧭 9 条原则（贯穿全部改动）<br/>① 不写死路径 · ② 自己找模型 · ③ 必需/可选分级<br/>④ 先问再拉 · ⑤ 抓完必解读 · ⑥ 用完即学习<br/>⑦ 安全第一 · ⑧ 报错说人话 · ⑨ 边界守规矩"]
+
+    subgraph CHG["🔧 v1.1.0 改动文件"]
+        direction TB
+        F1["install_all.py<br/>分级检测 · 全盘找小脑 · 缺可选不拦启动"]
+        F2["start_xiaojiao.py<br/>ask_start_neko() 猫娘先问 y/N"]
+        F3["xiaojiao_harness.py<br/>_resolve_brain_paths() 三级解析模型"]
+        F4["xiaojiao_app.py<br/>抓取直通 · 正文直显 · 📖解读 · 自动大纲 · 学习落盘"]
+        F5["plugins/scrapling_bridge.py<br/>9 工具 / 13 条 MCP 通道 · 安全闸门 · 熔断 · 批量"]
+        F6["xiaojiao_control.json<br/>brain.xiaojiao + scrapling 两段"]
+        F7["requirements.txt<br/>scrapling[fetchers] · markdownify · mcp"]
+        F8["README.md · docs/scrapling.md<br/>docs/architecture.md · CHANGELOG.md · docs/install.md"]
+        F9["video_service/config.py · podcast_service/podcast_gen.py<br/>视频/配音模型目录自动探测（不写死）"]
+        F10["玩具体检 · 插件 Chrome 探测<br/>xiaojiao_app.py /api/env + scrapling_bridge.py"]
+    end
+
+    P --> CHG
+    CHG --> V["✅ 验收<br/>9 工具可调 · 抓完有解读 · 模型不写死<br/>猫娘不绑死 · 缺可选不影响启动 · 一次装完就能跑"]
+
+    classDef p fill:#fef9c3,stroke:#eab308,color:#713f12;
+    classDef f fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef v fill:#ecfdf5,stroke:#34d399,color:#064e3b;
+    class P p;
+    class F1,F2,F3,F4,F5,F6,F7,F8,F9,F10 f;
+    class V v;
+```
+
+| 原则 | 落在哪个文件 / 哪个函数 |
+|---|---|
+| ① 不写死路径 | `install_all.py` 全盘发现 · `xiaojiao_harness.py::_resolve_brain_paths()` · `xiaojiao_app.py::_discover_paths()`（ComfyUI/llama-swap/视频模型）· `video_service/config.py` · `podcast_service/podcast_gen.py` · `plugins/scrapling_bridge.py`（Chrome）· `xiaojiao_control.json` |
+| ② 自己找模型 | `discover_brain_all()`（`*.pth` 体积优先 + 跨目录 `vocab*.pkl`） |
+| ③ 必需/可选分级 | `install_all.py` 的 `missing` / `opt_miss` 两组 + 报告分段 |
+| ④ 先问再拉 | `start_xiaojiao.py::ask_start_neko()`（`[Y/n]`，非交互默认不拉） |
+| ⑤ 抓完必解读 | `xiaojiao_app.py::_explain_content()` + 抓取意图直通 `_detect_scrape_intent()` |
+| ⑥ 用完即学习 | `_reflect()` / `_learn_skill()` / `_recall_skills()` → `self_learn/tool_skills.txt` |
+| ⑦ 安全第一 | `scrapling_bridge.py::SecurityGuard`（SSRF/robots/限速/脱敏）+ `CircuitBreaker` |
+| ⑧ 报错说人话 | `_tool_result_str()` 统一出口 + 中文错误 + 降级提示 |
+| ⑨ 边界守规矩 | 不绕付费墙 / 不破版权，仅抓公开可访问内容（见下方边界说明） |
+
+**用法**：双击 `一键安装.bat`（或 `python install_all.py`）→ 看报告里的 **必需 / 可选** 两段 → 缺必需按提示补 → 齐了就 `python start_xiaojiao.py`。装完想换小脑或加抓取配置，改 `xiaojiao_control.json` 即可，不用碰代码。
+
+
+## 🕷️ 网页抓取 · 电子书下载（Scrapling 桥接插件）
+
+> 一句话：**给小焦装上一双"上网抓资料"的手**——抓网页、抓动态页、绕反爬、批量抓、下载电子书；抓完**自动解读**，能直接**存成本地文件**，而且**每次使用都会让它更会用**。
+
+### 它能干嘛（9 个工具，覆盖 Scrapling 全部能力）
+
+| 工具 | 一句话 | 对应 Scrapling |
+| --- | --- | --- |
+| `get` | 抓普通网页（纯 HTTP，最快）| make_request |
+| `bulk_get` | 批量抓（去重 / 限速 / 429 退避 / 失败隔离）| bulk_get |
+| `fetch` | 抓动态页（Playwright 起浏览器渲染）| fetch |
+| `bulk_fetch` | 批量渲染抓取 | bulk_fetch |
+| `stealthy_fetch` | 隐身抓取（绕 Cloudflare / 反爬，开销大）| stealthy_fetch |
+| `bulk_stealthy_fetch` | 批量隐身抓取（≤20 个）| bulk_stealthy_fetch |
+| `scrape_with_selector` | 按 CSS 选择器抓取，**自适应防站点改版** | make_request/fetch + css_selector |
+| `browser_session` | 会话管理 + **登录态抓取** + **整页截图** | open_session / open_request_session / close_session / list_sessions / session_fetch / session_make_request / screenshot |
+| 🆕 `download` | **下载文件**（PDF / EPUB / TXT / ZIP）到本地 | （插件自研，Scrapling 无此能力）|
+
+> 13 个 Scrapling MCP 工具 → 小焦 **9 个工具全部覆盖**；多出的 `download` 与 `save_to` 是插件自研（Scrapling 只抓网页、不下文件）。
+
+### 一张图看懂它怎么工作（架构 · 数据流）
+
+```mermaid
+flowchart TB
+    subgraph U["🧑 用户"]
+        Q["「抓一下 xxx.com」<br/>「下载这本电子书」<br/>「抓这章存成文件」"]
+    end
+
+    subgraph APP["🧡 小焦壳 · xiaojiao_app.py"]
+        direction TB
+        DI["① 抓取意图识别<br/>_detect_scrape_intent()<br/>抓/爬/下载 + 网址 → 自动选工具"]
+        WS["② 上下文装配<br/>记忆 + 联网 + 技能检索 _recall_skills()"]
+        TR["⑥ 工具轨迹<br/>_trace_summary() 压成一行"]
+        EX["⑦ 抓完解读<br/>_explain_content()<br/>是什么 / 要点 / 怎么用"]
+        LE["⑧ 用户使用时学习<br/>_learn_skill()"]
+    end
+
+    subgraph BR["🕷️ plugins/scrapling_bridge.py"]
+        direction TB
+        SEC["SecurityGuard<br/>SSRF 100% 拦截 · robots.txt<br/>同域限速 · UA 合规 · 日志脱敏"]
+        CB["CircuitBreaker<br/>连续失败 3 次 → 暂停 30s → 自愈"]
+        BM["BatchManager<br/>URL 去重 · 429 指数退避<br/>代理轮换(≤5次) · 部分失败隔离"]
+        AR["AsyncRunner<br/>专用事件循环线程<br/>（绝不 asyncio.run）"]
+        MC["MCPClient<br/>连接池 · 健康检查<br/>30s 自动重连 · 超时取消"]
+        SM["SelectorManager<br/>自适应选择器<br/>指纹相似度 + 多候选置信度"]
+    end
+
+    subgraph DUAL["🔀 双通道（mode 可切）"]
+        IP["inproc 直连<br/>scrapling API（默认，错误信息完整）"]
+        MP["MCP 服务<br/>stdio 子进程 / streamable-http"]
+    end
+
+    subgraph OUT["📦 产出"]
+        R1["正文 Markdown<br/>+ 📖 解读"]
+        R2["books/*.md<br/>save_to 存文件"]
+        R3["downloads/*.epub<br/>download 下载"]
+        R4["media/screenshot/*.png<br/>网页截图"]
+    end
+
+    subgraph LR["🧠 小脑（越用越会）"]
+        KF["self_learn/tool_skills.txt<br/>成功=用法 · 失败=反思"]
+        VEC["self_learn/knowledge_vec.json<br/>向量库（语义检索）"]
+    end
+
+    Q --> DI --> SEC
+    WS --> SEC
+    SEC --> CB --> BM --> AR --> MC
+    MC --> IP
+    MC --> MP
+    MC --> SM
+    IP --> R1 & R2 & R3 & R4
+    MP --> R1 & R2 & R3 & R4
+    R1 --> TR --> EX
+    TR --> LE --> KF --> VEC
+    VEC -. "检索命中即复用" .-> WS
+
+    classDef u fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef app fill:#fff7ed,stroke:#fb923c,color:#7c2d12;
+    classDef br fill:#f3e8ff,stroke:#a78bfa,color:#4c1d95;
+    classDef out fill:#ecfdf5,stroke:#34d399,color:#064e3b;
+    classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
+    class Q u;
+    class DI,WS,TR,EX,LE app;
+    class SEC,CB,BM,AR,MC,SM,IP,MP br;
+    class R1,R2,R3,R4 out;
+    class KF,VEC lrn;
+```
+
+### 用法（说人话）
+
+| 你对小焦说 | 它做什么 | 存到哪 |
+| --- | --- | --- |
+| 「抓一下 example.com」 | `get`（最快）| 直接看正文 + 📖 解读 |
+| 「抓取 https://a.com 和 https://b.com」 | `bulk_get`（自动去重 + 限速）| 逐项结果 |
+| 「用浏览器渲染抓 https://…」 | `fetch`（动态页面）| — |
+| 「用 stealthy_fetch 抓 https://…」 | `stealthy_fetch`（绕 Cloudflare）| — |
+| 「抓这章存成 mybook.md」 | `get` + `save_to` | `books/mybook.md` |
+| 「下载这本电子书 https://…epub」 | 🆕 `download` | `downloads/xxx.epub` |
+| 「开个会话，登录后抓 https://…」 | `browser_session`（登录态）| — |
+| 「给 https://… 截个整页图」 | `browser_session` screenshot | `media/screenshot/*.png` |
+
+抓完会自动附上 **📖 小焦解读**：
+```
+🌐 https://example.com · HTTP 200
+
+# Example Domain
+This domain is for use in documentation examples…
+
+──────────────
+📖 小焦解读
+这是一个用于文档示例的占位域名页面，本身不提供实际功能。
+· 它仅用于演示和文档说明，不具备任何真实服务或数据。
+· 域名由 IANA 专门保留，用于技术文档、教程和示例代码中。
+· 页面中唯一的可点击链接指向 IANA 官网…
+```
+
+### 原理（为什么稳、为什么省心）
+
+1. **抓取意图直通** — 4B 模型自己选工具不稳（会瞎编代码）。小焦用规则识别「抓/爬/下载 + 网址」→ **直接构造工具调用**，说到就做到。
+2. **正文直显，不被"总结"吃掉** — 抓取结果不交给小模型复述（它会把正文压成一句），而是**原样展示**，再附解读。
+3. **异步桥接** — Flask 是同步线程、Scrapling 是异步 API：用**专用事件循环线程 + 线程池**承接，**绝不 `asyncio.run()`**（避免循环冲突）。超时用 `future.result(timeout)` 强制取消。
+4. **双通道** — `inproc` 进程内直连（默认，**错误信息完整**：MCP 出错只回一句笼统说明）｜ `mcp` 走 MCP 服务（stdio / http）。`mode` 可配。
+5. **安全闸门** — **SSRF 100% 拦截**（本机/内网/保留地址/file:// 等，DNS 解析后再校验一次）· robots.txt 合规 · 同域 ≤1 请求/秒 · UA 合规（不伪装爬虫）· 日志脱敏（Key/Token/Cookie 一律打码）· 结果只落本地不上传。
+6. **批量策略** — URL 去重 → 逐条限速 → 429 指数退避（1→2→4→8s）→ 代理轮换（单代理 ≤5 次）→ **单个失败不影响其它**（逐项标记）。
+7. **熔断自愈** — 同一工具连续失败 3 次 → 暂停 30 秒并返回中文提示 → **自动恢复**（绝不永久禁用）。**安全拦截不计入熔断**（那是正常拒绝，不是故障）。
+8. **自适应选择器** — 保存时记录标签/class/id/文本/父路径/兄弟位置/属性集合；恢复时加权相似度匹配，**返回全部候选 + 置信度**；元素被删则返回结构化 `not_found`，**绝不返回错误元素**。
+9. **内容标准化** — 统一 `{status, url, content, error}`；HTML→Markdown；**Setext 标题转 ATX**（`标题\n====` → `# 标题`，前端才渲染得出标题）；JSON 超长截断；错误一律中文可读、**绝不把 Python 堆栈丢给模型**。
+
+### 🧠 用户使用时学习（越用越会）
+
+**不是**从插件代码里学，而是**你每次用它干活时**，它就把这次经验记下来：
+
+```mermaid
+flowchart LR
+    A["用户：抓一下 xxx.com"] --> B["小焦调用 stealthy_fetch"]
+    B --> C{"成功?"}
+    C -->|"✅ 成功"| D["记：需求→工具→参数→结果<br/>（正确用法）"]
+    C -->|"❌ 失败"| E["记：原因 + 反思<br/>（下次怎么改）"]
+    D --> F["self_learn/tool_skills.txt"]
+    E --> F
+    F --> G["向量库 knowledge_vec.json"]
+    G --> H["下次同类需求<br/>_recall_skills() 检索命中"]
+    H --> I["注入上下文 → 大脑直接照做<br/>不用重新推理"]
+    I -.->|"越用越准"| B
+
+    classDef u fill:#e0f2fe,stroke:#38bdf8,color:#0c4a6e;
+    classDef ok fill:#ecfdf5,stroke:#34d399,color:#064e3b;
+    classDef bad fill:#fef2f2,stroke:#f87171,color:#7f1d1d;
+    classDef lrn fill:#fef9c3,stroke:#eab308,color:#713f12;
+    class A,B u;
+    class C u;
+    class D ok;
+    class E bad;
+    class F,G,H,I lrn;
+```
+
+已有的**反思规则**（自动生成"下次怎么改"）：robots 限制 → 提示换站点｜SSRF → 直接告知不可抓｜超时 → 加大 timeout 或换轻工具｜缺依赖 → 提示装包｜MCP 未启动 → 提示先启动｜会话未开 → 提示先 `open`。
+
+### 配置（`xiaojiao_control.json` → `scrapling` 段）
+
+```json
+"scrapling": {
+  "mode": "auto",                    // auto=进程内优先(最稳) | mcp=强制走 MCP | inproc
+  "scrapling_mcp_url": "",           // http 模式填 http://127.0.0.1:8000/mcp
+  "executable_path": "D:\\tools\\chrome-win64\\chrome.exe",  // 自备 Chrome（留空 = 自动探测 / 用内置）
+  "proxy_list": [],                  // 代理池，如 ["http://user:pass@127.0.0.1:7890"]
+  "rate_limit": 1.0,                 // 同域最小请求间隔（秒）
+  "timeout": 60,                     // 单次调用超时（秒）
+  "max_retries": 2,
+  "circuit_breaker_threshold": 3,    // 连续失败几次触发熔断
+  "circuit_breaker_timeout": 30      // 熔断多久后自动恢复（秒）
+}
+```
+
+### 依赖
+
+```powershell
+python -m pip install "scrapling[fetchers]" markdownify mcp -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+· `scrapling[fetchers]` 抓取内核｜`markdownify` 正文转 Markdown｜`mcp` 仅 `mode="mcp"` 需要
+· 浏览器渲染需要 Chromium（自备 Chrome 填 `executable_path`，或 `scrapling install`）
+
+### 边界（重要）
+
+- 🚫 **不绕付费墙、不抓需登录的受限内容、不下载受版权保护的正文**（商业小说/付费课程等一律只取公开信息）
+- 🚫 **不抓内网/本机地址**（SSRF 防护 100% 拦截，含 `127.0.0.1` / `10.x` / `192.168.x` / `169.254.x` / `file://`）
+- ✅ 适合：公版书（古腾堡/维基文库/ctext）、公开文档与论文、新闻与公开数据、你自己的站点/资料
+- 📌 抓取前会自动检查 `robots.txt`；请在遵守目标站点条款与当地法律的前提下使用
+
+> 详细原理、测试清单与排错见 [docs/scrapling.md](docs/scrapling.md)。
+
+---
 
 ## 💙 一份温柔的小约定
 

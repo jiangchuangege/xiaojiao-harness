@@ -44,10 +44,10 @@
 ```powershell
 cd xiaojiao
 pip install -r requirements.txt
-python start_xiaojiao.py   # 自动拉起多大脑 + 网页 + 桌面猫娘
+python start_xiaojiao.py   # 拉起多大脑 + 网页；再问一句是否同时启动桌面猫娘（可选）
 ```
 
-打开 `http://127.0.0.1:5000`，桌面上一只猫娘就出现了。
+打开 `http://127.0.0.1:5000`；猫娘选 `y` 的话，桌面上一只猫娘就出现了。
 
 ---
 

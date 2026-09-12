@@ -19,9 +19,41 @@ import torch
 import torch.nn as nn
 import requests
 
-MODEL_PATH = "mini_gpt_model.pth"
-VOCAB_PATH = "vocab.pkl"
-CONFIG_PATH = "model_config.json"
+def _resolve_brain_paths():
+    """解析小脑(自研蒸馏模型)的文件路径 —— 不写死，可自己改、可自动探测。
+    优先级：
+      ① 环境变量 XIAOJIAO_BRAIN_MODEL / XIAOJIAO_BRAIN_VOCAB / XIAOJIAO_BRAIN_CONFIG
+      ② 操控文件 xiaojiao_control.json 的 brain.xiaojiao.{model_path,vocab_path,config_path}
+      ③ 自动探测当前目录：*.pth + vocab*.pkl + model_config*.json
+      ④ 默认 mini_gpt_model.pth / vocab.pkl / model_config.json
+    想换任意自训模型当小脑：改配置(或环境变量)指到你的模型文件即可。
+    """
+    import glob as _g
+    model = os.environ.get("XIAOJIAO_BRAIN_MODEL", "")
+    vocab = os.environ.get("XIAOJIAO_BRAIN_VOCAB", "")
+    conf = os.environ.get("XIAOJIAO_BRAIN_CONFIG", "")
+    if not (model and os.path.exists(model)) or not (vocab and os.path.exists(vocab)):
+        try:
+            _cfg = json.load(open("xiaojiao_control.json", encoding="utf-8"))
+            _xj = (_cfg.get("brain") or {}).get("xiaojiao") or {}
+            model = model or _xj.get("model_path", "")
+            vocab = vocab or _xj.get("vocab_path", "")
+            conf = conf or _xj.get("config_path", "")
+        except Exception:
+            pass
+    if not (model and os.path.exists(model)):          # 自动探测
+        _c = sorted(_g.glob("*.pth"))
+        model = _c[0] if _c else "mini_gpt_model.pth"
+    if not (vocab and os.path.exists(vocab)):
+        _c = sorted(_g.glob("vocab*.pkl"))
+        vocab = _c[0] if _c else "vocab.pkl"
+    if not (conf and os.path.exists(conf)):
+        _c = sorted(_g.glob("model_config*.json"))
+        conf = _c[0] if _c else "model_config.json"
+    return model, vocab, conf
+
+
+MODEL_PATH, VOCAB_PATH, CONFIG_PATH = _resolve_brain_paths()
 MEMORY_PATH = "xiaojiao_memory.txt"
 
 # 检索用的历史问答库（优先清洗版，其次原始训练池）
