@@ -82,7 +82,7 @@ https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=5&cvssV3Severity
 | 时间窗 | **强制**带 `lastModStartDate` / `lastModEndDate`（UTC，`days` 默认 7，上限 120 = NVD 官方限制）|
 | 取数 | `resultsPerPage=50`；窗口内记录多于一页时取"最新一页 + 最早一页"，保证最新几条在手里（NVD 返回按 lastModified 升序）|
 | 等级 | CVSS 取值优先级 v4.0 → v3.1 → v3.0 → v2；v2 没有 `baseSeverity` 时按官方分段区间补等级；`severity=HIGH` 表示**HIGH 及以上**（含 CRITICAL），写多个等级（`HIGH,CRITICAL`）或 `ANY` 也可 |
-| 受影响软件 | 从 CPE 还原人话：`cpe:2.3:a:apache:http_server:1.0` → `Apache HTTP Server 1.0`；新 CVE 尚未收录 CPE 时，从英文描述里**保守摘取**并标注"（描述推断）"，摘不到就写"（NVD 未收录产品配置）"——**不写 n/a，也不臆造** |
+| 受影响软件 | 从 CPE 还原人话：`cpe:2.3:a:apache:http_server:1.0` → `Apache HTTP Server 1.0`；新 CVE 尚未收录 CPE 时，从英文描述里**保守摘取**并标注"（描述推断）"，摘不到就写"（NVD 未收录产品配置）"——**不写 n/a** |
 | 输出 | 直接返回 Markdown 表：`序号 / CVE 编号 / 等级 / 评分 / 受影响软件 / 发布时间 / 摘要`，前面带时间窗、数据源、**实际扫描范围**、命中条数 |
 | 抽样透明 | 没拉到的页、没有 CVSS 评分的记录，都在表头如实标注（"只扫描了最新 50 条"），不把不完整讲成完整 |
 

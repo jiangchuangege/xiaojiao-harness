@@ -300,4 +300,23 @@ def run(res: Results, mod=None) -> Results:
     res.check("漏洞聚合", "窗口很小(全扫)时说已全部扫描",
               "已全部扫描" in mod.build_vuln_markdown([_row], "HIGH 及以上", 1, "s", "e", 12, 12, 0, 5), "")
 
+    # ---------- 11. 兼容聚合入口 browser_session（原理审计 P11 发现它没有测试引用） ----------
+    # 它是"一个工具用 action 走完会话全流程"的老用法兼容层：这里把 action 分发逐条钉死，
+    # 免得哪天 action 名字改了、或非法 action 漏中文提示。
+    _, _, _e_bs, _d_bs = bx.call("browser_session", {"action": "list"}, cap=30)
+    res.check("兼容入口", "browser_session(action=list) 能列出会话（无会话时为合法空数组）",
+              not _e_bs and (_d_bs.get("content") or "").strip().startswith("["),
+              "err=%s content=%s" % (_e_bs[:40], (_d_bs.get("content") or "")[:60]))
+    _, _, _e_bs2, _d_bs2 = bx.call("browser_session", {"action": "不合法"}, cap=20)
+    res.check("兼容入口", "非法 action 给中文提示并列出可用值",
+              "未知 action" in _e_bs2 and "open_http" in _e_bs2, _e_bs2[:70])
+    _, _, _e_bs3, _d_bs3 = bx.call("browser_session", {"action": "fetch"}, cap=20)
+    res.check("兼容入口", "action=fetch 确实分发到原生 session_fetch（缺参给中文错误）",
+              "session_fetch" in _e_bs3, _e_bs3[:70])
+    _, _, _e_bs4, _d_bs4 = bx.call("browser_session",
+                                   {"action": "fetch", "url": "http://127.0.0.1:5000/",
+                                    "session_id": "x"}, cap=30)
+    res.check("兼容入口", "action=fetch 同样过 SSRF 闸门",
+              ("SSRF" in _e_bs4) or ("禁止访问" in _e_bs4), _e_bs4[:70])
+
     return res

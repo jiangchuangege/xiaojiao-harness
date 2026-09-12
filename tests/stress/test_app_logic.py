@@ -36,7 +36,7 @@ def _load_app():
         sys.modules["xiaojiao_app_under_test"] = mod
         spec.loader.exec_module(mod)
         _APP = mod
-    except Exception as e:                        # 依赖缺失/环境异常 → 跳过，不制造假失败
+    except Exception as e:                        # 依赖缺失/环境异常 → 跳过（不误报失败）
         _ERR = "%s: %s" % (type(e).__name__, str(e)[:120])
     finally:
         os.chdir(_old)

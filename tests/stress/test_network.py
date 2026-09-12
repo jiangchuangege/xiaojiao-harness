@@ -29,7 +29,7 @@ def run(res: Results, mod=None, quick: bool = False) -> Results:
         res.check("抓取", "%s 正常抓取" % tool, (not err) and (not hung) and d.get("status") == 200,
                   "status=%s 耗时%.1fs err=%s" % (d.get("status"), el, err[:50]))
 
-    # 选择器未匹配 → 结构化 not_found（不得假装成功）
+    # 选择器未匹配 → 结构化 not_found（不得返回成功）
     _, _, err, d = b.call("scrape_with_selector", {"url": URL_OK, "selector": "div.no-such-xyz", "timeout": 25})
     res.check("抓取", "选择器未匹配返回 not_found", bool(err) and d.get("not_found") is True, err[:60])
 
@@ -148,7 +148,7 @@ def run(res: Results, mod=None, quick: bool = False) -> Results:
                   "n/a" not in _md and len(_named) >= 3, "有名字的行=%d/5" % len(_named))
         res.check("漏洞聚合", "等级只在要求范围内（HIGH 及以上）",
                   all(("| HIGH |" in r) or ("| CRITICAL |" in r) for r in _rows[2:]), "")
-        # 参数夹取与等级放宽在真实接口下也要成立（NVD 限流时如实跳过，不算失败）
+        # 参数夹取与等级放宽在真实接口下也要成立（NVD 限流时跳过，不算失败）
         _, _, _e2, _d2 = b.call("collect_vulnerabilities", {"days": 30, "severity": "ANY", "limit": 2}, cap=180)
         if _e2 and any(k in _e2 for k in ("限流", "429", "请求失败", "网络请求失败", "过大")):
             res.skip("漏洞聚合", "days 上限夹取 / severity=ANY", "接口限流：%s" % _e2[:60])

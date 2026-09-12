@@ -1905,7 +1905,7 @@ def _software_from_desc(desc: str) -> str:
     为什么需要：刚公布的 CVE（vulnStatus=Received/Awaiting Analysis）在 NVD 里
     configurations 是空的，只显示 CPE 就会出现一整列"未收录"——用户看到的还是"没有软件名"。
     这里只认几种固定英文句式，摘到就在单元格里标注"（描述推断）"，摘不到就如实说未收录，
-    **绝不臆造**。
+    不编造软件名。
     """
     s = re.sub(r"\s+", " ", str(desc or "")).strip()
     if not s:
@@ -2888,7 +2888,7 @@ class ScraplingBridge:
             res = _CLIENT.call_tool("fetch", args2, timeout=_t, clip=False)
         if res.get("error"):
             return fmt_result(res.get("status", 0), url, "", res["error"])
-        # 选择器没匹配到 → 结构化 not_found，绝不"空内容 + 假装成功"
+        # 选择器没匹配到 → 结构化 not_found，不会返回"空内容 + 成功"这种误导结果
         # （压力测试实测：selector 不存在时之前返回 status=200 + 空正文，调用方以为抓到了东西）
         _body = res.get("content", "") or ""
         if not _body.strip():

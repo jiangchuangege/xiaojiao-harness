@@ -81,6 +81,55 @@ def main() -> int:
                     return True
             return False
 
+        # ---------- 0. 布局：居中输入区 / 欢迎卡 / 预设入口 ----------
+        print("\n[0] 布局（居中 composer / 欢迎卡 / 预设选择器）")
+        page.wait_for_timeout(1200)
+        # 先开一个新会话：空状态才应该出现欢迎卡（有历史记录时不该硬塞欢迎卡）
+        try:
+            page.click("text=➕ 新会话")
+            page.wait_for_timeout(1200)
+        except Exception:
+            pass
+        lay = page.evaluate("""() => {
+            const c=document.querySelector('.composer');
+            const r=c?c.getBoundingClientRect():null;
+            const inp=document.getElementById('inp');
+            const send=document.querySelector('.cmp-send');
+            const sel=document.getElementById('presetSel');
+            const chips=document.querySelectorAll('#feed .welcome .chip');
+            const w=document.querySelector('#feed .welcome');
+            const feed=document.getElementById('feed');
+            // 关键：输入区应该和"对话内容列"共用同一根轴线（不是相对整个窗口居中，
+            // 因为左边还有侧栏；和消息列对齐才是视觉上正确的居中）
+            const firstMsg=document.querySelector('#feed .m .b') || w;
+            const fr=firstMsg?firstMsg.getBoundingClientRect():null;
+            return {
+              hasComposer:!!c, cw:r?Math.round(r.width):0, l:r?r.left:0, rr:r?r.right:0,
+              cc:r?(r.left+r.right)/2:0,
+              tag:inp?inp.tagName:'', inComposer:!!(c&&inp&&c.contains(inp)),
+              sendRadius:send?getComputedStyle(send).borderRadius:'',
+              presetOptions:sel?sel.options.length:0,
+              welcome:!!w, chips:chips.length,
+              feedMid: feed?Math.round(feed.getBoundingClientRect().width/2+feed.getBoundingClientRect().left):0
+            };
+        }""")
+        check("输入区与对话列共用同一轴线（视觉居中）",
+              lay["hasComposer"] and lay["feedMid"] and abs(lay["cc"] - lay["feedMid"]) <= 80,
+              "输入区中心=%.0f 对话列中心=%d" % (lay["cc"], lay["feedMid"]))
+        check("输入区宽度收窄到 820px 量级（不再拉满全屏）", 600 <= lay["cw"] <= 860, "%dpx" % lay["cw"])
+        check("输入框是 textarea 且位于输入卡片内",
+              lay["tag"] == "TEXTAREA" and lay["inComposer"], lay["tag"])
+        check("发送按钮是圆形", lay["sendRadius"].startswith(("50%", "9999px", "20px")), lay["sendRadius"])
+        check("预设选择器已出现在输入区（选项 ≥3）", lay["presetOptions"] >= 3, "%d 项" % lay["presetOptions"])
+        check("新会话时显示欢迎卡（含示例 chips ≥3）",
+              lay["welcome"] and lay["chips"] >= 3, "chips=%d" % lay["chips"])
+        # 点一下示例 chip：应该自动填进输入框
+        if lay["chips"]:
+            page.click("#feed .welcome .chip")
+            filled = page.input_value("#inp")
+            check("点示例 chip 会把问题填进输入框", bool(filled.strip()), "填入：%s" % filled[:40])
+            page.fill("#inp", "")
+
         # ---------- 1. 代码块：底色干净 + 有语法配色 ----------
         print("\n[1] 代码块（配色 + 无阴影/无多余底色）")
         got = ask("用 python 写一个计算斐波那契数列的脚本", "```", timeout=120)
@@ -118,7 +167,13 @@ def main() -> int:
         # ---------- 2. 表格：留白 + 不折断 + 容器变宽 ----------
         print("\n[2] 表格（留白/不折字/容器变宽）")
         got = ask("抓取最近 7 天的高危漏洞", "NVD 漏洞速览", timeout=200)
-        check("漏洞表格已渲染", bool(got) and page.query_selector("table") is not None, "")
+        # 打字机播完才会把表格挂上 DOM 并给气泡加 .wide → 先等它稳定，再断言/量宽度
+        for _ in range(24):
+            if page.query_selector(".b.wide .tblwrap table"):
+                break
+            page.wait_for_timeout(500)
+        page.wait_for_timeout(400)
+        check("漏洞表格已渲染", bool(got) and page.query_selector(".b.wide .tblwrap table") is not None, "")
         if page.query_selector("table"):
             t = page.evaluate("""() => {
                 const wrap=document.querySelector('.tblwrap');
