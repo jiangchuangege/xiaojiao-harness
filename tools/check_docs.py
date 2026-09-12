@@ -25,6 +25,7 @@ import argparse
 import io
 import os
 import re
+import subprocess
 import sys
 
 # CI（GitHub Windows runner）控制台不是 UTF-8，打印中文会 UnicodeEncodeError —— 入口先切成 UTF-8
@@ -65,6 +66,56 @@ HISTORY_DOCS = ("CHANGELOG.md", "docs/landing-report.md", "docs/release-and-roll
 
 def _rel(p: str) -> str:
     return os.path.relpath(p, ROOT).replace("\\", "/")
+
+
+_IGN_CACHE = {}
+
+
+def _is_gitignored(path: str) -> bool:
+    """用 git 自己判断某个路径是不是**被 .gitignore 忽略的运行态产物**。
+
+    为什么关键：文档里大量引用"跑起来才会生成"的文件（training_data_pool.txt、feedback_log.json、
+    xiaojiao_memory.txt、本地插件 plugins/db_helper.py…）。这些在干净克隆里当然不存在，
+    但它们**不是文档错误** —— 判据就是"仓库明确忽略它"。
+
+    实现说明：`git check-ignore --stdin` 在**遇到第一个未忽略的路径就会停下**（除非加 -n），
+    批量喂路径会漏判（真实踩过），所以这里逐个问、并缓存结果。
+    """
+    p = (path or "").split("#")[0].strip()
+    if not p:
+        return False
+    if p in _IGN_CACHE:
+        return _IGN_CACHE[p]
+    ok = False
+    try:
+        r = subprocess.run(["git", "check-ignore", "-q", "--", p], cwd=ROOT,
+                           capture_output=True, text=True)
+        ok = (r.returncode == 0)
+    except Exception:  # noqa: silent-ok — 没有 git（或非仓库）时退化为"不做忽略判定"
+        ok = False
+    _IGN_CACHE[p] = ok
+    return ok
+
+
+def _ignored_basename(name: str) -> bool:
+    """兜底：文档里常只写文件名（如 `little_brain_knowledge.txt`，目录在上文/树形图里给出）。
+
+    这类只写文件名的引用，如果 .gitignore 里存在**同名的运行态产物规则**，就认定它指的就是那个产物，
+    不算文档错误。
+    """
+    if not name or "/" in name:
+        return False
+    try:
+        with io.open(os.path.join(ROOT, ".gitignore"), encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                if s.split("/")[-1].rstrip("/") == name:
+                    return True
+    except OSError:  # noqa: silent-ok — 没有 .gitignore 就退化为"不做该判定"
+        return False
+    return False
 
 
 def md_files() -> list:
@@ -170,6 +221,7 @@ def main() -> int:
     tool_names |= set(re.findall(r'"name":\s*"([a-z_0-9]+)"', plugin_src))
 
     errors, warns, checked = [], [], 0
+    missing = []                     # 先收集"找不到的路径"，最后统一用 git 判断是不是运行态产物
     link_re = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
     path_re = re.compile(r"`([A-Za-z0-9_\-./]+\.(?:py|md|json|txt|yml|yaml|js|bat|ps1|sh|lock))`")
     ep_re = re.compile(r"`?(/[a-z][a-z0-9_/]*(?:/[a-z0-9_\-{}]+)*)`?")
@@ -181,11 +233,11 @@ def main() -> int:
         for m in link_re.finditer(text):
             checked += 1
             if not _exists(m.group(1), f):
-                errors.append("%s: 链接指向不存在的文件 → %s" % (rel_f, m.group(1)))
+                missing.append((rel_f, m.group(1), "链接指向不存在的文件"))
         for m in path_re.finditer(text):
             checked += 1
             if not _exists(m.group(1), f):
-                errors.append("%s: 提到的路径不存在 → %s" % (rel_f, m.group(1)))
+                missing.append((rel_f, m.group(1), "提到的路径不存在"))
         # 端点：只对**本仓库自己的 /api/... 命名空间**较真，外部服务（/v1、/progress、/models）
         # 出现在文档里是正常的，不当问题
         for m in re.finditer(r"`(/api/[A-Za-z0-9_/]+)`", text):
@@ -223,6 +275,14 @@ def main() -> int:
                 block = []
         if block:
             _flush_block(block)
+
+    # 统一判定"找不到的路径"：被 .gitignore 忽略的 = 运行态/本地产物，文档引用它们是正常的
+    for rel_f, p, why in missing:
+        _p = p.split("#")[0].strip()
+        if _is_gitignored(_p) or _ignored_basename(_p):
+            warns.append("%s: %s → %s（已被 .gitignore 忽略，属运行态产物）" % (rel_f, why, p))
+        else:
+            errors.append("%s: %s → %s" % (rel_f, why, p))
 
     if not args.quiet:
         print("检查 %d 个文档、%d 项断言（链接/路径/端点/工具名）" % (len(md_files()), checked))

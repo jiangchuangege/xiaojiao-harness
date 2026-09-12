@@ -285,6 +285,7 @@ python tests/stress/run_all.py --offline                                        
 python tests/stress/live_check.py                                                   # 实机验收（需服务在跑，29 项）
 python tests/stress/ui_check.py --vuln --out ui_chat.png                            # 真浏览器渲染（含漏洞表格场景）
 python tools/check_mermaid.py --all                                                 # Mermaid 图语法（42 张）
+python tools/check_docs.py                                                          # 文档 ↔ 代码一致性（链接/路径/接口/工具名）
 python tools/audit_static.py                                                        # 静态质量审计
 python -m ruff check --select E9,F63,F7,F82 .                                       # 真 bug 级静态检查（未定义名/语法）
 ```
