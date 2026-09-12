@@ -442,6 +442,14 @@ def _build_tools():
             continue
         for t in p.get("desc", []):
             if isinstance(t, dict) and t.get("name"):
+                # **真实缺陷**：外部清单类插件（`{"tools":[{...}]}` 且**没写 url**）里的工具
+                # 其实**执行不了**（execute 只会回一句"需对应运行时或填写 url"）。原来照样塞给
+                # 模型 → 模型真的去调它，拿到一句废话，用户看到的就是"调用了工具却没结果"
+                # （实测截图上就出现过 `调用 get_time → 需填写 url` 这种徽标）。
+                # 执行不了的就不摆进工具表；设置页里仍然看得到（方便你补 url）。
+                if getattr(p.get("instance"), "_tp", None) and not (
+                        t.get("url") or (t.get("manifest") or {}).get("url")):
+                    continue
                 _TOOL2PLUGIN[t["name"]] = pname
                 tools.append({"type": "function", "function": {
                     "name": t["name"], "description": t.get("description", ""),
@@ -2099,8 +2107,10 @@ def agent_run(user_input, lean=False):
     if has_llm and answer is None:
         home = os.path.expanduser("~")
         desktop = os.path.join(home, "Desktop")
-        path_ctx = ("\n[环境] 当前工作目录：%s；用户主目录：%s；桌面：%s。"
-                    "凡是要创建文件/文件夹/读写文件，一律用绝对路径（如桌面文件用 %s\\文件名）。" % (os.getcwd(), home, desktop, desktop))
+        path_ctx = ("\n[环境] 当前时间：%s（本地时间，回答「现在几点/今天几号」必须用它，不要自己猜）；"
+                    "当前工作目录：%s；用户主目录：%s；桌面：%s。"
+                    "凡是要创建文件/文件夹/读写文件，一律用绝对路径（如桌面文件用 %s\\文件名）。"
+                    % (time.strftime("%Y-%m-%d %H:%M:%S %A"), os.getcwd(), home, desktop, desktop))
         tool_guidance = "\n[工具用法] 写文件/建网站/代码用 write_file(路径用 Windows 绝对路径, 会自动建目录); 查信息/运行命令用 run_command(PowerShell 语法, 不能用并字连接命令要用分号; 不要用 run_command 去写文件)。\n"
         skills = "\n\n[技能插件] " + "\n\n".join(c for _, c in PLUGIN_SKILLS) if PLUGIN_SKILLS else ""
         skills = tool_guidance + "\n[铁律] 凡是要帮我做实事(写文件/建网页/运行命令/查资料/列文件/读取/打开)，你必须先调用对应工具，不能只把结果或代码直接打在聊天里。" \

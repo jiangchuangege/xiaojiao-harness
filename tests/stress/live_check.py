@@ -188,6 +188,19 @@ def main() -> int:
     code, r = post("/api/session/delete", {})
     check("不传 id 时给中文错误", code == 400, "HTTP %s" % code)
 
+    print("\n[12] 时间类提问必须用真实时间（真实缺陷：模型自己编日期）")
+    _sid2 = ""
+    code, r = post("/api/session/new", {})
+    if code == 200:
+        _sid2 = (r.json().get("id") or "")
+    code, r = post("/api/chat", {"message": "现在几点了"})
+    ans = (r.json().get("answer") or "") if code == 200 else ""
+    _now = time.strftime("%Y")
+    check("问时间时给出的是真实年份（不是模型猜的）", _now in ans,
+          "答案里应有 %s：%s" % (_now, ans[:60].replace("\n", " ")))
+    if _sid2:
+        post("/api/session/delete", {"id": _sid2})
+
     print("\n" + "=" * 68)
     print("  实机验收：通过 %d / %d" % (len(passed), len(passed) + len(failed)))
     for f in failed:

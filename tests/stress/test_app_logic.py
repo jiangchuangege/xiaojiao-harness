@@ -110,6 +110,23 @@ def run(res: Results) -> Results:
               "collect_vulnerabilities" in names, "工具数=%d" % len(names))
     res.check("工具注册", "web_search 仍是主程序内置工具", "web_search" in names, "")
 
+    # ---------- 6b. 执行不了的工具不许摆进工具表 ----------
+    # 真实缺陷：外部清单类插件（`{"tools":[{…}]}` 但没写 url）里的工具**执行不了**
+    # （execute 只回一句"需对应运行时或填写 url"），原来照样塞给模型 → 模型真去调它、
+    # 拿到一句废话，用户看到的就是"调用了工具却啥也没干"（截图上出现过这种徽标）。
+    _phantom = []
+    for _pn, _p in app.PLUGINS.items():
+        _inst = _p.get("instance")
+        if not getattr(_inst, "_tp", None):        # 只审"外部清单"这类插件
+            continue
+        for _t in _p.get("desc", []):
+            _nm = (_t or {}).get("name")
+            if _nm in app._TOOL2PLUGIN and not ((_t or {}).get("url")
+                                                or ((_t or {}).get("manifest") or {}).get("url")):
+                _phantom.append(_nm)
+    res.check("工具注册", "执行不了的外部清单工具不摆进工具表（模型不会白调）",
+              not _phantom, "幻影工具=%s" % (_phantom or "无"))
+
     # ---------- 7. 配置热重载不能把「检索铁律」弄丢（真实缺陷：reload_control 直接赋值 role） ----------
     app.reload_control()
     res.check("配置热重载", "reload 后人设里仍有检索铁律", "检索铁律" in (app.SYSTEM_PROMPT or ""),
