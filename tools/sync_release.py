@@ -48,6 +48,8 @@ def main() -> int:
     ap.add_argument("--tag", default="v1.0")
     ap.add_argument("--title", default="", help="Release 标题；默认自动生成")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--target", default="main",
+                    help="tag 要对齐的分支/引用（默认 main；从 release 分支发版时传该分支）")
     args = ap.parse_args()
 
     h = {"Authorization": "Bearer %s" % token(), "Accept": "application/vnd.github+json",
@@ -68,8 +70,11 @@ def main() -> int:
                 return {"_code": e.code, "_detail": detail[:160]}
             raise SystemExit("API %s %s → %s: %s" % (method, path, e.code, detail[:200]))
 
-    main_sha = api("/repos/%s/git/ref/heads/main" % REPO)["object"]["sha"]
-    print("远端 main = %s" % main_sha[:12])
+    # tag 要对齐的引用：默认 main；从 release 分支发版时传 --target release/xxx
+    # （为什么需要：发布流程允许"提交先落在 release 分支"，这时把 tag 钉在 main 上会指向旧代码）
+    target_ref = args.target or "main"
+    main_sha = api("/repos/%s/git/ref/heads/%s" % (REPO, target_ref))["object"]["sha"]
+    print("远端 %s = %s" % (target_ref, main_sha[:12]))
 
     # ① tag 是否已在最新提交上
     ref = api("/repos/%s/git/ref/tags/%s" % (REPO, urllib.parse.quote(args.tag, safe="")))
@@ -158,10 +163,13 @@ def main() -> int:
     print("\n收尾核对：")
     print("  tag 列表     : %s" % ([t["ref"].split("/")[-1] for t in tags]))
     print("  Release 列表 : %s" % ([(r["tag_name"], "草稿" if r["draft"] else "已发布") for r in rels2]))
-    print("  %s 指向      : %s ｜ main: %s ｜ %s"
-          % (args.tag, tag_target[:12] or "?", main_sha[:12],
+    print("  %s 指向      : %s ｜ %s: %s ｜ %s"
+          % (args.tag, tag_target[:12] or "?", target_ref, main_sha[:12],
              "✅ 一致" if tag_target == main_sha else "❌ 不一致"))
-    return 0 if tag_target == main_sha and len(rels2) == 1 else 1
+    # 判成功：本 tag 指向目标引用，**且它自己有一个已发布的 Release**。
+    # （旧判据要求"全仓库只有一个 Release"，开始多版本发版后就不成立了 —— 那是 v1.0 时代的写法。）
+    mine_ok = any((r["tag_name"] == args.tag and not r["draft"]) for r in rels2)
+    return 0 if (tag_target == main_sha and mine_ok) else 1
 
 
 if __name__ == "__main__":
