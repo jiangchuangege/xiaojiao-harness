@@ -85,7 +85,7 @@ def main() -> int:
         # 每轮后导出一次指标，便于事后分析
         try:
             b.impl.metrics_export()
-        except Exception:
+        except Exception:  # noqa: silent-ok — 指标导出失败不影响长跑主流程
             pass
 
         if i < rounds - 1:

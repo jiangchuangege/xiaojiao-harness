@@ -113,8 +113,10 @@ def cmd_build(args):
                 if trace:
                     lesson += " 用工具:%s" % trace
                 out.write(lesson + "\n")
-                try: vstore.add(lesson, tag='learned')
-                except Exception: pass
+                try:
+                    vstore.add(lesson, tag='learned')
+                except Exception as e:      # 向量库写失败不影响本次学习落盘（文本已写入）
+                    LOG.debug("向量库写入失败(忽略): %s", e)
                 added += 1
     if added:
         # 同步进小脑检索池(让它检索时用得上这些学到的功能用法)

@@ -307,8 +307,10 @@ def _run_job(jid, topic, host_a, host_b, rounds, style, use_cover, build_cover, 
         # 清理中间 wav(保留成品)
         for wp in wavs:
             try:
-                if wp and os.path.exists(wp): os.remove(wp)
-            except Exception: pass
+                if wp and os.path.exists(wp):
+                    os.remove(wp)
+            except Exception as e:
+                _log("清理中间文件失败（忽略）: %s" % e)
     except Exception as e:
         _log("播客生成失败: %s" % e)
         job["state"] = "error"

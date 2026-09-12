@@ -27,5 +27,5 @@ class WeatherPlugin:
             if resp.status_code == 200:
                 return f"{city}天气：{resp.text.strip()}"
             return "天气查询失败"
-        except:
+        except Exception:          # 网络/解析异常 → 给用户一句中文提示，不把堆栈抛出去
             return "天气服务暂时不可用"

@@ -92,7 +92,7 @@ def run(res: Results, mod=None) -> Results:
         for h in __import__("logging").getLogger("xiaojiao").handlers:
             try:
                 h.flush()
-            except Exception:
+            except Exception:  # noqa: silent-ok — 日志 handler 不支持 flush 时忽略
                 pass
         logfile = os.path.join(REPO_ROOT, "logs", "xiaojiao.log")
         content = open(logfile, encoding="utf-8", errors="ignore").read() if os.path.exists(logfile) else ""
