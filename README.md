@@ -320,12 +320,17 @@ xiaojiao-harness/
 
 | 文档 | 干啥的 |
 | --- | --- |
+| [**架构说明**](ARCHITECTURE.md) | **模块职责 / 请求生命周期 / 插件机制 / 扩展点 / 已知限制**（含 5 张原理图）|
+| [**贡献指南**](CONTRIBUTING.md) | 分支与提交规范、硬性约束、怎么加插件 |
 | [快速上手](docs/quickstart.md) | 五分钟跑起来 |
 | [安装](docs/install.md) | 从零装 |
 | [工具说明](docs/tools.md) | 内置工具 + 危险命令 |
 | [自研蒸馏小模型](docs/xiaojiao_model.md) | 小模型原理/架构/训练/画图 |
 | [玩法大全 · 加工具加插件](docs/extend.md) | 各种能加的能力 |
 | [插件](docs/PLUGINS.md) | 写插件指南 |
+| [抓取插件详解](docs/scrapling.md) | 17 工具 / 原理 / 配置 / 指标 / 排错 |
+| [发版与回滚](docs/release-and-rollback.md) | 怎么发版、怎么回滚、网络被墙怎么办 |
+| [压力测试](tests/stress/README.md) | 怎么跑、覆盖什么、CI 门槛 |
 | [接口](docs/api.md) | OpenAI 兼容接口 |
 | [常见问题](docs/faq.md) | 排坑 |
 | [模型](docs/model_cn.md) | 模型与壳 |

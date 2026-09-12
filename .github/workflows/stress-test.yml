@@ -63,6 +63,10 @@ jobs:
           }
           '@ | Out-File -Encoding utf8 xiaojiao_control.json
 
+      - name: 校验 Mermaid 原理图（文档质量闸门）
+        shell: pwsh
+        run: python tools/check_mermaid.py --all
+
       - name: 运行压力测试（通过率门槛 95%）
         shell: pwsh
         run: |

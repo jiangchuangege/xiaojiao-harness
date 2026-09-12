@@ -7,6 +7,16 @@
 **🕷️ 网页抓取能力 + 🧠 小脑成为必需项 + 🛠️ 安装器分级与体验修复。**
 
 ### Added
+- 📐 **架构说明 `ARCHITECTURE.md`**（新增）：设计目标 → 系统总览图 → 进程与端口 → 模块职责表 →
+  **一次对话的完整生命周期（时序图）** → 插件机制与契约 → 大脑/小脑协作 → 数据与状态 →
+  质量与安全 → **扩展点（改哪里）** → 已知限制（诚实清单）；含 5 张 Mermaid 原理图。
+- 🤝 **贡献指南 `CONTRIBUTING.md`**（新增）：五分钟上手、分支/提交规范（**中文 commit**）、
+  提交前自检、**8 条硬性约束**（禁硬编码/禁明文密钥/错误必须中文/不许静默吞异常…）、插件模板、报 Bug 规范。
+- 🧭 **图语法自检 `tools/check_mermaid.py`**（新增）：离线校验所有文档里的 Mermaid（围栏闭合、
+  subgraph/end 配对、引号与括号配对、sequenceDiagram 关键字），已接入 CI 作为**文档质量闸门**；
+  当前全仓 **39 个图 0 问题**。
+- 🖼️ **前端渲染自检**（补进 `tests/stress/test_units.py`）：真测后端转换（Setext→ATX、JSON 归拢）
+  + 对渲染模板做**契约检查**（`_fence_body`、`codebox lang-`、`renderTableBlock`、`mdh`、`srcbox`、`<br>`、`/metrics`）。
 - 🪵 **统一日志模块 `xiaojiao_log.py`**：所有模块走同一套 logging（`logs/xiaojiao.log`，5MB×3 轮转），
   支持 `XIAOJIAO_LOG_LEVEL` / `XIAOJIAO_LOG_CONSOLE` 调节；**写日志前全链路脱敏**（`api_key=`、`sk-…`、`ghp_…`、`AKIA…`、JWT 一律打码），
   日志目录不可写时自动降级、绝不影响主流程。

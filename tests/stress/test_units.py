@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 
-from harness import Results, load_plugin
+from harness import REPO_ROOT, Results, load_plugin
+
+ROOT_APP = REPO_ROOT
 
 
 def run(res: Results, mod=None) -> Results:
@@ -125,7 +128,32 @@ def run(res: Results, mod=None) -> Results:
     res.check("批量配置", "合法配置字段生效",
               (not ok.error) and ok.concurrency == 4 and ok.per_domain_limit == 2, ok.describe())
 
-    # ---------- 7. 参数规范化 / 工具集完整性 ----------
+    # ---------- 7. 前端渲染（后端行为 + 模板契约）----------
+    # 说明：Markdown→HTML 的渲染发生在浏览器 JS 里，Python 侧测不到；
+    # 因此这里① 真测后端负责的转换（Setext 归一化、JSON 归拢、大纲提取），
+    #        ② 对模板做"契约检查"（渲染管线依赖的钩子必须存在），两者都不是模拟。
+    md = mod.normalize_markdown("标题\n====\n\n正文\n\n小标题\n----\n")
+    res.check("渲染", "Setext 标题转 ATX（前端才渲染得出标题）",
+              "# 标题" in md and "## 小标题" in md, repr(md[:40]))
+
+    sys.path.insert(0, ROOT_APP)
+    app_src = open(os.path.join(ROOT_APP, "xiaojiao_app.py"), encoding="utf-8").read()
+    for token, why in (("_fence_body", "抓取正文按类型套代码块"),
+                       ("codebox lang-", "代码块带语言类名（CSS 限高用）"),
+                       ("renderTableBlock", "表格渲染"),
+                       ('class="mdh"', "标题样式钩子"),
+                       ("srcbox", "来源框（宽度/换行修复处）"),
+                       ("<br>", "块间换行（段落粘连修复处）"),
+                       ("/metrics", "指标接口")):
+        res.check("渲染/契约", "模板含 %s（%s）" % (token, why), token in app_src, "")
+
+    # 抓取正文的展示归拢：JSON → ```json 代码块；Markdown → 原样
+    import re as _re
+    m = _re.search(r"def _fence_body\(text: str\) -> str:(.*?)\ndef ", app_src, _re.S)
+    res.check("渲染/契约", "_fence_body 支持 Markdown 转义 JSON 兜底",
+              bool(m) and "bfnrtu" in m.group(1), "")
+
+    # ---------- 8. 参数规范化 / 工具集完整性 ----------
     from harness import Bridge as _B
     b = mod.ScraplingBridge()
     bx = _B(mod, b)
