@@ -82,14 +82,21 @@ def main() -> int:
     need = cur != main_sha
     print("tag %s 当前 → %s%s" % (args.tag, (cur[:12] or "（不存在）"), "（需要重建）" if need else "（已是最新）"))
     if need and not args.dry_run:
-        if ref.get("object"):
-            api("/repos/%s/git/refs/tags/%s" % (REPO, urllib.parse.quote(args.tag, safe="")), "DELETE")
+        # **真实缺陷**：原来 tag 要重建时先 `DELETE refs/tags/<tag>`。GitHub 上
+        # **删掉 tag 会把它名下的 Release 一并弄成孤儿/草稿**，于是发布页在发布过程中
+        # 短暂"消失"（本次实测就是这样：发布完 Release 列表变成空的）。
+        # 现在：已存在的 tag 用 PATCH **直接改指向**，不删引用；只有本来就没有才创建。
         tobj = api("/repos/%s/git/tags" % REPO, "POST",
                    {"tag": args.tag, "message": "小焦 %s · 正式版" % args.tag,
                     "object": main_sha, "type": "commit"})
-        api("/repos/%s/git/refs" % REPO, "POST",
-            {"ref": "refs/tags/%s" % args.tag, "sha": tobj["sha"]})
-        print("✅ tag 已重建 → %s" % main_sha[:12])
+        if ref.get("object"):
+            api("/repos/%s/git/refs/tags/%s" % (REPO, urllib.parse.quote(args.tag, safe="")),
+                "PATCH", {"sha": tobj["sha"], "force": True})
+            print("✅ tag 已改指向 → %s（未删引用，Release 不会变孤儿）" % main_sha[:12])
+        else:
+            api("/repos/%s/git/refs" % REPO,
+                "POST", {"ref": "refs/tags/%s" % args.tag, "sha": tobj["sha"]})
+            print("✅ tag 已创建 → %s" % main_sha[:12])
 
     # ② 正文：优先用专门写好的发布说明 docs/release-notes-<tag>.md（排版更适合发布页），
     #    没有才退回 CHANGELOG 的对应小节（那种 2 万字长文堆在 Release 页上很难看）。
@@ -109,9 +116,10 @@ def main() -> int:
     title = args.title or "%s · 小焦的首个正式版" % args.tag
 
     # ③ 清掉同名草稿/孤儿，再确保有一个已发布 Release
+    #    **只清草稿**：已发布的别的 Release 不归本工具管，删了就是"发布页凭空消失"。
     rels = api("/repos/%s/releases?per_page=100" % REPO)
     published = [r for r in rels if r["tag_name"] == args.tag and not r["draft"]]
-    strays = [r for r in rels if r["draft"] or r["tag_name"] != args.tag]
+    strays = [r for r in rels if r["draft"]]
     for r in strays:
         if args.dry_run:
             print("（dry-run）会删除 Release %s id=%s draft=%s" % (r["tag_name"], r["id"], r["draft"]))
@@ -124,10 +132,19 @@ def main() -> int:
     if published:
         up = api("/repos/%s/releases/%s" % (REPO, published[0]["id"]), "PATCH",
                  {"name": title, "body": body, "draft": False, "prerelease": False})
+        if not up.get("id"):
+            print("❌ Release 更新失败：%s" % str(up)[:160])
+            return 1
         print("✅ Release 已更新：%s（正文 %d 字）" % (up.get("html_url"), len(up.get("body") or "")))
     else:
         rel = api("/repos/%s/releases" % REPO, "POST",
-                  {"tag_name": args.tag, "name": title, "body": body, "draft": False, "prerelease": False})
+                  {"tag_name": args.tag, "name": title, "body": body, "draft": False, "prerelease": False},
+                  ok=(200, 201))
+        # 原来 api() 把 404/422 也算成功 → 创建失败会**静默通过**，发布页就没了。
+        # 这里必须核对返回值里真的有 Release id。
+        if not rel.get("id"):
+            print("❌ Release 创建失败：%s" % str(rel)[:160])
+            return 1
         print("✅ Release 已创建：%s（正文 %d 字）" % (rel.get("html_url"), len(rel.get("body") or "")))
 
     # ④ 收尾核对
