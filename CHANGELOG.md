@@ -29,6 +29,16 @@
 - 🖥️ **抓取结果展示优化**：正文直显（不再被小模型"总结"吃掉）；工具轨迹压成一行摘要（不再刷原始 JSON）；Setext 标题自动转 ATX。
 
 ### Fixed
+- 🧪 **全工具极限压力自检修复批次**（17 个工具 × 正常/空参/非法/必失败/连续 + 8 项对抗 + 性能基准，共 4 轮**真实调用**）：
+  - 🐞 **`download` 把 404 错误页当文件保存**：目标 404 时插件仍报"已下载（类型 text/html）"并把错误页存成 `.pdf`。现在只有 2xx 才落盘；404/410 直接报"文件不存在，未保存任何文件"；只有 401/403/406/429（WAF 拦 UA）才回退浏览器指纹通道；0 字节、扩展名与内容类型不符也会明确警告。
+  - 🐞 **批量 `urls` 传字符串被逐字符拆开**：`"https://a.com"` 被当成 **14 个单字符"网址"**，静默返回 14 条无意义错误。新增 `_norm_urls()`：字符串当 1 个网址、空列表报"urls 为空"、其它类型明确报错。
+  - 🐞 **批量"全部失败"却返回成功**：顶层 `error` 为空 + status 200 → 调用方与熔断器都当成功，坏源永不被熔断。现在全失败置顶层错误（保留 `items` 明细）。
+  - 🐞 **非法 `session_type` 毒化会话表**：非法类型会让 Scrapling 注册一条脏会话，此后 `list_sessions` **每次**都抛 Pydantic 校验错误（会话列表永久不可用）。现在插件前置白名单校验（dynamic/stealthy/static），`list_sessions` 另加可读降级提示。
+  - 🐞 **用户传的 `timeout` 被静默忽略**：`get`/`fetch`/`stealthy_fetch`/`scrape_with_selector`/批量只用了配置默认值 —— 实测"6 秒超时"等了 **22 秒**才回来（Scrapling 默认重试 3 次 × 6 秒）。现在显式 timeout 会带上参数、收敛 `retries=1`、并给客户端加硬上限（实测 get 7.2s / fetch 13.0s 内返回）。
+  - 🐞 **`scrape_with_selector` 选择器没匹配到却"空内容 + 成功"**：现在返回结构化 `not_found`（含 `not_found: true` / `selector`）与中文建议，绝不假装抓到东西。
+  - 🐞 **英文/裸库错误外泄**：`Session 'x' not found`、`validation error for SessionInfo`、`net::ERR_NAME_NOT_RESOLVED`、`curl: (28)`、`Redirect to internal IP ... rejected` 等一律转成可执行中文（新增 `_humanize_error()`）。
+  - 🔒 **回归确认**：SSRF 直连（含 `file://` / `169.254.x` / `[::1]` / `0.0.0.0`）与**重定向型 SSRF**（公网 302 → `127.0.0.1`）100% 拦截；`download` 目录穿越（`../../`）不逃逸出项目目录并提示已改名。
+  - 📊 **复测**：17/17 工具、**32/32 用例全部通过**；熔断第 4 次触发且 32 秒后自愈；连续 20 次调用 Python 堆净增 0.10MB。
 - 🐞 **插件加载器**：`spec_from_file_location` 未注册 `sys.modules` → Python 3.13 下**任何使用 `@dataclass` 的插件都会静默加载失败**。已修复（加载失败时清理 `sys.modules`）。
 - 🐞 **前端渲染**：`renderBlocks` 按空行分块后块间缺换行 → 段落粘连；`.mdh` 标题类无 CSS → 标题不显示样式；`inline()` 不识别 Markdown 链接。均已修复。
 - 🐞 **插件参数适配**：`_adapt_args()` 对不支持 `timeout` 的工具（`open_session`/`close_session`/`list_sessions`）硬塞 timeout → 报错；改为按工具白名单过滤参数并区分超时单位（浏览器类=毫秒，HTTP 类=秒）。

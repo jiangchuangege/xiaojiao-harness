@@ -1042,20 +1042,25 @@ class MCPClient:
             return False
 
     def call_tool(self, name: str, args: Dict[str, Any], timeout: float) -> Dict[str, Any]:
-        """调用 Scrapling 工具（MCP 或 inproc），返回统一 dict。"""
+        """调用 Scrapling 工具（MCP 或 inproc），返回统一 dict。错误统一转中文可读。"""
         args = _adapt_args(name, args, default_timeout=self.cfg.timeout)   # 白名单过滤 + timeout 单位换算
         if not self.ensure():
             return {"status": 0, "url": args.get("url", ""), "content": "",
                     "error": self.last_error or "Scrapling MCP 未运行，请先执行 scrapling mcp"}
         try:
             if self._mode_actual == "inproc":
-                return self._call_inproc(name, args, timeout)
-            return self._call_mcp(name, args, timeout)
+                res = self._call_inproc(name, args, timeout)
+            else:
+                res = self._call_mcp(name, args, timeout)
         except TimeoutError as e:
-            return {"status": 0, "url": args.get("url", ""), "content": "", "error": str(e)}
+            res = {"status": 0, "url": args.get("url", ""), "content": "", "error": str(e)}
         except Exception as e:
-            return {"status": 0, "url": args.get("url", ""), "content": "",
-                    "error": "抓取失败：%s" % sanitize(e)[:160]}
+            res = {"status": 0, "url": args.get("url", ""), "content": "",
+                   "error": "抓取失败：%s" % sanitize(e)[:160]}
+        # 英文原文（Pydantic / Playwright / 库里抛的）→ 中文可读
+        if isinstance(res, dict) and res.get("error"):
+            res["error"] = _humanize_error(res["error"])
+        return res
 
     def _call_mcp(self, name: str, args: Dict[str, Any], timeout: float) -> Dict[str, Any]:
         res = self._rpc("tools/call", {"name": name, "arguments": args}, timeout=timeout)
@@ -1354,7 +1359,16 @@ class ScraplingBridge:
         proxy = _BATCH.pick_proxy()
         if proxy:
             args.setdefault("proxy", proxy)
-        res = _CLIENT.call_tool(tool, args, timeout=self._cfg.timeout)
+        # 用户显式给了 timeout → ① 收敛重试（Scrapling 默认 retries=3，会把 6 秒超时拖成 22 秒）
+        #                        ② 给客户端加硬上限，保证"说 6 秒就 6 秒量级返回"
+        try:
+            _ut = float(extra.get("timeout") or 0)
+        except Exception:
+            _ut = 0
+        if _ut > 0:
+            args.setdefault("retries", 1)
+        _client_to = _bound_client_timeout(tool, _ut, self._cfg.timeout)
+        res = _CLIENT.call_tool(tool, args, timeout=_client_to)
         if res.get("error"):
             return fmt_result(res.get("status", 0), url, res.get("content", ""), res["error"])
         _body = res.get("content", "") or ""
@@ -1369,9 +1383,24 @@ class ScraplingBridge:
         return fmt_result(res.get("status", 0), url, _body, "")
 
     # ---- get ----
+    @staticmethod
+    def _with_timeout(p: Dict[str, Any], extra: Dict[str, Any]) -> Dict[str, Any]:
+        """把用户传的 timeout 带上（秒）。
+
+        压力测试暴露的 bug：get / fetch / stealthy_fetch / scrape_with_selector 之前只用了
+        配置里的默认 timeout（60s），**用户传的 timeout 被静默忽略** —— 6 秒超时却等了 11 秒才回来。
+        """
+        try:
+            t = float(p.get("timeout")) if p.get("timeout") not in (None, "") else 0
+        except Exception:
+            t = 0
+        if t > 0:
+            extra["timeout"] = t
+        return extra
+
     def _do_get(self, p: Dict[str, Any]) -> str:
-        return self._single("make_request", p.get("url", ""),
-                            {"method": "GET", "impersonate": _random_impersonate()},
+        extra = self._with_timeout(p, {"method": "GET", "impersonate": _random_impersonate()})
+        return self._single("make_request", p.get("url", ""), extra,
                             stealth=bool(p.get("stealth")), save_to=(p.get("save_to") or ""),
                             ignore_robots=bool(p.get("ignore_robots")))
 
@@ -1380,6 +1409,7 @@ class ScraplingBridge:
         extra: Dict[str, Any] = {"headless": self._cfg.headless}
         if p.get("wait_selector"):
             extra["wait_selector"] = p["wait_selector"]
+        self._with_timeout(p, extra)
         return self._single("fetch", p.get("url", ""), extra, save_to=(p.get("save_to") or ""),
                             ignore_robots=bool(p.get("ignore_robots")))
 
@@ -1446,28 +1476,40 @@ class ScraplingBridge:
         base = os.path.abspath(_out_dir("downloads"))
         name = (p.get("filename") or "").strip() or _guess_filename(url)
         fp = os.path.abspath(os.path.join(base, name))
+        _renamed = ""
         if not fp.startswith(base):                     # 防目录穿越
             fp = os.path.join(base, _guess_filename(url))
+            _renamed = "（你给的文件名越界了，已安全改名）"
         limit = MAX_DOWNLOAD_MB * 1024 * 1024
         got = 0
         ctype = ""
+        warn = ""
         _hdrs = {"User-Agent": _DL_UA, "Accept": "*/*",
                  "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8", "Referer": url}
+        # 只有这些状态码才是"被 WAF/UA 拦"，值得换浏览器指纹再试；404/410 是真没有，别去下错误页
+        _WAF_CODES = (401, 403, 406, 429)
         try:
             with _rq.get(url, headers=_hdrs, stream=True, timeout=self._cfg.timeout) as r:
                 if r.status_code >= 400:
-                    # 403/406 常见于 WAF 拦 UA：退回 Scrapling 的浏览器指纹下载
+                    if r.status_code not in _WAF_CODES:
+                        return fmt_result(r.status_code, url, "",
+                                          "下载失败：目标返回 HTTP %d（%s）—— 该文件不存在或无权限，未保存任何文件"
+                                          % (r.status_code,
+                                             {404: "未找到", 410: "已删除"}.get(r.status_code, "请求被拒绝")))
                     blob, status, ct2 = self._download_via_scrapling(url)
-                    if blob:
-                        ctype = ct2
-                        with open(fp, "wb") as f:
-                            f.write(blob)
-                        got = len(blob)
-                        if not os.path.splitext(fp)[1]:
-                            fp += ".html"
-                    else:
+                    if not blob or status >= 400:
                         return fmt_result(r.status_code, url, "",
                                           "下载失败：目标返回 HTTP %d（已尝试浏览器指纹下载仍失败）" % r.status_code)
+                    if not os.path.splitext(fp)[1]:
+                        _e = {"application/pdf": ".pdf", "application/epub+zip": ".epub",
+                              "application/zip": ".zip", "text/plain": ".txt",
+                              "text/html": ".html"}.get(ct2, "")
+                        if _e:
+                            fp += _e
+                    with open(fp, "wb") as f:
+                        f.write(blob)
+                    return fmt_result(status, url, "💾 已下载（浏览器指纹通道）：%s\n大小：%.2f MB\n类型：%s"
+                                      % (fp, len(blob) / 1048576.0, ct2 or "未知"), "")
                 ctype = (r.headers.get("content-type") or "").split(";")[0].strip()
                 if not os.path.splitext(fp)[1]:
                     _ext = {"application/pdf": ".pdf", "application/epub+zip": ".epub",
@@ -1492,17 +1534,53 @@ class ScraplingBridge:
             return fmt_result(0, url, "", "写入失败（磁盘空间/权限）：%s" % sanitize(e)[:100])
         except Exception as e:
             return fmt_result(0, url, "", "下载失败：%s" % sanitize(e)[:120])
-        return fmt_result(200, url, "💾 已下载：%s\n大小：%.1f MB\n类型：%s" % (
-            fp, got / 1048576.0, ctype or "未知"), "")
+        # 下到了 0 字节 / 或"要文件却拿到网页" → 明确告知，别让用户以为成功了
+        if got == 0:
+            try:
+                os.remove(fp)
+            except OSError:
+                pass
+            return fmt_result(0, url, "", "下载失败：目标返回空内容（0 字节），未保存文件")
+        _want_bin = os.path.splitext(name)[1].lower() in (".pdf", ".epub", ".zip", ".mobi", ".exe", ".apk", ".mp4", ".mp3")
+        if ctype == "text/html" and _want_bin:
+            warn += "（注意：拿到的是 HTML 网页而不是你指定的 %s，可能命中了错误页/跳转页）" % os.path.splitext(name)[1]
+        if _renamed:
+            warn += _renamed
+        if os.path.basename(fp) != name and name and not _renamed:
+            warn += "（文件名按内容类型补了扩展名：%s）" % os.path.basename(fp)
+        return fmt_result(200, url, "💾 已下载：%s\n大小：%.2f MB\n类型：%s%s" % (
+            fp, got / 1048576.0, ctype or "未知", warn), "")
 
     # ---- 批量（统一走 BatchManager：去重/限速/退避/代理轮换/失败隔离） ----
-    def _bulk(self, tool: str, urls: Sequence[str], extra: Dict[str, Any], stealth: bool = False,
+    @staticmethod
+    def _norm_urls(v: Any) -> Tuple[List[str], str]:
+        """规范化 urls 参数。返回 (列表, 中文错误)。
+
+        压力测试暴露的真实问题：直接传字符串会被 Python 当可迭代对象**逐字符拆开**
+        （"https://a.com" → 14 个单字符"网址"），并静默返回 14 条无意义错误。
+        这里一律先规范化，类型不对就明确报错。
+        """
+        if v is None or v == "" or v == [] or v == ():
+            return [], "urls 为空：至少要给 1 个网址"
+        if isinstance(v, str):
+            return [v.strip()], ""                  # 单个字符串 → 当 1 个网址（友好放行）
+        if isinstance(v, (list, tuple)):
+            items = [str(u).strip() for u in v if isinstance(u, str) and str(u).strip()]
+            if not items:
+                return [], "urls 中没有有效网址（元素必须是字符串）"
+            return items, ""
+        return [], "urls 必须是网址列表（数组），或单个网址字符串；收到的是 %s" % type(v).__name__
+
+    def _bulk(self, tool: str, urls: Any, extra: Dict[str, Any], stealth: bool = False,
               ignore_robots: bool = False) -> str:
         # 批量内部逐 URL 调用"单个"抓取工具：这样才能做去重/限速/退避/代理轮换/失败隔离；
         # 直接调 Scrapling 的 bulk_* 会一次性并发出去，上述控制全部失效。
         _single_of = {"bulk_get": "make_request", "bulk_fetch": "fetch", "bulk_stealthy_fetch": "stealthy_fetch"}
         base_tool = _single_of.get(tool, tool)
-        allowed, blocked = _BATCH.prepare(urls, ignore_robots)
+        clean, why = self._norm_urls(urls)
+        if why:
+            return fmt_result(0, "", "", why)
+        allowed, blocked = _BATCH.prepare(clean, ignore_robots)
         items: List[Dict[str, Any]] = list(blocked)
         used = 0
         for u in allowed:
@@ -1512,6 +1590,12 @@ class ScraplingBridge:
         ok_n = sum(1 for i in items if not i.get("error"))
         head = "批量%s完成：成功 %d / 共 %d（去重+安全过滤后实际请求 %d）" % (
             "隐身抓取" if stealth else "抓取", ok_n, len(items), used)
+        # 关键：全部失败时顶层必须是错误（否则调用方/熔断器会当成"成功"，一直死磕坏源）
+        if ok_n == 0 and items:
+            first = next((i.get("error") for i in items if i.get("error")), "未知原因")
+            return json.dumps({"status": 0, "url": "", "content": head,
+                               "error": "批量抓取全部失败（%d 个）：%s" % (len(items), str(first)[:120]),
+                               "items": items}, ensure_ascii=False)
         return json.dumps({"status": 200, "url": "", "content": head,
                            "error": "", "items": items}, ensure_ascii=False)
 
@@ -1550,27 +1634,39 @@ class ScraplingBridge:
         return last
 
     def _do_bulk_get(self, p: Dict[str, Any]) -> str:
-        return self._bulk("bulk_get", p.get("urls") or [],
-                          {"impersonate": _random_impersonate()}, stealth=bool(p.get("stealth")),
+        return self._bulk("bulk_get", p.get("urls"),
+                          self._with_timeout(p, {"impersonate": _random_impersonate()}),
+                          stealth=bool(p.get("stealth")),
                           ignore_robots=bool(p.get("ignore_robots")))
 
     def _do_bulk_fetch(self, p: Dict[str, Any]) -> str:
-        return self._bulk("fetch", p.get("urls") or [], {"headless": self._cfg.headless},
+        return self._bulk("fetch", p.get("urls"),
+                          self._with_timeout(p, {"headless": self._cfg.headless}),
                           ignore_robots=bool(p.get("ignore_robots")))
 
     def _do_bulk_stealthy_fetch(self, p: Dict[str, Any]) -> str:
-        urls = (p.get("urls") or [])[:20]      # 隐身开销大，限制 20 个
-        return self._bulk("stealthy_fetch", urls,
-                          {"headless": self._cfg.headless, "solve_cloudflare": bool(self._cfg.solve_cloudflare),
-                           "hide_canvas": True, "block_webrtc": True}, stealth=True,
+        extra = self._with_timeout(p, {"headless": self._cfg.headless,
+                                       "solve_cloudflare": bool(self._cfg.solve_cloudflare),
+                                       "hide_canvas": True, "block_webrtc": True})
+        urls = p.get("urls")
+        if isinstance(urls, (list, tuple)):
+            urls = list(urls)[:20]             # 隐身开销大，限制 20 个
+        return self._bulk("stealthy_fetch", urls, extra, stealth=True,
                           ignore_robots=bool(p.get("ignore_robots")))
 
     # ---- browser_session：会话管理 + 登录态抓取 + 截图（一个入口覆盖 7 个 MCP 会话工具）----
     def _session_call(self, tool: str, args: Dict[str, Any]) -> str:
-        """调会话类工具并统一结果格式。"""
-        res = _CLIENT.call_tool(tool, args, timeout=self._cfg.timeout)
+        """调会话类工具并统一结果格式（英文错误统一转中文 + 超时也受用户 timeout 约束）。"""
+        try:
+            _ut = float(args.get("timeout") or 0)
+        except Exception:
+            _ut = 0
+        if _ut > 0 and tool in _TIMEOUT_MS_TOOLS:
+            _ut = _ut / 1000.0          # 浏览器类内部单位是毫秒
+        res = _CLIENT.call_tool(tool, args, timeout=_bound_client_timeout(tool, _ut, self._cfg.timeout))
         if res.get("error"):
-            return fmt_result(res.get("status", 0), args.get("url", ""), res.get("content", ""), res["error"])
+            return fmt_result(res.get("status", 0), args.get("url", ""),
+                              res.get("content", ""), _humanize_error(res["error"]))
         return fmt_result(res.get("status", 0), args.get("url", ""), res.get("content", ""), "")
 
     # ---- Scrapling 原生 13 工具里的「会话/截图」7 个：1:1 暴露 ----
@@ -1582,8 +1678,14 @@ class ScraplingBridge:
         """
         sid = (p.get("session_id") or "").strip()
         if tool == "open_session":
-            args: Dict[str, Any] = {"session_type": (p.get("session_type") or "dynamic"),
-                                    "headless": self._cfg.headless}
+            stype = (p.get("session_type") or "dynamic").strip().lower()
+            # 前置白名单：非法值绝不能落到 Scrapling（压力测试发现它会把这个会话注册进去，
+            # 之后 list_sessions 每次都抛校验错误 → 列表功能被永久毒化）
+            if stype not in ("dynamic", "stealthy", "static"):
+                return fmt_result(0, "", "",
+                                  "session_type 不合法：%s（只能是 dynamic / stealthy / static；"
+                                  "dynamic=浏览器会话，stealthy=隐身浏览器，static=纯 HTTP 会话）" % stype)
+            args: Dict[str, Any] = {"session_type": stype, "headless": self._cfg.headless}
             if sid:
                 args["session_id"] = sid
             if self._cfg.executable_path:
@@ -1602,7 +1704,14 @@ class ScraplingBridge:
             return self._session_call("close_session", {"session_id": sid})
 
         if tool == "list_sessions":
-            return self._session_call("list_sessions", {})
+            out = self._session_call("list_sessions", {})
+            # 会话表里有"脏数据"（例如非法 session_type 残留）时 Scrapling 会整体校验失败；
+            # 这时给出可读中文 + 可操作建议，而不是把 Pydantic 原文丢给模型（也避免被误熔断）。
+            if _is_err(out) and "会话" in (json.loads(out).get("error") or ""):
+                return fmt_result(0, "", "",
+                                  "会话列表暂时读不出来（会话表里有异常数据，通常是曾经的非法参数残留）—— "
+                                  "重启小焦即可清空会话表；或直接新开一个会话继续用（open_session / open_request_session）")
+            return out
 
         # 下面三个都要 URL：安全闸门 + 限速
         url = (p.get("url") or "").strip()
@@ -1681,30 +1790,95 @@ class ScraplingBridge:
         if not ok:
             return fmt_result(0, url, "", why)
         _GUARD.wait_rate_limit(url)
+        _t = self._with_timeout(p, {}).get("timeout", self._cfg.timeout)
         args: Dict[str, Any] = {"url": url, "css_selector": selector,
                                 "extraction_type": _EXTRACT_TYPE, "main_content_only": False,
-                                "method": "GET", "timeout": self._cfg.timeout}
+                                "method": "GET", "timeout": _t}
         if self._cfg.executable_path:
             args["executable_path"] = self._cfg.executable_path
-        res = _CLIENT.call_tool("make_request", args, timeout=self._cfg.timeout)
+        res = _CLIENT.call_tool("make_request", args, timeout=_t)
         if res.get("error"):
             # 自适应重试：改走浏览器渲染 + 等元素
             args2 = {"url": url, "css_selector": selector, "extraction_type": _EXTRACT_TYPE,
                      "wait_selector": selector, "headless": self._cfg.headless,
-                     "timeout": self._cfg.timeout}
+                     "timeout": _t}
             if self._cfg.executable_path:
                 args2["executable_path"] = self._cfg.executable_path
-            res = _CLIENT.call_tool("fetch", args2, timeout=self._cfg.timeout)
+            res = _CLIENT.call_tool("fetch", args2, timeout=_t)
         if res.get("error"):
             return fmt_result(res.get("status", 0), url, "", res["error"])
+        # 选择器没匹配到 → 结构化 not_found，绝不"空内容 + 假装成功"
+        # （压力测试实测：selector 不存在时之前返回 status=200 + 空正文，调用方以为抓到了东西）
+        _body = res.get("content", "") or ""
+        if not _body.strip():
+            return json.dumps({"status": 0, "url": url, "content": "",
+                               "error": ("选择器 %s 没有匹配到内容（页面里没有这个元素，或元素是空的）—— "
+                                         "可换个选择器，或改用 fetch/get 抓整页" % selector),
+                               "not_found": True,
+                               "selector": selector,
+                               "selector_name": name}, ensure_ascii=False)
         # 记录/更新选择器指纹（自适应：下次即使改版也能按相似度找回）
-        rec = SelectorRecord(selector=selector, tag=_tag_of(selector), text=res.get("content", "")[:200],
+        rec = SelectorRecord(selector=selector, tag=_tag_of(selector), text=_body[:200],
                              attrs={}, saved_at=time.time())
         _SELECTORS.save(name, rec)
-        return fmt_result(res.get("status", 0), url, res.get("content", ""), "")
+        return fmt_result(res.get("status", 0), url, _body, "")
 
 
 # ---------- 小工具 ----------
+def _humanize_error(msg: str) -> str:
+    """把 Scrapling / Playwright / Pydantic 的英文原文错误转成 4B 模型看得懂的中文。
+
+    压力测试暴露：非法 session_type、会话不存在、net::ERR_* 等英文原文会直接丢给模型和用户，
+    模型看不懂、用户也不知道下一步做什么。这里做一次统一翻译（保留关键原文片段便于排查）。
+    """
+    if not msg:
+        return msg
+    m = str(msg)
+    low = m.lower()
+    if "ssrf protection" in low or "redirect to internal" in low:
+        return "目标重定向到内网/本机地址，已被安全策略拦截（SSRF 防护）"
+    if "curl: (28)" in m or "operation timed out" in low:
+        return "请求超时：目标响应太慢（可加大 timeout，或改用更轻的 get）"
+    if "curl: (6)" in m or "could not resolve host" in low:
+        return "域名解析失败：这个域名不存在或本机 DNS 解析不了（检查网址是否拼错）"
+    if "curl: (7)" in m and ("connect" in low or "refused" in low):
+        return "连接失败：目标拒绝连接（服务没起/端口不对/被防火墙拦）"
+    if "curl: (35)" in m or "ssl" in low and "error" in low:
+        return "TLS/SSL 握手失败：目标证书或协议不兼容（可换 http 或换站点）"
+    if "session" in low and "not found" in low:
+        sid = ""
+        try:
+            sid = m.split("'")[1]
+        except Exception:
+            pass
+        return ("会话 %s 不存在（可能已被关闭或服务重启过）—— 先调用 list_sessions 看有哪些会话，"
+                "或重新 open_session / open_request_session 开一个" % (sid or "该"))
+    if "input should be 'dynamic'" in low or "type=literal_error" in low or "validation error" in low:
+        if "sessioninfo" in low or "session_type" in low:
+            return ("会话类型不合法或已有会话数据异常：请用 session_type = dynamic / stealthy / static；"
+                    "若只是列出会话报这个错，说明之前有非法会话残留 —— 重启小焦即可清掉（插件已加前置校验，不会再产生）")
+        return "参数校验失败：%s" % m[:160]
+    if "err_name_not_resolved" in low or "could not resolve host" in low:
+        return "域名解析失败：这个域名不存在或本机 DNS 解析不了（检查网址是否拼错）"
+    if "err_connection_refused" in low:
+        return "连接被拒绝：目标端口没有服务在监听"
+    if "err_connection_timed_out" in low or "timeout" in low:
+        return "请求超时：目标响应太慢（可加大 timeout，或改用更轻的 get）"
+    if "err_internet_disconnected" in low or "network is unreachable" in low:
+        return "网络不可用：本机断网或被防火墙拦了"
+    return m
+
+
+def _bound_client_timeout(tool: str, user_timeout: float, default_timeout: float) -> float:
+    """给"客户端等待"设硬上限：用户说 6 秒，就不能因为内核重试而拖到 22 秒。
+
+    浏览器类工具的 timeout 单位是毫秒（调用方传入的是秒），这里统一按秒算。
+    """
+    if not user_timeout or user_timeout <= 0:
+        return default_timeout
+    return max(3.0, min(default_timeout, user_timeout + 5.0))
+
+
 def _session_mismatch_hint(out: str, sid: str, tool: str) -> str:
     """会话类型用错时给中文提示（Scrapling 原文是英文，4B 模型看不懂）。"""
     try:
