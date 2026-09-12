@@ -232,7 +232,7 @@ flowchart TB
 | v1.2.4 | **把功能字「用」当检索关键词**（搜出"用（汉语汉字）"） | 代码层检索词清洗闸门（命令式/裸关键词两种策略）+ 清洗为空则反问用户 + 提示词铁律；漏洞类问题优先走 `collect_vulnerabilities` |
 | v1.2.4 | 附带修掉两个潜在缺陷：`_fetch_raw` 用了非原生工具名 `get`；统一日志的脱敏过滤器把参数全转成字符串，导致所有 `%d` 型日志 emit 报错（熔断告警被打掉）| 改用原生名 `make_request`；过滤器改为"先渲染成最终文本再脱敏" |
 | v1.2.4 | 用 `ruff --select E9,F63,F7,F82`（真 bug 级规则）扫出并修掉 5 处潜在崩溃：`brain_manager._llama_cfg/_comfy_dir` **根本没定义**（多脑唤醒永远静默失败）、`/api/persona` 引用未定义的 `_CFG`（**切人设必然 500**）、语音预热缺 `global`（模型加载完就被回收）、插件生成兜底模板 `TPL` 未定义（失败路径 500）；另修 99 处日志格式参数不匹配（`忽略异常(%s:行号)` 注入格式多传一个参数 → emit 报错）| 补齐实现/常量/`global`，统一日志占位符为 `%s:%d` |
-| v1.2.4 | **CI 一直是红的**：runner 控制台非 UTF-8，`check_mermaid.py` 打印中文抛 `UnicodeEncodeError` → 每次运行都卡在第一道闸门，压力测试从未在 CI 跑过（查近 10 次运行全部同因失败）| 入口脚本统一 `reconfigure(encoding="utf-8")` + workflow 加 `PYTHONUTF8=1`；本地用 `cp1252` 复现并验证修复 |
+| v1.2.4 | **CI 一直是红的**：runner 控制台非 UTF-8，`check_mermaid.py` 打印中文抛 `UnicodeEncodeError` → 每次运行都卡在第一道闸门，压力测试从未在 CI 跑过（查近 10 次运行全部同因失败）| 入口脚本统一 `reconfigure(encoding="utf-8")` + workflow 加 `PYTHONUTF8=1`；本地用 `cp1252` 复现并验证修复。修完**首次全绿**（run 34691282396：五道闸门 + 压力测试 136/137·100%）|
 
 ---
 

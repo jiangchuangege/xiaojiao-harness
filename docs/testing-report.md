@@ -117,10 +117,15 @@ python tests/stress/ui_check.py --out ui_chat.png   # 真浏览器渲染检查
 ```
 CI：`.github/workflows/stress-test.yml`（每天 03:00；通过率 <95% 直接失败；结果上传 artifact）
 
-> **CI 曾经一直是红的（本轮修掉）**：runner 控制台编码不是 UTF-8，`check_mermaid.py` 打印中文时
+> **CI 曾经一直是红的（本轮修掉，现已全绿）**：runner 控制台编码不是 UTF-8，`check_mermaid.py` 打印中文时
 > 抛 `UnicodeEncodeError`，导致每次运行都卡在第一步质量闸门、压力测试**从未在 CI 里执行**。
 > 现在所有入口脚本启动时把 stdout/stderr 切成 UTF-8，workflow 也加了 `PYTHONUTF8=1`，
 > 本地用 `PYTHONIOENCODING=cp1252` 复现并验证修复（退出码 0）。
+>
+> **修好后第一次全绿运行**（run 34691282396）：Mermaid / 静态审计 / 文档一致性 / ruff / 压力测试
+> 五道闸门全部通过，CI 里实测 **136/137 通过 · 通过率 100% · 74.9s**。
+> 唯一 1 条跳过是**应用逻辑套件**：CI 没装 flask/torch，主程序加载不了 → 按设计**如实跳过**
+> （不制造假失败）；本地环境该套件 36 项全通过，所以本地是全量 172 项。
 
 ---
 
