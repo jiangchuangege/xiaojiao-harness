@@ -148,7 +148,7 @@ class XXPlugin:
 
 ```mermaid
 flowchart LR
-    REQ["用户：抓一下 xxx / 下载电子书"] --> DI["抓取意图识别<br/>_detect_scrape_intent()"]
+    REQ["用户：抓一下 xxx / 下载任意文件"] --> DI["抓取意图识别<br/>_detect_scrape_intent()"]
     DI --> SEC["SecurityGuard<br/>SSRF·robots·限速·UA"]
     SEC --> CB["CircuitBreaker<br/>3 次失败→暂停 30s"]
     CB --> BM["BatchManager<br/>去重·429退避·代理轮换·隔离"]

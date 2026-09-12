@@ -69,7 +69,7 @@
 | 🔌 | **插件万能桥** | `_make_tools_plugin` 自动把 OpenAI/Claude/DSH tool manifest 转成小焦工具（`plugins/*.json`） |
 | 🎙️ | **播客大脑** | `/podcast` 给它一个主题 → 自己写稿+配音+出封面，生成一段真·中文播客（LLM+Chatterbox+SD1.5） |
 | 🕷️ | **网页抓取（Scrapling 桥接）** | 抓网页/动态页/绕反爬/批量抓/登录态抓取，9 个工具覆盖 Scrapling 全部能力（`plugins/scrapling_bridge.py`）|
-| 📚 | **电子书下载** | `download` 一句话把 PDF/EPUB/TXT 下载到本地；网页连载可抓正文直接存成文件（`books/`）|
+| 📚 | **网页抓取 / 文件下载** | 网页、动态页、接口、批量、登录态都能抓；`download` 一句话把 **PDF/EPUB/TXT/ZIP/图片** 等任意文件下到本地（网页连载可抓正文直接存成文件 `books/`）|
 | 📖 | **抓完自动解读** | 抓到内容后大脑按「是什么 / 关键要点 / 怎么用」逐条讲，看不懂的网页也能快速上手 |
 | 🧠 | **用户使用时学习** | 每次你让它干活（抓取/下载…）→ 经验沉淀进小脑 + 向量库 → 下次同类需求检索命中直接复用（越用越会）|
 
@@ -303,7 +303,7 @@ xiaojiao-harness/
 ├── validator.py                  #   数据校验
 ├── web_monitor.py                #   蒸馏监控面板
 ├── plugins/                      #   插件（memory/search/weather/scrapling_bridge/…）
-├── downloads/                    #   download 工具下载的文件（电子书 PDF/EPUB/TXT…）
+├── downloads/                    #   download 工具下载的文件（PDF/EPUB/TXT/ZIP/图片…任意文件）
 ├── books/                        #   抓取正文存这里（save_to 参数）
 ├── docs/                         #   一堆说明
 ├── xiaojiao_control.json         # ★ 操控文件：人设/大脑/工具/参数/端口
@@ -335,7 +335,7 @@ xiaojiao-harness/
 | [播客大脑](docs/podcast.md) | 给主题→写稿+配音+封面，生成播客 |
 | [N.E.K.O. 猫娘集成](docs/neko.md) | 桌面 Live2D 猫娘伙伴，学猫娘与主人的对话 |
 | [多脑秒切](docs/brain-switch.md) | 聊天/视频/播客/图像 大脑按需切换 |
-| [网页抓取 · 电子书下载](docs/scrapling.md) | Scrapling 桥接插件：9 工具/原理/配置/安全边界/架构图 |
+| [内置 Scrapling 抓取](docs/scrapling.md) | **小焦内置 Scrapling**：9 工具（网页/接口/批量/登录态/下载任意文件）/原理/配置/安全边界/架构图 |
 | [依赖检测逻辑](docs/dependency-check.md) | 模型/依赖为何按"协议连通"检测 |
 | [更新记录](CHANGELOG.md) | 每个版本改了什么 |
 | [行为准则](CODE_OF_CONDUCT.md) | 社区友好共识 |
@@ -491,7 +491,7 @@ flowchart TD
 
 | 版本 | 内容 |
 | --- | --- |
-| **v1.1.0（当前）** | 🕷️ **网页抓取/电子书下载**（Scrapling 桥接插件 9 工具 + 抓完自动解读 + 用户使用时学习）+ 🧠 **小脑改为必需项**（路径不写死、全盘自动探测）+ 🛠️ 安装器检测分级（必需/可选分离）+ 🐱 猫娘询问式启动 + 一批渲染/加载器/熔断等修复 |
+| **v1.1.0（当前）** | 🕷️ **内置 Scrapling 抓取**（9 工具：网页/动态页/接口/批量/登录态/下载任意文件 + 抓完自动解读 + 用户使用时学习）+ 🧠 **小脑改为必需项**（路径不写死、全盘自动探测）+ 🛠️ 安装器检测分级（必需/可选分离）+ 🐱 猫娘询问式启动 + 一批渲染/加载器/熔断等修复 |
 | v1.0.0 | 全新发布：N.E.K.O. 猫娘桌面伙伴集成(一键拉起+后台学对话) + 多大脑秒切(brain_manager/llama-swap) + 视觉/成本/插件全家桶 + 完整文档 |
 | *历史开发版本* | v2.3.0(视觉/成本桥接) → v2.2(v2 会话侧栏) → v2.1(历史持久化) → v2.0(function calling) —— 均为 v1.0.0 之前的演进快照，已并入当前版 |
 
@@ -683,7 +683,7 @@ flowchart LR
     class SD,SDUAL,SOUT scr;
 ```
 
-**调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；点 🎬 → video_service **按需切换**（卸大脑→ComfyUI+Wan2.1 生成→恢复大脑）出真视频；要抓资料/下电子书 → **抓取插件**（意图识别→安全闸门→双通道抓取→正文+解读/存文件），抓完的经验还会**沉淀进小脑**，下次同类需求直接复用；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + N.E.K.O. 猫娘。
+**调用关系一句话**：用户/DSH → 小焦 Web(`/v1`) → agent_run → 选大脑（大模型/小模型）→ 工具执行；点 🎬 → video_service **按需切换**（卸大脑→ComfyUI+Wan2.1 生成→恢复大脑）出真视频；要抓资料/下文件 → **内置 Scrapling**（意图识别→安全闸门→双通道抓取→正文+解读/存文件），抓完的经验还会**沉淀进小脑**，下次同类需求直接复用；小焦顺便**自动记录**交互 → 点赞/更正进**小脑知识库** → 学习引擎重训 → 越来越强。`start_xiaojiao.py` 一键拉起大模型 + Web + N.E.K.O. 猫娘。
 
 ---
 
@@ -881,7 +881,7 @@ flowchart TB
         O2["llama-swap 9292（秒级切换）"]
         O3["ComfyUI（视频大脑）"]
         O4["🐱 猫娘 N.E.K.O. · 启动前先问 y/N"]
-        O5["Scrapling 抓取栈（网页/电子书）"]
+        O5["Scrapling 抓取栈（网页/接口/文件）"]
     end
 
     MUST --> OK
@@ -911,7 +911,7 @@ flowchart TB
 | `llama-swap` | 没有秒级切换，一次只挂一颗模型 |
 | ComfyUI | 视频生成不可用（其余功能正常） |
 | 🐱 猫娘 N.E.K.O. | 没有桌面宠物（**先询问，答 n 照常启动**） |
-| Scrapling 抓取栈 | 网页抓取 / 电子书下载不可用 |
+| Scrapling 抓取栈 | 网页抓取 / 文件下载不可用 |
 
 ### 🧠 小脑（必需 · 项目核心 · 三种模型都能当）
 
@@ -987,9 +987,9 @@ flowchart TB
 **用法**：双击 `一键安装.bat`（或 `python install_all.py`）→ 看报告里的 **必需 / 可选** 两段 → 缺必需按提示补 → 齐了就 `python start_xiaojiao.py`。装完想换小脑或加抓取配置，改 `xiaojiao_control.json` 即可，不用碰代码。
 
 
-## 🕷️ 网页抓取 · 电子书下载（Scrapling 桥接插件）
+## 🕷️ 内置 Scrapling · 想抓啥抓啥
 
-> 一句话：**给小焦装上一双"上网抓资料"的手**——抓网页、抓动态页、绕反爬、批量抓、下载电子书；抓完**自动解读**，能直接**存成本地文件**，而且**每次使用都会让它更会用**。
+> 一句话：**小焦内置了 Scrapling**（业界最强的开源抓取库之一）——**网页、动态页、接口 JSON、批量列表、要登录才看得到的页面、任意文件（PDF/EPUB/TXT/ZIP/图片/音视频…）**都能抓能下；抓完**自动解读**，能直接**存成本地文件**，而且**每次使用都会让它更会用**。
 
 ### 它能干嘛（9 个工具，覆盖 Scrapling 全部能力）
 
@@ -1003,7 +1003,7 @@ flowchart TB
 | `bulk_stealthy_fetch` | 批量隐身抓取（≤20 个）| bulk_stealthy_fetch |
 | `scrape_with_selector` | 按 CSS 选择器抓取，**自适应防站点改版** | make_request/fetch + css_selector |
 | `browser_session` | 会话管理 + **登录态抓取** + **整页截图** | open_session / open_request_session / close_session / list_sessions / session_fetch / session_make_request / screenshot |
-| 🆕 `download` | **下载文件**（PDF / EPUB / TXT / ZIP）到本地 | （插件自研，Scrapling 无此能力）|
+| 🆕 `download` | **下载任意文件**（PDF / EPUB / ZIP / 图片 / 音视频…）到本地 | （插件自研，Scrapling 无此能力）|
 
 > 13 个 Scrapling MCP 工具 → 小焦 **9 个工具全部覆盖**；多出的 `download` 与 `save_to` 是插件自研（Scrapling 只抓网页、不下文件）。
 
@@ -1012,7 +1012,7 @@ flowchart TB
 ```mermaid
 flowchart TB
     subgraph U["🧑 用户"]
-        Q["「抓一下 xxx.com」<br/>「下载这本电子书」<br/>「抓这章存成文件」"]
+        Q["「抓一下 xxx.com」<br/>「把这个 PDF 下载下来」<br/>「抓这页存成文件」"]
     end
 
     subgraph APP["🧡 小焦壳 · xiaojiao_app.py"]
@@ -1084,7 +1084,7 @@ flowchart TB
 | 「用浏览器渲染抓 https://…」 | `fetch`（动态页面）| — |
 | 「用 stealthy_fetch 抓 https://…」 | `stealthy_fetch`（绕 Cloudflare）| — |
 | 「抓这章存成 mybook.md」 | `get` + `save_to` | `books/mybook.md` |
-| 「下载这本电子书 https://…epub」 | 🆕 `download` | `downloads/xxx.epub` |
+| 「把这个 PDF/ZIP 下载下来 https://…」 | 🆕 `download`（任意文件都能下）| `downloads/xxx.pdf` |
 | 「开个会话，登录后抓 https://…」 | `browser_session`（登录态）| — |
 | 「给 https://… 截个整页图」 | `browser_session` screenshot | `media/screenshot/*.png` |
 

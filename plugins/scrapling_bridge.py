@@ -20,8 +20,12 @@ HTTP 请求 / Playwright 浏览器渲染 / 隐身绕过 Cloudflare。
      · http ：连 scrapling_mcp_url（如 http://127.0.0.1:8000/mcp）
   mode=auto 时：mcp 可用则走 mcp，否则自动回退 inproc（并在结果里标注实际模式）。
 
-【对小焦暴露 7 个工具】（描述精简，便于 4B 模型选择）
-  get / bulk_get / fetch / bulk_fetch / stealthy_fetch / bulk_stealthy_fetch / scrape_with_selector
+【小焦内置 Scrapling 抓取能力】想抓啥抓啥：
+  网页正文 / 动态渲染页 / 接口 JSON / 批量列表 / 登录态页面 / 下载任意文件（PDF/EPUB/ZIP/图片…）
+
+【对小焦暴露 9 个工具】（描述精简，便于 4B 模型选择）
+  get / bulk_get / fetch / bulk_fetch / stealthy_fetch / bulk_stealthy_fetch
+  scrape_with_selector / browser_session / download
 
 【设计要点】
   · 异步桥接：专用事件循环线程 + ThreadPoolExecutor，绝不直接 asyncio.run()（避免事件循环冲突）
@@ -187,7 +191,7 @@ def _guess_filename(url: str, default_ext: str = ".bin") -> str:
 
 
 def _out_dir(kind: str) -> str:
-    """项目内的输出目录（downloads=下载件 / books=抓取的电子书正文）。"""
+    """项目内的输出目录（downloads=下载件 / books=抓取的正文存档）。"""
     d = os.path.join(os.path.dirname(SCRIPT_DIR), kind)
     os.makedirs(d, exist_ok=True)
     return d
@@ -1197,7 +1201,7 @@ class ScraplingBridge:
                "session_type": {"type": "string", "description": "session_type: dynamic或stealthy"},
                "full_page": {"type": "boolean", "description": "full_page: 是否整页截图"}},
               ["action"]),
-            T("download", "下载文件(PDF/EPUB/TXT等)存本地，返回路径", {"url": S_URL, "filename": S_FN}, ["url"]),
+            T("download", "下载任意文件(PDF/EPUB/ZIP/图片/音视频等)存本地，返回路径", {"url": S_URL, "filename": S_FN}, ["url"]),
         ]
 
     # ------------------------------------------------------------------
@@ -1246,7 +1250,7 @@ class ScraplingBridge:
                 save_to: str = "") -> str:
         """单个 URL 抓取：SSRF/robots 校验 → 限速 → 调 MCP/inproc → 统一结果。
 
-        save_to 非空时把正文存成本地文件（电子书章节/长文直接落盘，不塞满对话）。
+        save_to 非空时把正文存成本地文件（长文/连载章节直接落盘，不塞满对话）。
         """
         url = (url or "").strip()
         reason = _GUARD.check_ssrf(url)
@@ -1271,7 +1275,7 @@ class ScraplingBridge:
         if res.get("error"):
             return fmt_result(res.get("status", 0), url, res.get("content", ""), res["error"])
         _body = res.get("content", "") or ""
-        if save_to:                       # 存文件（电子书/长文）
+        if save_to:                       # 存文件（长文/连载）
             try:
                 fp = _save_text_file(save_to, _body)
                 return fmt_result(res.get("status", 0), url,
@@ -1334,11 +1338,11 @@ class ScraplingBridge:
             logger.warning("指纹下载失败: %s", sanitize(e))
             return None, 0, ""
 
-    # ---- download：下载文件（电子书 PDF/EPUB/TXT/ZIP 等）----
+    # ---- download：下载任意文件（PDF/EPUB/TXT/ZIP/图片/音视频…）----
     def _do_download(self, p: Dict[str, Any]) -> str:
         """把 URL 指向的**文件**下载到本地 downloads/ 目录，返回保存路径与大小。
 
-        设计意图：Scrapling 只负责"抓网页正文"，电子书这类二进制文件必须直接下载；
+        设计意图：Scrapling 只负责"抓网页正文"，而 PDF/ZIP/图片这类文件必须直接下载；
         这里做流式下载 + 大小上限 + 安全校验（SSRF/robots/限速），存本地后用户可直接打开。
         """
         import requests as _rq

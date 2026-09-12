@@ -7,16 +7,16 @@
 **🕷️ 网页抓取能力 + 🧠 小脑成为必需项 + 🛠️ 安装器分级与体验修复。**
 
 ### Added
-- 🕷️ **Scrapling 抓取桥接插件** `plugins/scrapling_bridge.py`（9 个工具，覆盖 Scrapling 全部 13 个 MCP 工具）：
+- 🕷️ **内置 Scrapling**（`plugins/scrapling_bridge.py` 桥接插件）：小焦从此**想抓啥抓啥**——网页 / 动态页 / 接口 JSON / 批量列表 / 登录态页面 / 下载任意文件。共 9 个工具，覆盖 Scrapling 全部 13 个 MCP 工具：
   - `get` / `bulk_get` / `fetch` / `bulk_fetch` / `stealthy_fetch` / `bulk_stealthy_fetch` / `scrape_with_selector`
   - `browser_session`：会话管理 + **登录态抓取** + **整页截图**（覆盖 open/close/list/session_fetch/session_make_request/screenshot）
-  - 🆕 `download`：**下载文件**（PDF/EPUB/TXT/ZIP）到 `downloads/`（插件自研，Scrapling 无此能力）
-  - 🆕 `save_to` 参数：抓取正文直接存文件到 `books/`（电子书章节/长文不塞对话）
+  - 🆕 `download`：**下载任意文件**（PDF/EPUB/TXT/ZIP/图片/音视频…）到 `downloads/`（插件自研，Scrapling 无此能力）
+  - 🆕 `save_to` 参数：抓取正文直接存文件到 `books/`（长文/连载章节不塞对话）
 - 📖 **抓完自动解读**：`_explain_content()` 让大脑按「是什么 / 关键要点 / 怎么用」逐条讲；模型不可用时退回规则提纲。
 - 🧠 **用户使用时学习**：`_learn_skill()` 每次用户使用工具后沉淀经验（成功=正确用法、失败=原因+反思）→ `self_learn/tool_skills.txt` + 向量库；`_recall_skills()` 下次检索命中即注入上下文复用（**越用越会**）。
 - 🎯 **抓取意图直通**：`_detect_scrape_intent()` 用规则识别「抓/爬/下载 + 网址」→ 直接构造并执行工具调用（不指望 4B 模型自己选工具/避免它编造代码）。
 - ⚙️ 依赖与配置：`requirements.txt` 增加 `scrapling[fetchers]` / `markdownify` / `mcp`；`xiaojiao_control.json` 增加 `scrapling` 配置段（mode/proxy_list/rate_limit/timeout/circuit_breaker…）。
-- 📚 文档：新增 `docs/scrapling.md`（工具详解/原理/配置/测试清单/排错/合规边界）；README 增加 **🕷️ 网页抓取 · 电子书下载** 章节（含架构数据流图 + 学习闭环图，位于致谢之前）。
+- 📚 文档：新增 `docs/scrapling.md`（工具详解/原理/配置/测试清单/排错/合规边界）；README 增加 **🕷️ 内置 Scrapling · 想抓啥抓啥** 章节（含架构数据流图 + 学习闭环图，位于致谢之前）。
 - 📚 文档：README 增加 **🛠️ 一键安装 · 检测分级** 章节（含三张图：**安装必需/可选分级图**、**小脑路径三级解析图**、**v1.1.0 改动全景图**＋原则落地对照表），同样位于**致谢之前**；`docs/architecture.md` 增加插件小节。
 
 ### Changed

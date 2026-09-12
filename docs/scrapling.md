@@ -1,6 +1,6 @@
-# 🕷️ 网页抓取 · 电子书下载（Scrapling 桥接插件）
+# 🕷️ 内置 Scrapling · 想抓啥抓啥
 
-> 小焦的「上网抓资料」能力：抓网页 / 动态页 / 绕反爬 / 批量抓 / 登录态抓取 / 下载电子书，
+> 小焦**内置了 Scrapling**（业界最强开源抓取库之一），所以天生会「上网抓东西」：抓网页 / 动态页 / 接口 JSON / 批量列表 / 绕反爬 / 登录态抓取 / **下载任意文件（PDF/EPUB/TXT/ZIP/图片/音视频…）**，
 > 抓完**自动解读**、可直接**存成本地文件**，并且**每次使用都会让小脑更会用**。
 
 插件文件：`plugins/scrapling_bridge.py`　｜　依赖：`scrapling[fetchers]` `markdownify`（`mcp` 仅 MCP 模式）
@@ -87,7 +87,8 @@ python start_xiaojiao.py
 | 抓动态页 | 用浏览器渲染抓 https://… | 渲染后正文 |
 | 绕反爬 | 用 stealthy_fetch 抓 https://… | 隐身抓取 |
 | **存成文件** | 抓这章存成 ch1.md | `books/ch1.md` |
-| **下载电子书** | 下载这本电子书 https://…book.epub | `downloads/book.epub` |
+| **下载任意文件** | 把这个 PDF / ZIP 下载下来 https://… | `downloads/book.pdf`（PDF/EPUB/TXT/ZIP/图片/音视频都能下）|
+| 抓接口 JSON | 抓 https://…/api/list（返回 JSON）| 原样返回 JSON 文本 |
 | 登录态抓取 | 开个会话，然后抓 https://…（需要登录的页）| 会话内抓取 |
 | 整页截图 | 给 https://… 截个整页图 | `media/screenshot/*.png` |
 
@@ -118,7 +119,7 @@ This domain is for use in documentation examples without needing permission…
 
 ```mermaid
 flowchart TB
-    Q["🧑 用户：抓一下 xxx / 下载这本电子书"] --> DI["① 抓取意图识别<br/>_detect_scrape_intent()"]
+    Q["🧑 用户：抓一下 xxx / 把这个 PDF 下载下来"] --> DI["① 抓取意图识别<br/>_detect_scrape_intent()"]
     DI --> SEC["② SecurityGuard<br/>SSRF · robots · 限速 · UA"]
     SEC --> CB["③ CircuitBreaker<br/>连续失败3次→暂停30s"]
     CB --> BM["④ BatchManager<br/>去重 · 429退避 · 代理轮换 · 隔离"]
@@ -294,4 +295,4 @@ python start_xiaojiao.py
 
 ---
 
-> 相关：[README 抓取章节](../README.md#️-网页抓取--电子书下载scrapling-桥接插件) · [持续学习](self_learn.md) · [插件指南](PLUGINS.md) · [工具说明](tools.md)
+> 相关：[README 抓取章节](../README.md#️-内置-scrapling--想抓啥抓啥) · [持续学习](self_learn.md) · [插件指南](PLUGINS.md) · [工具说明](tools.md)
