@@ -64,6 +64,8 @@ def main() -> int:
     ap.add_argument("--title", default="", help="Release 标题；默认用 CHANGELOG 小节的加粗摘要")
     ap.add_argument("--target", default="main", help="tag 指向的分支/提交（默认 main）")
     ap.add_argument("--notes-file", default="", help="Release 正文文件；默认从 CHANGELOG 抽")
+    ap.add_argument("--update-body", action="store_true",
+                    help="Release 已存在时，把正文同步成当前 CHANGELOG 小节（不改 tag、不改历史）")
     ap.add_argument("--dry-run", action="store_true", help="只打印将要做什么，不发请求")
     args = ap.parse_args()
 
@@ -115,15 +117,21 @@ def main() -> int:
         return 1
     print("提交      : %s" % sha[:12])
 
-    tag_obj = api("/repos/%s/git/tags" % REPO, "POST",
-                  {"tag": args.tag, "message": "%s" % title, "object": sha, "type": "commit"})
-    if tag_obj.get("_code") == 422:
-        print("· tag %s 已存在，跳过创建" % args.tag)
+    # 先看 tag ref 在不在：已存在就别再建一个游离的 tag 对象（反复发布会攒垃圾对象）
+    ref_now = api("/repos/%s/git/ref/tags/%s" % (REPO, args.tag), ok_codes=(200, 404))
+    if isinstance(ref_now, dict) and ref_now.get("ref"):
+        print("· tag %s 已存在（%s），跳过创建"
+              % (args.tag, str((ref_now.get("object") or {}).get("sha", ""))[:12]))
     else:
-        tsha = tag_obj.get("sha", "")
-        r = api("/repos/%s/git/refs" % REPO, "POST",
-                {"ref": "refs/tags/%s" % args.tag, "sha": tsha})
-        print("✅ tag %s → %s（%s）" % (args.tag, tsha[:12], "已创建" if r.get("ref") else r))
+        tag_obj = api("/repos/%s/git/tags" % REPO, "POST",
+                      {"tag": args.tag, "message": "%s" % title, "object": sha, "type": "commit"})
+        if tag_obj.get("_code") == 422:
+            print("· tag %s 创建被拒（可能已存在），跳过" % args.tag)
+        else:
+            tsha = tag_obj.get("sha", "")
+            r = api("/repos/%s/git/refs" % REPO, "POST",
+                    {"ref": "refs/tags/%s" % args.tag, "sha": tsha})
+            print("✅ tag %s → %s（%s）" % (args.tag, tsha[:12], "已创建" if r.get("ref") else r))
 
     rel = api("/repos/%s/releases" % REPO, "POST",
               {"tag_name": args.tag, "name": title, "body": body,
@@ -131,6 +139,13 @@ def main() -> int:
     if rel.get("_code") == 422:
         existing = api("/repos/%s/releases/tags/%s" % (REPO, args.tag))
         print("· Release %s 已存在：%s" % (args.tag, existing.get("html_url")))
+        if args.update_body and existing.get("id"):
+            # 正文与 CHANGELOG 可能后来补过内容 → 允许显式同步（只改正文，不动 tag、不动历史）
+            up = api("/repos/%s/releases/%s" % (REPO, existing["id"]), "PATCH",
+                     {"name": title, "body": body})
+            print("  ✅ 正文已同步为最新 CHANGELOG 小节（%d 字）" % len(up.get("body") or ""))
+        else:
+            print("  （如需同步正文：加 --update-body）")
     else:
         print("✅ Release 已创建：%s（正文 %d 字）" % (rel.get("html_url"), len(rel.get("body") or "")))
 
