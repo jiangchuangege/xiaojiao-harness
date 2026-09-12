@@ -18,7 +18,7 @@ requests>=2.28
 # ---------- 分词 / 检索（小脑向量库、记忆）----------
 jieba>=0.42
 
-# ---------- 🕷️ 网页抓取（plugins/scrapling_bridge.py：17 个工具）----------
+# ---------- 🕷️ 网页抓取（plugins/scrapling_bridge.py：18 个工具）----------
 scrapling[fetchers]>=0.4.15     # 抓取内核（Fetcher / DynamicFetcher / StealthyFetcher）
 markdownify>=1.0                # 抓取内容转 Markdown（4B 模型更易读）
 mcp>=1.0                        # 可选：仅当 scrapling.mode="mcp"（走 MCP 服务）时需要

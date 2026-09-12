@@ -111,7 +111,7 @@ flowchart TB
 | `plugins/` | 插件（工具能力）：`.py` / `.js` / `.json` / `.md`（技能） | `ScraplingBridge` 等 |
 | `video_service/` | 文生视频：ComfyUI 客户端、模型按需切换、任务轮询 | `video_api.py`、`model_switch.py` |
 | `podcast_service/` | 播客：LLM 写稿 + TTS 配音 + SD1.5 封面 | `podcast_gen.py` |
-| `music_service/` | 音乐生成（ACE-Step 独立服务） | `music_api.py` |
+| `music_service/` | 音乐生成（ACE-Step 独立服务，:8001） | `ace_music.py` |
 | `self_learn/` | 学习沉淀与检索 | `learn.py`、`tool_skills.txt`、`knowledge_vec.json` |
 | `install_all.py` / `一键安装.bat` | 依赖/组件检测与安装（**必需 / 可选**分级，路径全自动探测） | `discover_*()`、`discover_brain_all()` |
 | `tests/stress/` | 压力测试（真实调用，CI 门槛 95%） | `run_all.py` |

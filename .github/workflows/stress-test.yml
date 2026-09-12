@@ -78,6 +78,10 @@ jobs:
         shell: pwsh
         run: python tools/audit_static.py
 
+      - name: 文档一致性检查（链接/路径/接口/工具名 ↔ 代码）
+        shell: pwsh
+        run: python tools/check_docs.py
+
       - name: 真 bug 级静态检查（未定义名 / 语法，ruff）
         shell: pwsh
         run: |

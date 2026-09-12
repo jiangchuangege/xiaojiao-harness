@@ -10,12 +10,12 @@
 
 | 维度 | 状态 |
 | --- | --- |
-| 版本 / 发布 | **v1.2.3**，已在 GitHub 发布 4 个 Release（v1.0.0 / v1.1.0 / v1.2.0 / v1.2.1 / v1.2.2 → 现 v1.2.3） |
-| 自动化测试 | **103/103 通过 · 通过率 100%**（离线 78 + 安全 18 + 联网 24，含 9 项超长 JSON 回归）|
+| 版本 / 发布 | **v1.2.4**，已在 GitHub 发布 6 个 Release（v1.0.0 / v1.1.0 / v1.2.0 / v1.2.1 / v1.2.2 / v1.2.3 → 现 v1.2.4） |
+| 自动化测试 | **172/172 通过 · 通过率 100%**（离线单元 84 + 应用逻辑 36 + 安全 18 + 联网 34，含 9 项超长 JSON 回归与 NVD 真实接口用例）|
 | 安全 | 无未修复高危项；SSRF（含数值型绕过 / 重定向）、目录穿越、日志脱敏、命令端点加固均已实测 |
-| 文档 | README + ARCHITECTURE + CONTRIBUTING + 6 份 docs + **40 张 Mermaid 图（0 语法问题）** |
-| 健康度 | **8.7 / 10**（治理前 5.0）|
-| 遗留 | 重依赖模块（视频/播客/音乐/安装器）未进 CI；24h 长跑需独立环境；lint 工具需联网安装 |
+| 文档 | README + ARCHITECTURE + CONTRIBUTING + 7 份 docs + **42 张 Mermaid 图（0 语法问题）** |
+| 健康度 | **8.8 / 10**（治理前 5.0）|
+| 遗留 | 重依赖模块（视频/播客/音乐/安装器）未进 CI；24h 长跑需独立环境；ruff 风格类规则未清零（真 bug 级规则已 0） |
 
 ---
 
@@ -28,7 +28,7 @@ flowchart TB
         I["一键安装.bat / install_all.py<br/>分级检测（必需/可选）"]
     end
     subgraph CORE["核心（单进程 Flask :5000）"]
-        APP["xiaojiao_app.py<br/>43 条路由 · 79 个前端函数"]
+        APP["xiaojiao_app.py<br/>47 个 @app.route 装饰器（45 条唯一路径）· 79 个前端函数"]
         XJ["xiaojiao_harness.py<br/>小脑 MiniGPT（必需）"]
         LOG["xiaojiao_log.py<br/>统一日志 + 脱敏"]
         BM["brain_manager.py<br/>大脑注册/切换"]

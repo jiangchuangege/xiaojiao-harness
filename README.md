@@ -999,16 +999,17 @@ flowchart LR
 | `session_make_request` | 用 HTTP 会话发请求（保持 cookie）|
 | `screenshot` | 页面截图（可整页），存 `media/screenshot/` 返回路径 |
 
-**小焦增强（3 个工具 + 1 个参数）**
+**小焦增强（4 个工具 + 1 个参数）**
 
 | 工具 | 一句话 |
 | --- | --- |
 | `get` | `make_request` 的中文友好别名（说「抓一下」就走它）|
 | `scrape_with_selector` | 按 CSS 选择器抓取，**自适应防站点改版**（选择器存档 + 相似度找回）|
-| 🆕 `download` | **下载任意文件**（PDF / EPUB / ZIP / 图片 / 音视频…）存到 `downloads/` |
+| `download` | **下载任意文件**（PDF / EPUB / ZIP / 图片 / 音视频…）存到 `downloads/` |
+| 🆕 `collect_vulnerabilities` | **NVD 漏洞时间窗查询**：说「抓最近 7 天的高危漏洞」→ 自动带时间窗，直接给 Markdown 表格（编号/等级/评分/受影响软件/时间/摘要）|
 | 🆕 `save_to` | 抓取时多填一个文件名，正文就**直接存成文件**到 `books/`（长文不占对话）|
 
-> 另有 `browser_session` 作为**聚合入口**保留（一个工具用 `action` 走完 open/fetch/screenshot/close 全流程），方便旧用法与不熟悉多步调用的场景 —— 所以插件对外一共 **17 个工具**。
+> 另有 `browser_session` 作为**聚合入口**保留（一个工具用 `action` 走完 open/fetch/screenshot/close 全流程），方便旧用法与不熟悉多步调用的场景 —— 所以插件对外一共 **18 个工具**。
 
 ### 一张图看懂它怎么工作
 
