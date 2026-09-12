@@ -306,7 +306,61 @@ flowchart LR
 
 ---
 
-## 7. 测试与验收清单
+## 7. 指标与观测（看得见才叫生产级）
+
+没有指标就只能靠"感觉"。插件内置 `MetricsCollector`，**每次工具调用都自动记录**：
+
+| 指标 | 含义 |
+| --- | --- |
+| `calls` | 调用总次数 |
+| `success` / `fail` | 成功 / 失败次数（SSRF、robots 等**安全拦截不算失败**）|
+| `total_latency` / `avg_latency` / `max_latency` | 累计 / 平均 / 最大耗时（秒）|
+| `circuit_breaks` | 熔断触发次数 |
+| `last_error` | 最近一次错误（**已脱敏**：`sk-…`/`gho_…`/JWT 等一律打码）|
+
+三种取法：
+
+```powershell
+# ① Prometheus 文本（可直接被 Prometheus 抓取，也能人眼看）
+curl http://127.0.0.1:5000/metrics
+
+# ② JSON 视图（含活跃会话明细 + 熔断状态）
+curl http://127.0.0.1:5000/api/scrapling/metrics
+
+# ③ 落盘成文件（默认 logs/scrapling_metrics.json）
+python -c "import plugins.scrapling_bridge as m; print(m._METRICS.export())"
+```
+
+`/metrics` 输出示例（真实抓取）：
+
+```text
+# TYPE xiaojiao_scrapling_calls_total counter
+xiaojiao_scrapling_calls_total{tool="get"} 12
+# TYPE xiaojiao_scrapling_fail_total counter
+xiaojiao_scrapling_fail_total{tool="fetch"} 1
+# TYPE xiaojiao_scrapling_latency_seconds_max gauge
+xiaojiao_scrapling_latency_seconds_max{tool="get"} 2.5
+xiaojiao_scrapling_sessions_active 2
+xiaojiao_scrapling_uptime_seconds 3610.4
+```
+
+```mermaid
+flowchart LR
+    T["工具调用 execute()"] --> R["MetricsCollector.record()<br/>次数·成功·失败·耗时·熔断"]
+    R --> M["内存计数（加锁，线程安全）"]
+    M --> P["/metrics<br/>Prometheus 文本"]
+    M --> J["/api/scrapling/metrics<br/>JSON + 会话明细"]
+    M --> F["logs/scrapling_metrics.json"]
+    S["SessionManager"] -.->|"sessions_active"| P
+    B["CircuitBreaker"] -.->|"熔断状态"| J
+```
+
+> 实测：真实调用后 `calls/success/fail/latency` 自动累加 ✅；SSRF 拦截不计失败 ✅；
+> 指标里的错误信息已脱敏（`sk-…` → `***`）✅。
+
+---
+
+## 8. 测试与验收清单
 
 ```powershell
 cd xiaojiao-harness
@@ -331,7 +385,7 @@ python start_xiaojiao.py
 
 ---
 
-## 8. 排错
+## 9. 排错
 
 | 现象 | 原因 | 解决 |
 | --- | --- | --- |
@@ -345,7 +399,7 @@ python start_xiaojiao.py
 
 ---
 
-## 9. 免责声明
+## 10. 免责声明
 
 > 本功能仅用于抓取**公开可访问**的网页与文件，请自行遵守目标站点条款与当地法律。**请勿**用于绕过付费墙、破解版权内容或任何违法用途 —— 使用产生的后果由使用者自行承担。
 

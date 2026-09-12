@@ -2147,6 +2147,39 @@ def api_env():
     missing = [i for i in items if not i["ok"]]
     return jsonify({"items": items, "missing": [i["name"] for i in missing], "ok": not missing})
 
+@app.route("/metrics")
+def metrics_endpoint():
+    """抓取插件指标（Prometheus 文本格式）。
+
+    数据来自 plugins/scrapling_bridge.py 的 MetricsCollector：每个工具的调用/成功/失败/
+    延迟/熔断次数 + 活跃会话数。没有依赖 Prometheus 客户端库，直接输出文本格式，
+    既可被 Prometheus 抓取，也可 `curl http://127.0.0.1:5000/metrics` 人眼看。
+    """
+    for _name, _p in (PLUGINS or {}).items():
+        _inst = _p.get("instance")
+        if _inst and hasattr(_inst, "metrics_prometheus"):
+            try:
+                return Response(_inst.metrics_prometheus(), mimetype="text/plain; version=0.0.4; charset=utf-8")
+            except Exception as e:
+                return Response("# 指标读取失败：%s\n" % str(e)[:120],
+                                mimetype="text/plain; charset=utf-8")
+    return Response("# 抓取插件（scrapling_bridge）未加载，暂无指标\n",
+                    mimetype="text/plain; charset=utf-8")
+
+
+@app.route("/api/scrapling/metrics")
+def scrapling_metrics_json():
+    """同一份指标的 JSON 视图（含活跃会话明细、熔断状态），方便前端/排障查看。"""
+    for _name, _p in (PLUGINS or {}).items():
+        _inst = _p.get("instance")
+        if _inst and hasattr(_inst, "metrics_snapshot"):
+            try:
+                return jsonify(_inst.metrics_snapshot())
+            except Exception as e:
+                return jsonify({"error": "指标读取失败：%s" % str(e)[:120]}), 500
+    return jsonify({"error": "抓取插件未加载"}), 404
+
+
 @app.route("/api/message", methods=["POST"])
 def api_message():
     """保存一条消息到当前会话历史(如视频结果)，刷新后仍在。"""

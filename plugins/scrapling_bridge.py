@@ -278,14 +278,32 @@ _SECRET_PATTERNS = [
     re.compile(r"(?i)(token\s*[:=]\s*)(\S+)"),
     re.compile(r"(?i)(cookie\s*[:=]\s*)(\S+)"),
     re.compile(r"(?i)(bearer\s+)(\S+)"),
+    # ---- 裸凭据形态（没有 key= 前缀也要抹掉）----
+    # 指标自测发现：sanitize() 原来只认"键值对"写法，像 sk-xxx 这种**裸密钥**会原样进日志/指标
+    re.compile(r"(sk-[A-Za-z0-9_\-]{12,})"),                       # OpenAI 风格
+    re.compile(r"(gh[pousr]_[A-Za-z0-9]{16,})"),                   # GitHub token
+    re.compile(r"(AKIA[0-9A-Z]{12,})"),                            # AWS Access Key
+    re.compile(r"(xox[baprs]-[A-Za-z0-9\-]{10,})"),                # Slack
+    re.compile(r"(eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{6,})"),   # JWT
+    re.compile(r"(?i)(password\s*[:=]\s*)(\S+)"),
 ]
 
 
 def sanitize(text: Any) -> str:
-    """日志脱敏：抹掉 API Key / Token / Cookie / Authorization，禁止外泄到日志。"""
+    """日志脱敏：抹掉 API Key / Token / Cookie / Authorization / 裸凭据，禁止外泄。
+
+    说明：分两类处理 —— ① 键值对形式保留键名、抹掉值（便于排查"是哪个字段"）；
+    ② 裸凭据（sk-xxx / gho_xxx / JWT / AWS Key）整串替换为 ***。
+    """
     s = str(text)
     for pat in _SECRET_PATTERNS:
-        s = pat.sub(lambda m: m.group(1) + "***", s)
+        try:
+            if pat.groups >= 2:
+                s = pat.sub(lambda m: m.group(1) + "***", s)
+            else:
+                s = pat.sub("***", s)
+        except Exception:
+            continue
     return s
 
 
@@ -810,6 +828,113 @@ class BatchManager:
                 continue
             allowed.append(u)
         return allowed, blocked
+
+
+# =====================================================================
+# 六、指标采集（改进 2）：每个工具的调用/成功/失败/延迟/熔断次数
+# =====================================================================
+class MetricsCollector:
+    """轻量指标收集器：**能看见**每个工具到底跑了多少次、慢在哪、失败多少。
+
+    为什么需要：没有指标就只能靠"感觉"。出问题时至少要知道
+    「是哪个工具在失败」「P95 有多慢」「熔断触发了几次」。
+
+    指标（按工具维度）：calls / success / fail / total_latency / max_latency / min_latency /
+                        circuit_breaks / last_error / last_called_at
+    导出：`export()` 写 metrics.json；`to_prometheus()` 输出 Prometheus 文本格式（可直接抓取）。
+    线程安全：插件可能被 Flask 多线程同时调用 → 全程加锁。
+    """
+
+    def __init__(self, path: str = "", enabled: bool = True) -> None:
+        self.enabled = bool(enabled)
+        self.path = path or os.path.join(os.path.dirname(SCRIPT_DIR), "logs", "scrapling_metrics.json")
+        self.started_at = time.time()
+        self._lock = threading.Lock()
+        self._tools: Dict[str, Dict[str, Any]] = {}
+        self._total_calls = 0
+
+    def record(self, tool: str, ok: bool, latency: float, circuit_break: bool = False,
+               error: str = "") -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            m = self._tools.setdefault(tool, {
+                "calls": 0, "success": 0, "fail": 0, "total_latency": 0.0,
+                "max_latency": 0.0, "min_latency": 0.0, "circuit_breaks": 0,
+                "last_error": "", "last_called_at": ""})
+            m["calls"] += 1
+            m["success" if ok else "fail"] += 1
+            m["total_latency"] = round(m["total_latency"] + max(0.0, latency), 4)
+            m["max_latency"] = round(max(m["max_latency"], latency), 4)
+            m["min_latency"] = round(min(m["min_latency"], latency) if m["min_latency"] else latency, 4)
+            if circuit_break:
+                m["circuit_breaks"] += 1
+            if error:
+                m["last_error"] = sanitize(error)[:160]     # 脱敏后再存，避免密钥/Token 进指标
+            m["last_called_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            self._total_calls += 1
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            tools = {}
+            for k, v in self._tools.items():
+                calls = max(1, v["calls"])
+                tools[k] = dict(v, avg_latency=round(v["total_latency"] / calls, 4))
+            return {"started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.started_at)),
+                    "uptime_seconds": round(time.time() - self.started_at, 1),
+                    "total_calls": self._total_calls,
+                    "tools": tools}
+
+    def reset(self) -> None:
+        with self._lock:
+            self._tools.clear()
+            self._total_calls = 0
+            self.started_at = time.time()
+
+    def export(self, path: str = "") -> str:
+        """导出 metrics.json，返回文件路径。"""
+        target = path or self.path
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "w", encoding="utf-8") as f:
+                json.dump(self.snapshot(), f, ensure_ascii=False, indent=2)
+            return target
+        except OSError as e:
+            logger.warning("指标导出失败: %s", sanitize(e))
+            return ""
+
+    def to_prometheus(self, extra: Optional[Dict[str, float]] = None) -> str:
+        """输出 Prometheus 文本格式（# HELP / # TYPE + 样本行）。"""
+        snap = self.snapshot()
+        lines: List[str] = []
+
+        def metric(name: str, help_text: str, mtype: str, rows: List[Tuple[Dict[str, str], float]]) -> None:
+            lines.append("# HELP %s %s" % (name, help_text))
+            lines.append("# TYPE %s %s" % (name, mtype))
+            for labels, val in rows:
+                if labels:
+                    lb = ",".join('%s="%s"' % (k, str(v).replace('"', "'")) for k, v in labels.items())
+                    lines.append("%s{%s} %s" % (name, lb, val))       # 有标签：metric{a="b"} v
+                else:
+                    lines.append("%s %s" % (name, val))               # 无标签：metric v（不能写成 metric{}）
+
+        tools = snap["tools"]
+        counters = [("calls", "calls_total", "调用总次数"), ("success", "success_total", "成功次数"),
+                    ("fail", "fail_total", "失败次数"), ("circuit_breaks", "circuit_breaks_total", "熔断触发次数")]
+        for key, suffix, desc in counters:
+            metric("xiaojiao_scrapling_%s" % suffix, "抓取插件：%s" % desc, "counter",
+                   [({"tool": t}, float(v[key])) for t, v in sorted(tools.items())])
+        for key, suffix, desc in (("avg_latency", "latency_seconds_avg", "平均耗时（秒）"),
+                                  ("max_latency", "latency_seconds_max", "最大耗时（秒）"),
+                                  ("total_latency", "latency_seconds_total", "累计耗时（秒）")):
+            metric("xiaojiao_scrapling_%s" % suffix, "抓取插件：%s" % desc, "gauge",
+                   [({"tool": t}, float(v[key])) for t, v in sorted(tools.items())])
+        for k, v in (extra or {}).items():
+            metric("xiaojiao_scrapling_%s" % k, "抓取插件：%s" % k, "gauge", [({}, float(v))])
+        lines.append("# HELP xiaojiao_scrapling_uptime_seconds 抓取插件运行时长（秒）")
+        lines.append("# TYPE xiaojiao_scrapling_uptime_seconds gauge")
+        lines.append("xiaojiao_scrapling_uptime_seconds %s" % snap["uptime_seconds"])
+        return "\n".join(lines) + "\n"
 
 
 # =====================================================================
@@ -1401,6 +1526,8 @@ _CLIENT = MCPClient(_CONFIG)
 _SESSIONS = SessionManager(_CONFIG, closer=lambda sid: _CLIENT.call_tool(
     "close_session", {"session_id": sid}, timeout=20))
 atexit.register(_SESSIONS.stop)
+# 指标采集（改进 2）
+_METRICS = MetricsCollector()
 _STEALTH_LAST = [0.0]                  # 隐身模式上次请求时间（限流用）
 
 
@@ -1502,16 +1629,58 @@ class ScraplingBridge:
         ]
 
     # ------------------------------------------------------------------
+    # 指标 / 会话 观测接口（改进 1 + 2：供 app 的 /metrics 与排障使用）
+    # ------------------------------------------------------------------
+    def metrics_snapshot(self) -> Dict[str, Any]:
+        """返回全部指标（含会话统计与熔断状态），可直接 jsonify。"""
+        snap = _METRICS.snapshot()
+        snap["sessions"] = _SESSIONS.stats()
+        snap["breaker"] = _BREAKER.state()
+        return snap
+
+    def metrics_prometheus(self) -> str:
+        """Prometheus 文本格式（可直接被 /metrics 暴露）。"""
+        sess = _SESSIONS.stats()
+        return _METRICS.to_prometheus(extra={"sessions_active": sess["active"],
+                                             "sessions_max": sess["max_sessions"]})
+
+    def metrics_export(self, path: str = "") -> str:
+        """把指标写成 metrics.json（默认 logs/scrapling_metrics.json）。"""
+        return _METRICS.export(path)
+
+    def sessions_stats(self) -> Dict[str, Any]:
+        """会话回收器状态（活跃会话、上限、最近回收记录）。"""
+        return _SESSIONS.stats()
+
+    def sessions_sweep(self) -> Dict[str, Any]:
+        """手动触发一次会话回收（运维/测试用）。"""
+        return _SESSIONS.sweep("manual")
+
+    # ------------------------------------------------------------------
     # 执行入口
     # ------------------------------------------------------------------
     def execute(self, tool_name: str, params: Dict[str, Any]) -> str:
-        """统一入口：所有异常都转成中文可读错误，绝不把 Python 堆栈丢给 4B 模型。"""
+        """统一入口：所有异常都转成中文可读错误，绝不把 Python 堆栈丢给 4B 模型。
+
+        改进 2：这里顺带把每次调用记进指标（次数/成功/失败/耗时/熔断），供 /metrics 与排障使用。
+        """
         params = params or {}
+        _t0 = time.time()
+
+        def _done(out: str, circuit_break: bool = False) -> str:
+            try:
+                _err = (json.loads(out) or {}).get("error") or ""
+            except Exception:
+                _err = ""
+            _METRICS.record(tool_name, ok=(not _is_err(out)) or _is_safety_block(out),
+                            latency=time.time() - _t0, circuit_break=circuit_break, error=_err)
+            return out
+
         try:
             # 熔断检查（每个工具独立）
             msg = _BREAKER.check(tool_name)
             if msg:
-                return fmt_result(0, params.get("url", ""), "", msg)
+                return _done(fmt_result(0, params.get("url", ""), "", msg), circuit_break=True)
 
             handler = {
                 # 小焦增强
@@ -1536,20 +1705,20 @@ class ScraplingBridge:
                 "browser_session": self._do_browser_session,
             }.get(tool_name)
             if not handler:
-                return fmt_result(0, "", "", "未知工具：%s" % tool_name)
+                return _done(fmt_result(0, "", "", "未知工具：%s" % tool_name))
 
             out = handler(params)
             # 安全拦截（SSRF/robots）属于"正常拒绝"，不是工具故障 → 不计熔断，
             # 否则连续拦截几个内网地址就会把工具误判为不可用。
             _BREAKER.record(tool_name, (not _is_err(out)) or _is_safety_block(out))
-            return out
+            return _done(out)
         except TimeoutError as e:
             _BREAKER.record(tool_name, False)
-            return fmt_result(0, params.get("url", ""), "", str(e))
+            return _done(fmt_result(0, params.get("url", ""), "", str(e)))
         except Exception as e:                      # 兜底：任何异常都变中文可读
             _BREAKER.record(tool_name, False)
             logger.warning("工具 %s 异常: %s", tool_name, sanitize(e))
-            return fmt_result(0, params.get("url", ""), "", "抓取失败：%s" % sanitize(e)[:160])
+            return _done(fmt_result(0, params.get("url", ""), "", "抓取失败：%s" % sanitize(e)[:160]))
 
     # ------------------------------------------------------------------
     # 各工具实现
