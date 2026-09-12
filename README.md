@@ -331,6 +331,7 @@ xiaojiao-harness/
 | [抓取插件详解](docs/scrapling.md) | 17 工具 / 原理 / 配置 / 指标 / 排错 |
 | [**安全审计报告**](docs/security-audit.md) | SSRF/robots/限速/穿越/脱敏/命令端点 的审计结论与修复记录 |
 | [**测试与稳定性报告**](docs/testing-report.md) | 覆盖矩阵、通过率、**未覆盖项诚实清单**、24h 长跑方法 |
+| [**最终验收报告**](docs/acceptance-report.md) | v1.2.0 交付总览、13 个 bug 修复清单、健康度终评、剩余风险 |
 | [发版与回滚](docs/release-and-rollback.md) | 怎么发版、怎么回滚、网络被墙怎么办 |
 | [压力测试](tests/stress/README.md) | 怎么跑、覆盖什么、CI 门槛 |
 | [接口](docs/api.md) | OpenAI 兼容接口 |
