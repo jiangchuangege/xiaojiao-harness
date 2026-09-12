@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import time
 
 from harness import REPO_ROOT, Results
 
@@ -207,6 +208,17 @@ def run(res: Results) -> Results:
               "偶发拒签" in app.llm_error_suffix(), "")
     app._LAST_LLM_ERROR = ""
     app._LLM_STAT["recent"] = []
+
+    # ---------- 10b. 云端熔断：连续被拒先歇 60 秒改用本地，别硬打（越打越全是 401） ----------
+    app._CLOUD_BREAK.update({"fails": 0, "until": 0.0})
+    for _ in range(3):
+        app._cloud_break_note(False, False)           # 模拟云端连续失败 3 次
+    res.check("云端熔断", "连续 3 次失败后进入冷却（改用本地大脑）",
+              app._CLOUD_BREAK["until"] > time.time(), str(app._CLOUD_BREAK))
+    app._cloud_break_note(True, True)                 # 本地成功 → 计数归零
+    res.check("云端熔断", "本地成功后熔断计数归零（下次仍会试云端）",
+              app._CLOUD_BREAK["fails"] == 0, str(app._CLOUD_BREAK))
+    app._CLOUD_BREAK.update({"fails": 0, "until": 0.0})
 
     # ---------- 11. 选"本地模型"必须真能用（真实缺陷：条目里 engine/model 配错，选了照样不通） ----------
     res.check("本地大脑", "本机地址被识别为本地（不需要 Key）",

@@ -1002,8 +1002,11 @@ _LAST_LLM_ERROR = ""
 _LLM_ERR_LOGGED = set()
 # 云端调用成败流水（最近 20 次）：用来区分"偶发拒签"和"持续拒签"，好告诉用户到底是谁的问题
 _LLM_STAT = {"ok": 0, "fail": 0, "recent": []}
+# 云端熔断：连续被拒就先"歇一会儿"用本地大脑，别继续硬打（人家的免费档有频率限制，
+# 打越猛越全是 401，用户还得干等 —— 实测就是"连打 5 次全 401，静默两分钟后单发就通了"）
+_CLOUD_BREAK = {"fails": 0, "until": 0.0, "cooldown": 60.0}
 # 本次请求是不是"云端授权失败、自动改用本地大脑"答的（回答里会如实说明）
-_USED_LOCAL_FALLBACK = {"on": False, "model": ""}
+_USED_LOCAL_FALLBACK = {"on": False, "model": "", "reason": ""}
 _LOCAL_PROBE = {"at": 0.0, "model": ""}
 
 
@@ -1013,28 +1016,42 @@ def _local_brain_model(force=False):
     为什么要它：云端 API Key 一旦失效（401/403），小焦原来只会反复回一句"模型调用出错"，
     用户完全没法用。而**本地大脑就在本机**（llama-swap 9292），完全能顶上 —— 所以云端
     授权失败时自动兜到本地，并在回答里如实说明，而不是把用户卡死在一句模板上。
+
+    注意：llama-swap 换模型/加载模型时 `/v1/models` 会短暂失败 —— 那时候**不能**当作
+    "本地没有大脑"，否则兜底链就断了（实测就踩过这个坑）。所以：探不到时退回上次探到的，
+    再不行用已知的本地默认模型名，保证兜底这条路永远有目标。
     """
     global _LOCAL_PROBE
     if not force and _LOCAL_PROBE["model"] and (time.time() - _LOCAL_PROBE["at"]) < 60:
         return _LOCAL_PROBE["model"]
     port = int((CONTROL.get("brain", {}) or {}).get("llama_swap_port", 9292) or 9292)
     base = "http://127.0.0.1:%d/v1" % port
-    try:
-        r = requests.get(base + "/models", timeout=3)
-        if r.status_code == 200:
-            ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
-            # llama-swap 里 coder 是写代码用的，聊天优先用它之外的模型
-            pick = next((i for i in ids if "coder" not in str(i).lower()), (ids[0] if ids else ""))
-            _LOCAL_PROBE = {"at": time.time(), "model": pick, "base": base}
-            return pick
-    except Exception as e:  # noqa: silent-ok — 本地没起来就正常走云端，不要因此报错
-        LOG.debug("忽略异常(%s:%d): %s", __file__, 1030, e)
-    _LOCAL_PROBE = {"at": time.time(), "model": ""}
-    return ""
+    for _try in range(2):
+        try:
+            r = requests.get(base + "/models", timeout=5)
+            if r.status_code == 200:
+                ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
+                # llama-swap 里 coder 是写代码用的，聊天优先用它之外的模型
+                pick = next((i for i in ids if "coder" not in str(i).lower()), (ids[0] if ids else ""))
+                if pick:
+                    _LOCAL_PROBE = {"at": time.time(), "model": pick, "base": base}
+                    return pick
+        except Exception as e:  # noqa: silent-ok — 本地没起来就正常走云端，不要因此报错
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1030, e)
+        time.sleep(0.5)
+    # 探测失败：用上次探到的（可能只是 llama-swap 正在换模型），否则用本地默认名
+    fallback = _LOCAL_PROBE.get("model") or "xiaojiao"
+    LOG.warning("本地大脑探测失败，仍按 %s 走兜底（llama-swap 可能正在换模型）", fallback)
+    _LOCAL_PROBE = {"at": time.time(), "model": fallback, "base": base}
+    return fallback
 
 
 def _llm_targets():
-    """本次请求可以试的大脑目标（首选配置 + 云端授权失败时的本地兜底）。"""
+    """本次请求可以试的大脑目标（首选配置 + 云端失败时的本地兜底）。
+
+    云端**连续被拒**时会先"歇一会儿"（熔断 60 秒）：这段时间直接走本地大脑，不再硬打 ——
+    人家的免费档有频率限制，越打越全是 401，用户还要干等；歇够了自动放行再试云端。
+    """
     primary = {"url": (LLM_BASE or "").rstrip("/") + "/chat/completions",
                "key": LLM_KEY, "model": LLM_MODEL, "local": _is_local_base(LLM_BASE)}
     out = [primary]
@@ -1043,7 +1060,34 @@ def _llm_targets():
         if _lm:
             out.append({"url": _LOCAL_PROBE.get("base", "http://127.0.0.1:9292/v1") + "/chat/completions",
                         "key": "", "model": _lm, "local": True})
+        if time.time() < _CLOUD_BREAK["until"] and len(out) > 1:
+            LOG.info("云端大脑处于熔断冷却中（还剩 %.0f 秒），本次直接用本地大脑",
+                     _CLOUD_BREAK["until"] - time.time())
+            out = out[1:]                     # 冷却期内：只留本地，不再打云端
     return out
+
+
+def _cloud_break_note(is_local, ok):
+    """按"是否本地目标/成功与否"维护云端熔断计数。
+
+    约定：`is_local=True` 表示这次调用的是本地大脑 —— 只要它成了，说明有可用的兜底，
+    云端连续失败计数归零（下一条消息会重新试云端）；`is_local=False` 且失败则累加，
+    累到 3 次就冷却 60 秒，期间直接用本地大脑（不再浪费对方的频率额度）。
+    """
+    if is_local:
+        if ok:
+            _CLOUD_BREAK["fails"] = 0
+            _CLOUD_BREAK["until"] = 0.0
+        return
+    if not ok:
+        _CLOUD_BREAK["fails"] += 1
+        if _CLOUD_BREAK["fails"] >= 3 and time.time() >= _CLOUD_BREAK["until"]:
+            _CLOUD_BREAK["until"] = time.time() + _CLOUD_BREAK["cooldown"]
+            LOG.warning("云端大脑连续 %d 次失败 → 熔断 %.0f 秒（改用本地大脑，稍后自动重试云端）",
+                        _CLOUD_BREAK["fails"], _CLOUD_BREAK["cooldown"])
+    else:
+        _CLOUD_BREAK["fails"] = 0
+        _CLOUD_BREAK["until"] = 0.0
 
 
 def _llm_headers(t):
@@ -1073,6 +1117,7 @@ def _llm_post(target, payload, timeout=90, tries=4):
             resp = requests.post(target["url"], headers=_llm_headers(target), json=payload, timeout=timeout)
             if resp.status_code == 200:
                 _llm_stat(True)
+                _cloud_break_note(target.get("local"), True)     # 本地成功 → 云端熔断计数归零
                 return resp, 200, ""
             if not _fallback_worthy(resp.status_code):
                 _llm_stat(False)
@@ -1082,11 +1127,13 @@ def _llm_post(target, payload, timeout=90, tries=4):
             resp = None
             _llm_stat(False)
             if i == tries - 1:
+                _cloud_break_note(target.get("local"), False)
                 return None, None, "%s: %s" % (type(e).__name__, str(e)[:120])
         if i < tries - 1:
             _t.sleep(0.7 * (i + 1))                 # 0.7s / 1.4s / 2.1s 退避，别把网关打爆
     if resp is None:
         return None, None, "无响应"
+    _cloud_break_note(target.get("local"), False)
     return resp, resp.status_code, resp.text
 
 
@@ -1176,12 +1223,19 @@ def _llm_stat(ok):
 
 
 def llm_fallback_note():
-    """云端挂了、这次是本地大脑顶上时，回答末尾如实标注一句（别让用户以为是云端答的）。"""
+    """云端挂了、这次是本地大脑顶上时，回答末尾如实标注一句（别让用户以为是云端答的）。
+
+    **真实缺陷**：这个标志原来只置位不复位 → 一旦某次兜底过，**之后每次回答**都会挂上
+    "本次回答由本地大脑完成（ ）"（原因还是空的），用户看着像小焦坏了。现在按请求复位，
+    且带上"这一次"的真实原因。
+    """
     if not _USED_LOCAL_FALLBACK["on"]:
         return ""
-    return ("\n\n---\n\nℹ️ 本次回答由**本地大脑**（%s）完成：你选的云端大脑调用失败（%s）。%s"
+    _why = _USED_LOCAL_FALLBACK.get("reason") or _LAST_LLM_ERROR
+    _why = ("（%s）" % _why) if _why else ""
+    return ("\n\n---\n\nℹ️ 本次回答由**本地大脑**（%s）完成：你选的云端大脑调用失败%s。%s"
             "要恢复云端：设置 → 大脑 里更新 API Key。"
-            % (_USED_LOCAL_FALLBACK["model"], _LAST_LLM_ERROR, _llm_stat_note()))
+            % (_USED_LOCAL_FALLBACK["model"], _why, _llm_stat_note()))
 
 
 def llm_chat(messages):
@@ -1195,7 +1249,7 @@ def llm_chat(messages):
         resp, code, body = _llm_post(_t, _p, timeout=90)
         if code == 200 and resp is not None:
             if _t["local"] and not _is_local_base(LLM_BASE):
-                _USED_LOCAL_FALLBACK.update({"on": True, "model": _t["model"]})
+                _USED_LOCAL_FALLBACK.update({"on": True, "model": _t["model"], "reason": _LAST_LLM_ERROR})
             return resp.json()["choices"][0]["message"]["content"].strip()
         _note_llm_error("chat", code, body)
         if code is not None and not _fallback_worthy(code):
@@ -1561,7 +1615,7 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
                     continue
                 return None, tool_trace
             if _t.get("local") and not _is_local_base(LLM_BASE):
-                _USED_LOCAL_FALLBACK.update({"on": True, "model": _t["model"]})
+                _USED_LOCAL_FALLBACK.update({"on": True, "model": _t["model"], "reason": _LAST_LLM_ERROR})
             msg = r.json()["choices"][0]["message"]
             try:
                 _record_usage(r.json().get("usage"), _t["model"])
@@ -1969,6 +2023,7 @@ def agent_run(user_input, lean=False):
     DSH 兼容的正确方式是：DSH harness 连小焦的 /v1 当模型，DSH 的插件在 DSH 里自己跑。
     """
     # ===== 原有的 agent_run 逻辑 =====
+    _USED_LOCAL_FALLBACK.update({"on": False, "model": "", "reason": ""})   # 每次提问复位兜底标签
     _CTX["user_input"] = user_input          # 工具层要用（判断模型是否只给了碎片检索词）
     history = current_messages()
 
@@ -2583,6 +2638,16 @@ def api_presets_load():
     # 合并到 CONTROL(深合并, 保留未在预设里的配置)
     _deep_merge(CONTROL, preset)
     CONTROL["preset"] = preset.get("name", file[:-5])
+    # **真实缺陷**：预设只写 `brain.engine=llama`（如"编程助手"）时，深合并会**保留原来的
+    # 云端 brain.api**（base_url 还指着 Agnes）→ 出现"引擎说本地、地址是云端"的四不像，
+    # 结果每次提问都失败。这里做一次一致性校正：引擎是本地就把地址/Key/模型名对齐到本地。
+    _b = CONTROL.get("brain", {}) or {}
+    if str(_b.get("engine", "")).lower() in ("llama", "auto") and not _is_local_base((_b.get("api") or {}).get("base_url", "")):
+        _port = int(_b.get("llama_swap_port", 9292) or 9292)
+        _bm = _local_brain_model()
+        _b["engine"] = "llama"
+        _b["api"] = {"base_url": "http://127.0.0.1:%d/v1" % _port, "api_key": "", "model": _bm or "xiaojiao"}
+        LOG.info("预设要求本地引擎 → 已把大脑地址对齐到本地 %s（模型 %s）", _b["api"]["base_url"], _b["api"]["model"])
     json.dump(CONTROL, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     reload_control()  # 热更新内存配置, 无需重启
     # 回给前端足够的信息：前端要用它提示"联网/工具开关"到底变成什么了
@@ -3307,18 +3372,26 @@ def _local_served_model(base_url, want):
 
 
 def _cloud_key_problem(base, key, model):
-    """切到云端模型时先探一下：Key 不通就**当场告诉用户**，别等他问半天才发现。
+    """切到云端模型时先探一下：通不通**当场**告诉用户，别等他问半天才发现。
 
-    真实事故：用户切到云端模型后每次提问都只得到一句"模型调用出错"，而他并不知道
-    是 Key 失效（401）。现在选中即提示，且小焦仍会用本地大脑兜底回答。
+    真实事故：用户切到云端模型后每次提问都只得到一句"模型调用出错"，而他并不知道问题在 Key 上。
+
+    **判据只用 chat**：`GET /models` 在这里不可信 —— 实测连"空 Key / 乱写的 Key"都能时不时
+    拿到 200（网关/缓存时不时不校验令牌）；拿它当"Key 有效"会把结论带偏（我就被带偏过一次）。
     """
+    url = (base or "").rstrip("/") + "/chat/completions"
+    hdr = {"Content-Type": "application/json"}
+    if key:
+        hdr["Authorization"] = "Bearer " + key
     try:
-        r = requests.get((base or "").rstrip("/") + "/models",
-                         headers=({"Authorization": "Bearer " + key} if key else {}), timeout=5)
+        r = requests.post(url, headers=hdr, timeout=20,
+                          json={"model": model, "messages": [{"role": "user", "content": "在的"}],
+                                "max_tokens": 4})
         if r.status_code == 200:
-            return "已切到云端大脑 %s（Key 有效）" % model
+            return "已切到云端大脑 %s（实测可通）" % model
         if r.status_code in (401, 403):
-            return "这个云端模型的 Key 无效或已过期（HTTP %s）→ 小焦会先用本地大脑顶，抽空更新 Key" % r.status_code
+            return ("这个云端 Key 被服务商拒了（HTTP %s）→ 小焦先用本地大脑顶；"
+                    "跑 `python tools/check_cloud_brain.py` 可确诊是哪把 Key 的问题" % r.status_code)
         return "已切到云端大脑 %s，但接口返回 HTTP %s（小焦会先用本地大脑顶）" % (model, r.status_code)
     except Exception as e:
         return "云端接口连不上（%s）→ 小焦会先用本地大脑顶" % str(e)[:40]
