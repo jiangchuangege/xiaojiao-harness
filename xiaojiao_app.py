@@ -128,7 +128,11 @@ _TOOL_RULES = ("\n[工具铁律] "
                "② **做事之前先看上面那份工具清单**：用户点名某个插件/工具（如 Archify）时，"
                "直接调那个工具，**不要**改用 web_search 去搜；清单里没有的才说「没有这个工具」。"
                "③ 多步任务按顺序拆开做（先校验/先读文件，再产出结果），每步都调对应工具。"
-               "④ 工具报错就把真实错误原样告诉用户并说明怎么修，不要自己编一个成功结果。"
+               "④ **校验/报错必须一次性改完**：`archify_validate`（或任何校验类工具）失败时，"
+               "要**按返回的全部报错一起修**，改好再校验**一次**；禁止「改一条→校验→再改一条」"
+               "这种逐条试错（实测同一张图来回校验 7 次、白烧 200 多秒）。同一工具连续失败 3 次"
+               "会被系统熔断，把最后一次报错直接摆给用户。"
+               "⑤ 工具报错就把真实错误原样告诉用户并说明怎么修，不要自己编一个成功结果。"
                "\n[简洁原则] 回答要极简：只给结果/代码/结论，不要寒暄、不要说【好的我来帮你】、"
                "不要复述问题、不要多余解释。写代码只输出代码块。"
                "\n[代码工作流] 写/改代码请这样：① 先 read_file 看相关文件再动手；"
@@ -1728,6 +1732,7 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
     tool_trace = []
     _targets = _llm_targets()
     _ti = 0                                          # 当前在用哪个大脑目标
+    _fail_streak = {"tool": "", "n": 0}              # 同一工具连续失败次数（熔断用）
     for _ in range(max_rounds):
         _t = _targets[_ti]
         payload = {"model": _t["model"], "messages": m, "temperature": TEMPERATURE,
@@ -1768,7 +1773,10 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
             for name, args in xmlcalls:
                 tname, targs = _map_tool(name, args)
                 result = _tool_result_str(run_tool(tname, targs))
+                _tripped = _tool_breaker(_fail_streak, tname, result, tool_trace)
                 tool_trace.append({"tool": tname, "args": targs, "result": result[:800]})
+                if _tripped:
+                    return _tripped, tool_trace
                 if result.startswith("〔待确认〕"):
                     m.append({"role": "tool", "content": result})
                     return result, tool_trace
@@ -1784,7 +1792,10 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
                 args = {}
             tname, targs = _map_tool(fn.get("name", ""), args)
             result = _tool_result_str(run_tool(tname, targs))
+            _tripped = _tool_breaker(_fail_streak, tname, result, tool_trace)
             tool_trace.append({"tool": tname, "args": targs, "result": result[:800]})
+            if _tripped:
+                return _tripped, tool_trace
             if result.startswith("〔待确认〕"):
                 m.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
                 return result, tool_trace
@@ -1797,6 +1808,53 @@ def llm_chat_tools(messages, max_rounds=6, lean=False):
         res = (last.get("result") or "")[:160]
         return ("✅ 已完成「%s」%s" % (last.get("tool"), ("：" + res) if res else "")), tool_trace
     return None, tool_trace
+
+
+def _tool_failed(result):
+    """这次工具调用算不算"失败"（用于熔断计数）。
+
+    只认明确的失败信号：中文失败词 / Error / 校验 FAIL / 异常前缀。
+    成功的正文里偶尔也会出现"失败"两字（比如"失败重试机制"），所以要求它出现在前 200 字内。
+    """
+    head = str(result or "")[:200]
+    if not head.strip():
+        return True
+    for k in ("校验失败", "失败：", "调用失败", "工具执行失败", "插件异常", "异常：",
+              "Error", "error:", "Traceback", "不存在", "非法", "禁止", "无效"):
+        if k in head:
+            return True
+    if re.search(r"状态：FAIL|FAIL\b", head):
+        return True
+    return False
+
+
+def _tool_breaker(streak, tool, result, tool_trace):
+    """同一工具**连续失败**达到 3 次就熔断：返回给用户的错误文本（并标注"已熔断"）。
+
+    真实缺陷（用户实测）：让 Archify 画架构图，`archify_validate` 被反复调用 **7 次** ——
+    模型每次只按一条报错改一点、改完再校验，来回烧掉 200 多秒。这里做三层防护：
+      · 提示词里要求"所有报错一次改完"（_TOOL_RULES ④）
+      · 校验插件一次返回**全部**报错（archify 的 _fmt_validate）
+      · 工具循环兜底熔断：连续 3 次失败就停，把最后一次报错原样摆给用户
+    同一次调用成功即清零（换个工具也会重新计数）。
+    """
+    ok = not _tool_failed(result)
+    if ok:
+        streak["tool"], streak["n"] = "", 0
+        return ""
+    if streak.get("tool") == tool:
+        streak["n"] = streak.get("n", 0) + 1
+    else:
+        streak["tool"], streak["n"] = tool, 1
+    if streak["n"] >= 3:
+        LOG.warning("工具 %s 连续 %d 次失败 → 熔断（停止重试，把最后一次报错交给用户）",
+                    tool, streak["n"])
+        tool_trace.append({"tool": tool, "args": {},
+                           "result": "已熔断：连续 %d 次失败，停止重试" % streak["n"]})
+        return ("⚠️ **已熔断：%s 连续 %d 次失败，停止重试。**\n\n"
+                "最后一次报错原文如下（请据此修正后再说一次，或直接看这条报错）：\n\n```\n%s\n```"
+                % (tool, streak["n"], str(result or "").strip()[:1800]))
+    return ""
 
 
 def _workflow_needs_more_rounds(user_input):
@@ -2188,6 +2246,55 @@ def _noarg_named_tool(text):
 # ================== 「别搜 / 直接用工具」闸门结束 ==================
 
 
+def _scrape_direct(user_input, tool_trace):
+    """"抓一下 <url>" 这类明确指令的**直通**执行：真调抓取工具，把正文原样给用户。
+
+    抽成函数的原因：这条路径要在**模型之前**（规则先判，稳定）和**模型之后**（兜底）各用一次。
+    抓取结果直接给用户看，不让模型"总结"（它会把正文吃掉）。
+    返回 (answer 或 None, tool_trace)。
+    """
+    _sc = _detect_scrape_intent(user_input)
+    if not _sc:
+        return None, tool_trace
+    try:
+        _build_tools()                  # 填充 _TOOL2PLUGIN，确保插件工具可被调用
+    except Exception as e:
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 1538, e)
+    _tn, _ta = _sc
+    _res = _tool_result_str(run_tool(_tn, _ta, force=True))
+    tool_trace = list(tool_trace or []) + [{"tool": _tn, "args": _ta, "result": _trace_summary(_res)}]
+    try:
+        _jd = json.loads(_res)
+        _err = (_jd.get("error") or "").strip()
+        _body = (_jd.get("content") or "").strip()
+        if _err:
+            return "⚠️ 抓取失败：%s" % _err, tool_trace
+        if _jd.get("items"):                       # 批量抓取：逐项给正文 + 解读
+            _lines = []
+            for _idx, _it in enumerate(_jd["items"]):
+                _h = "**%s** · HTTP %s" % (_it.get("url"), _it.get("status"))
+                if _it.get("error"):
+                    _lines.append(_h + "\n\n⚠️ " + str(_it["error"]))
+                    continue
+                _c = (_it.get("content") or "")[:1500]
+                _lines.append(_h + "\n\n" + _fence_body(_c))
+                if _idx < 3:                          # 逐条解读（限前 3 条，避免过慢）
+                    _e = _explain_content(_c, _it.get("url", ""))
+                    if _e:
+                        _lines.append("📖 **解读**\n\n" + _e)
+            return "🌐 批量抓取完成\n\n" + "\n\n---\n\n".join(_lines), tool_trace
+        # 单页：正文 + 解读
+        _ans = "🌐 **%s** · HTTP %s\n\n%s" % (
+            _jd.get("url", ""), _jd.get("status", ""),
+            _fence_body(_body[:4000]) or "(页面无正文)")
+        _exp = _explain_content(_body, _jd.get("url", ""))
+        if _exp:
+            _ans += "\n\n---\n\n📖 **小焦解读**\n\n" + _exp
+        return _ans, tool_trace
+    except Exception:
+        return (_res[:3000], tool_trace)             # 非 JSON 就原样给
+
+
 def _summarize_tool(user_input, result, tool):
     """让大脑基于工具结果给一句简短总结。"""
     prompt = ("你用 %s 工具执行了用户请求，结果如下：\n%s\n\n"
@@ -2400,6 +2507,14 @@ def agent_run(user_input, lean=False):
     want_llm = llm_online() if BRAIN_ENGINE == "auto" else (BRAIN_ENGINE in ("llama", "api"))
     has_llm = want_llm and llm_online()
 
+    # ②b 抓取类意图**直通**（"抓一下 <url>" 这种明确指令，规则先判，别让模型自己挑工具）
+    #     真实缺陷（本轮实测）：这句话原来交给模型，云端模型有时挑 `fetch`、有时挑
+    #     `fetch_url` 连调五六次，回答里还不带代码块 —— 同一句话每次结果不一样，
+    #     JSON 展示因此时好时坏。规则能判的（用户点名了动作 + 给了 URL）就规则直通，
+    #     稳定、快、也不需要模型。下面 ② 里仍保留同一段兜底。
+    if answer is None and CAP.get("run_tools", True) and _detect_scrape_intent(user_input):
+        answer, tool_trace = _scrape_direct(user_input, tool_trace)
+
     # ① 优先让大模型自己“想”并调用工具（原生 function calling / <tool_call> XML）
     if has_llm and answer is None:
         home = os.path.expanduser("~")
@@ -2436,47 +2551,10 @@ def agent_run(user_input, lean=False):
         else:
             answer = llm_chat(messages)
 
-    # ② 兜底：抓取类意图直通（4B 模型规划弱，不指望它自己选抓取工具）
+    # ② 兜底：抓取类意图直通（模型没自己调工具时走这条）
     if not tool_trace and CAP.get("run_tools", True) and has_llm:
-        _sc = _detect_scrape_intent(user_input)
-        if _sc:
-            try:
-                _build_tools()          # 填充 _TOOL2PLUGIN，确保插件工具可被调用
-            except Exception as e:
-                LOG.debug("忽略异常(%s:%d): %s", __file__, 1538, e)
-            _tn, _ta = _sc
-            _res = _tool_result_str(run_tool(_tn, _ta, force=True))
-            tool_trace.append({"tool": _tn, "args": _ta, "result": _trace_summary(_res)})
-            # 抓取结果直接把正文给用户看（不要交给 4B 模型"总结"，它会把正文吃掉）
-            try:
-                _jd = json.loads(_res)
-                _err = (_jd.get("error") or "").strip()
-                _body = (_jd.get("content") or "").strip()
-                if _err:
-                    answer = "⚠️ 抓取失败：%s" % _err
-                elif _jd.get("items"):                       # 批量抓取：逐项给正文 + 解读
-                    _lines = []
-                    for _idx, _it in enumerate(_jd["items"]):
-                        _h = "**%s** · HTTP %s" % (_it.get("url"), _it.get("status"))
-                        if _it.get("error"):
-                            _lines.append(_h + "\n\n⚠️ " + str(_it["error"]))
-                            continue
-                        _c = (_it.get("content") or "")[:1500]
-                        _lines.append(_h + "\n\n" + _fence_body(_c))
-                        if _idx < 3:                          # 逐条解读（限前 3 条，避免过慢）
-                            _e = _explain_content(_c, _it.get("url", ""))
-                            if _e:
-                                _lines.append("📖 **解读**\n\n" + _e)
-                    answer = "🌐 批量抓取完成\n\n" + "\n\n---\n\n".join(_lines)
-                else:                                         # 单页：正文 + 逐条解读
-                    answer = "🌐 **%s** · HTTP %s\n\n%s" % (
-                        _jd.get("url", ""), _jd.get("status", ""),
-                        _fence_body(_body[:4000]) or "(页面无正文)")
-                    _exp = _explain_content(_body, _jd.get("url", ""))
-                    if _exp:
-                        answer += "\n\n---\n\n📖 **小焦解读**\n\n" + _exp
-            except Exception:
-                answer = _res[:3000]                         # 非 JSON 就原样给
+        if _detect_scrape_intent(user_input):
+            answer, tool_trace = _scrape_direct(user_input, tool_trace)
 
     # ②b 兜底：其它"执行类操作" → 用 plan 强制生成一次工具调用
     if not tool_trace and CAP.get("run_tools", True) and has_llm:

@@ -160,24 +160,34 @@ def main() -> int:
     err_lines = [l for l in out.splitlines() if l.strip().startswith("❌")]
     record(8, "文档 ↔ 代码一致（链接/路径/接口/工具名）", rc == 0, "%d 个错误" % len(err_lines))
 
-    # ---------- P9 版本号唯一且一致 ----------
+    # ---------- P9 版本号自洽（有版本历史，且不出现"幽灵版本号"） ----------
+    # 政策演进：v1.0 时期要求"只有一个版本号"，但开始正常发版后这就不成立了 ——
+    # 现在的判据是：① CHANGELOG 里至少一个版本标题、最新在最上面、且不重复；
+    # ② 仓库里出现的每个 vX.Y.Z 都必须在 CHANGELOG 里有对应小节（不许出现查无此版的号）。
     cl = io.open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8").read()
     heads = re.findall(r"^## \[(v[^\]]+)\]", cl, flags=re.M)
-    leftovers = []
+    dup = len(heads) != len(set(heads))
+    ghosts = []
+    known = set(heads)
     for f in glob.glob(os.path.join(ROOT, "**", "*"), recursive=True):
         if not f.lower().endswith((".md", ".py", ".txt", ".yml", ".json", ".example")):
             continue
-        if any(x in _rel(f) for x in ("CHANGELOG.md", ".git/", "node_modules")):
+        rel = _rel(f)
+        # 只审"人写的"文档与代码：self_learn/ 之类是运行态知识（里面出现的是 Node 自身的
+        # 版本号，不是我们的发版号），扫进来只会制造噪音。
+        if any(x in rel for x in ("CHANGELOG.md", ".git/", "node_modules",
+                                  "self_learn/", "logs/", "media/", "docs/xiaojiao-kb")):
             continue
         try:
             t = io.open(f, encoding="utf-8", errors="ignore").read()
         except OSError:
             continue
-        stale = set(re.findall(r"v1\.\d\.\d", t))
-        if stale:
-            leftovers.append("%s:%s" % (_rel(f), sorted(stale)))
-    record(9, "版本号唯一（CHANGELOG 单版本 + 无残留旧版本号）",
-           len(heads) == 1 and not leftovers, "标题=%s 残留=%s" % (heads, leftovers[:2]))
+        unknown = sorted(set(re.findall(r"v\d+\.\d+\.\d+", t)) - known)
+        if unknown:
+            ghosts.append("%s:%s" % (rel, unknown))
+    record(9, "版本号自洽（CHANGELOG 有版本、无重复、无查无此版的号）",
+           bool(heads) and not dup and not ghosts,
+           "标题=%s 幽灵=%s" % (heads, ghosts[:2]))
 
     # ---------- P10 依赖锁定 ----------
     lock = os.path.join(ROOT, "requirements.lock")

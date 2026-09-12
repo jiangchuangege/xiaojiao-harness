@@ -99,5 +99,5 @@ python tests/stress/stability_30m.py --minutes 1 --interval 4 --chat-every 30   
 ```
 离线 203/204（1 跳过）· 100%
 全部 237/238 · 100%（1 项按当天 NVD 数据跳过）
-实机验收 live_check 35/35 · UI 样式 25/25 · 预设 13/13
+实机验收 live_check 36/36 · UI 样式 25/25 · 预设 13/13
 ```

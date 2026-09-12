@@ -30,6 +30,7 @@ SKILL_MD = os.path.join(ARCHIFY_ROOT, "SKILL.md")
 PROJECT_ROOT = r"C:\xiaojiao\xiaojiao harness"
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "logs", "diagrams")
 CACHE_DIR = os.path.join(PROJECT_ROOT, "logs", ".archify_cache")
+LOG_DIR = os.path.join(PROJECT_ROOT, "logs")          # 校验失败日志落这里（archify_validate.log）
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -248,17 +249,24 @@ def _syntax_check(spec_json):
 
 # ============ validate 结果格式化 ============
 def _fmt_validate(data):
-    """把 validate 的 JSON 结果格式化成可读文本"""
+    """把 validate 的 JSON 结果格式化成可读文本。
+
+    **重要（性能根因）**：校验失败时把**所有**问题一次性列全，而不是只列前两条 ——
+    模型以前只能看到头两条报错，改完再校验、再报两条、再改…实测同一张图来回校验 **7 次**、
+    白烧 200+ 秒。现在输出「字段路径 + 错误类型 + 建议修法」的结构化清单，让模型**一次改完**。
+    """
     lines = []
     ok = data.get("ok", False)
     lines.append(f"状态：{'PASS' if ok else 'FAIL'}")
     checks = data.get("checks", [])
     if checks:
-        lines.append(f"\n【{len(checks)} 项检查】")
+        failed = [c for c in checks if not c.get("ok")]
+        lines.append(f"\n【{len(checks)} 项检查｜失败 {len(failed)} 项】")
         for c in checks:
             mark = "✅" if c.get("ok") else "❌"
             lines.append(f"  {mark} {c.get('name')}")
-            for d in c.get("details", [])[:2]:
+            # 每一项的 details **全部**列出（原来只给 2 条，等于逼模型逐条试错）
+            for d in c.get("details", []):
                 lines.append(f"     {d}")
     comp = data.get("composition", {})
     if comp:
@@ -271,10 +279,133 @@ def _fmt_validate(data):
                          f"标签间距问题={m.get('labelRouteClearanceIssues')} 微段={m.get('microSegmentCount')}")
         issues = comp.get("issues", [])
         if issues:
-            lines.append(f"\n【问题 {len(issues)} 条】")
-            for it in issues[:10]:
+            lines.append(f"\n【问题 {len(issues)} 条｜以下全部一次改完，不要逐条试】")
+            for it in issues:                      # 不再截断到 10 条
                 lines.append(f"  - {it.get('kind', '?')}: {it.get('message', '')[:150]}")
+            lines.append(_suggest_fixes(issues))
+    if not ok:
+        lines.append("\n【一次改完，再校验一次】请把所有上面列出的问题一起修正后重新提交，"
+                     "不要只改一条就重试。")
     return "\n".join(lines)
+
+
+def _suggest_fixes(issues):
+    """按问题类型给"建议修法"，让模型一次改到位（字段路径 + 错误类型 + 怎么改）。"""
+    tips = {
+        "label_route_clearance": "标签与连线路由冲突：把标签沿轴挪开 ≥12px，或改走另一条走廊",
+        "relationship_crossings": "关系线交叉过多：调整节点顺序/分组，让同组节点相邻，减少跨组连线",
+        "relationship_corridors": "走廊占用重复：给每条关系分配不同走廊（错开 1 格）",
+        "ambiguous_corridors": "走廊语义模糊：减少并列走廊层数，或把同类关系合并为一条总线",
+        "micro_segment": "出现过短线段：合并相邻共线节点，或把拐点对齐到栅格",
+        "overlap": "元素重叠：增大节点间距或调整分区尺寸",
+        "bounds": "超出画布：扩大画布或收紧元素间距",
+        "orthogonal": "线段不正交：把折点对齐到 90°（Archify 只接受正交布线）",
+    }
+    kinds = []
+    for it in issues:
+        k = str(it.get("kind", "?"))
+        if k not in kinds:
+            kinds.append(k)
+    if not kinds:
+        return ""
+    out = ["\n【建议修法】"]
+    for k in kinds[:8]:
+        out.append(f"  · {k} → {tips.get(k, '按上面的 message 定位到具体元素后修正')}")
+    return "\n".join(out)
+
+
+def _fix_hint(path, msg):
+    """把一条 schema/校验报错翻成"该怎么改"的一句话（配合 _fmt_validate_error 用）。"""
+    low = (msg or "").lower()
+    if "additionalproperty" in low:
+        prop = ""
+        if "additionalProperty" in msg:
+            prop = msg.split("additionalProperty")[-1].strip(" :\"}{")[:24]
+        return "去掉不支持的字段 `%s`（schema 里没有它；位置按 schema 用允许的字段）" % (prop or "该字段")
+    if "missingproperty" in low or "must have required property" in low:
+        prop = ""
+        if "missingProperty" in msg:
+            prop = msg.split("missingProperty")[-1].strip(" :\"}{")[:24]
+        return "补上必填字段 `%s`（先 archify_read_schema 看这个 type 的必填项）" % (prop or "缺失字段")
+    if "must be equal to one of the allowed values" in low or "enum" in low:
+        return "取值不在允许列表里（按 schema 的 enum 改）"
+    if "must be array" in low or "must be object" in low or "must be string" in low:
+        return "类型不对（按报错里说的类型改：array/object/string…）"
+    if "minitems" in low or "at least" in low:
+        return "条目太少（补足到 schema 要求的最少条数）"
+    if "label" in low and ("overlap" in low or "clearance" in low):
+        return ("标签与元素/连线重叠：给该关系加 `labelDy: 12`（或 -12）把标签挪开，"
+                "或改 `labelAt`（`mid`/`start`/`end`），也可把相邻节点挪 20~40px；"
+                "一次改完所有报它重叠的标签")
+    if "label" in low and "segment" in low:
+        return "标签压在连线上：给该关系设 `labelDy`（±12）或缩短该段走廊"
+    if "crossing" in low:
+        return "连线交叉过多：调整节点顺序/分组，让同组相邻"
+    if "corridor" in low:
+        return "走廊冲突：给每条关系错开一条走廊"
+    if "orthogon" in low:
+        return "存在非正交线段：把折点对齐到 90°"
+    return "按报错里的 JSON 指针路径定位并修正"
+
+
+def _fmt_validate_error(err_text, diagram_type=""):
+    """把 validate 的**失败返回**整理成"一次能全改完"的清单。
+
+    **这是"反复改 7 次"的真正根因**：node 校验失败时退出码非 0，原来的代码直接把整块
+    JSON 原文甩回给模型（`校验失败（0.2s）：{"error":"…\\n  /components/0 …"}`）——
+    转义的换行、几十条挤在一起，模型每次只能看清一两条，于是"改一条→校验→再改一条"。
+    现在：把 error 字符串按行拆开、逐条列出「字段路径 + 报错 + 建议修法」，并明确要求一次改完。
+    """
+    raw = str(err_text or "").strip()
+    data, body = {}, raw
+    i = raw.find("{")
+    if i >= 0:
+        try:
+            data = json.loads(raw[i:])
+            body = str(data.get("error") or data.get("message") or raw[i:])
+        except Exception:  # noqa: silent-ok — 不是 JSON 就按纯文本处理
+            data = {}
+    items = [l.strip(" ,") for l in body.replace("\\n", "\n").splitlines() if l.strip()]
+    out = ["状态：FAIL", ""]
+    if items:
+        out.append("【全部报错 %d 条｜一次改完，不要逐条试】" % len(items))
+        for it in items:
+            out.append("  ❌ %s" % it[:220])
+            hint = _fix_hint(it[:400], it)
+            if hint:
+                out.append("     → %s" % hint)
+    else:
+        out.append("【报错原文】\n%s" % raw[:1200])
+    stage = data.get("stage")
+    if stage:
+        out.append("\n【阶段】%s" % stage)
+    out.append("\n【一次改完，再校验一次】请把上面**所有**问题一起修正后重新提交；"
+               "不要只改一条就重试（同一工具连续失败 3 次会被熔断）。")
+    return "\n".join(out)
+
+
+def _log_validate_fail(diagram_type, spec, text):
+    """每次校验失败都把"失败原因摘要"记到 logs/archify_validate.log（便于复盘/统计）。"""
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        picked = []
+        for l in str(text or "").splitlines():
+            s = l.strip()
+            if not s:
+                continue
+            if (s.startswith(("❌", "状态：", "【问题", "【", "- ", "· ")) or "❌" in s
+                    or '"severity"' in s or '"message"' in s or '"kind"' in s
+                    or "error" in s.lower() or "失败" in s):
+                picked.append(s)
+        if not picked:                    # 兜底：至少留下开头几行，别写一条空记录
+            picked = [l.strip() for l in str(text or "").splitlines() if l.strip()][:6]
+        with open(os.path.join(LOG_DIR, "archify_validate.log"), "a", encoding="utf-8") as f:
+            f.write("[%s] type=%s spec_chars=%d 失败摘要行=%d\n"
+                    % (time.strftime("%Y-%m-%d %H:%M:%S"), diagram_type, len(spec or ""), len(picked)))
+            for l in picked[:30]:
+                f.write("    %s\n" % l[:200])
+    except Exception:  # noqa: silent-ok — 记日志失败不能影响校验本身
+        pass
 
 
 def _fmt_guide(data):
@@ -562,8 +693,13 @@ class ArchifyPlugin:
             TIMEOUT_VALIDATE,
         )
         if not ok:
-            return f"校验失败（{dt:.1f}s）：{err[:800]}"
-        return f"耗时 {dt:.1f}s\n{_fmt_validate(data)}"
+            txt = _fmt_validate_error(err, t)          # 失败也要"一次列全 + 给修法"
+            _log_validate_fail(t, spec, txt)
+            return txt
+        txt = f"耗时 {dt:.1f}s\n{_fmt_validate(data)}"
+        if not data.get("ok"):
+            _log_validate_fail(t, spec, txt)          # 失败就留痕（复盘"到底卡在哪几条"）
+        return txt
 
     def _do_inspect(self, p):
         t = p.get("diagram_type", "architecture")

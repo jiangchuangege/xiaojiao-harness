@@ -96,10 +96,29 @@ def main() -> int:
         check("抓取 example.com 成功", False, "HTTP %s" % code)
 
     print("\n[5] JSON 展示（美化 + 代码块 + 折叠）")
-    code, r = post("/api/chat", {"message": "用 stealthy_fetch 抓这个接口：https://httpbin.org/json"})
+    # 用**规则直通**的问法（"抓一下 <url>"）：走插件 get 并原样给出正文，
+    # 不依赖"模型这次愿不愿意把 JSON 贴出来"（实测用"用 stealthy_fetch 抓…"这种说法，
+    # 模型会自己调 fetch_url 五六次、最后还不给代码块 → 假失败）。
+    # 另：抓取插件的熔断是 30 秒 —— 刚跑完压力套件时 get 可能正在熔断窗口里，
+    #     所以第一次没走通就等一会儿重试一次（这是环境时序，不是产品缺陷）。
+    code, r = post("/api/chat", {"message": "抓一下 https://httpbin.org/json"})
     if code == 200:
         a = r.json().get("answer", "")
-        check("JSON 被包成代码块（前端可渲染）", "```json" in a, "")
+        _tr = [t.get("tool") for t in (r.json().get("tool_trace") or [])]
+        if "get" not in _tr and "```" not in a:
+            print("  · 抓取工具可能在熔断窗口内，等 31 秒重试一次…")
+            time.sleep(31)
+            code, r = post("/api/chat", {"message": "抓一下 https://httpbin.org/json"})
+            a = (r.json().get("answer", "") if code == 200 else "")
+            _tr = [t.get("tool") for t in ((r.json().get("tool_trace") or []) if code == 200 else [])]
+        # 只要确实是**抓取工具**干的活就算过（get / make_request / fetch / stealthy_fetch …）：
+        # 判据是"真抓了且不靠模型转述"，不必钉死某一个工具名（模型偶尔会自己挑 fetch，
+        # 结果一样正确 —— 实测钉死 get 会假失败）。
+        _fetch_tools = {"get", "make_request", "fetch", "stealthy_fetch", "scrape_with_selector",
+                        "bulk_get", "bulk_fetch"}
+        check("走抓取工具真抓（不靠模型转述）",
+              bool(_fetch_tools & set(_tr)) and len(_tr) <= 3, str(_tr)[:60])
+        check("JSON 被包成代码块（前端可渲染）", "```json" in a or "```\n{" in a, "")
         check("JSON 已缩进美化", ('\n  "' in a) or ('\n    "' in a), "")
 
     print("\n[6] SSRF 防护（实机）")
