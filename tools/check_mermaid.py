@@ -24,6 +24,15 @@ import os
 import re
 import sys
 
+# CI（GitHub 的 Windows runner）控制台编码不是 UTF-8（cp1252/charmap），
+# 这里打印的中文与 ✅ 会直接抛 UnicodeEncodeError —— 真实事故：本检查步骤在 CI 上**每次都失败**，
+# 导致后面的压力测试根本没跑过。所以入口处先把标准输出切成 UTF-8（切不动就退化成替换字符，不报错）。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: silent-ok — 老环境没有 reconfigure 也不该让工具挂掉
+        pass
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FENCE_RE = re.compile(r"```mermaid\n(.*?)```", re.S)
 

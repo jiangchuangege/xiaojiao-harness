@@ -33,6 +33,11 @@ jobs:
     name: 压力测试（${{ github.event_name }}）
     runs-on: windows-latest
     timeout-minutes: 30
+    # Windows runner 的控制台默认不是 UTF-8：脚本里打印中文/emoji 会直接 UnicodeEncodeError。
+    # 真实事故：check_mermaid 就是这么在 CI 上每次都失败，后面的压力测试一次都没跑起来。
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
       - name: 拉取代码

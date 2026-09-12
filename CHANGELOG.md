@@ -57,6 +57,14 @@
 - 🐞 **99 处日志格式参数不匹配**（`tools/fix_silent_except.py` 注入的 `忽略异常(%s:行号): %s` 多传了一个行号参数）
   → 每次 emit 都抛 `TypeError: not all arguments converted...`，日志变成「--- Logging error ---」堆栈。
   统一改为 `忽略异常(%s:%d): %s`（17 个文件、99 处），并修正注入工具本身，避免以后再犯。
+- 🔴 **CI 其实一直是红的（本轮查出并修掉）**：GitHub Windows runner 的控制台编码不是 UTF-8，
+  `tools/check_mermaid.py` 打印中文时抛 `UnicodeEncodeError: 'charmap' codec can't encode character '\uff1a'`，
+  于是**每一次** CI 运行都卡在"校验 Mermaid 原理图"这一步，后面的压力测试**从来没在 CI 里跑过**
+  （查了近 10 次运行，最早可查到的那次就已经失败，全部同一个原因）。
+  修法：所有入口脚本（`tools/check_mermaid.py`、`tools/audit_static.py`、`tools/check_docs.py`、
+  `tests/stress/harness.py`）在启动时把标准输出/错误重新配置成 UTF-8（失败则退化为替换字符，绝不抛错），
+  并在 workflow 里给 job 加 `PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8` 双保险。
+  本地已用 `PYTHONIOENCODING=cp1252` 复现原故障并验证修复后通过。
 - 🐞 **配置热重载会丢掉检索铁律**：`reload_control()` 原来直接 `SYSTEM_PROMPT = role`，
   现在统一走 `compose_system_prompt()`（人设 + 铁律），并且 `/api/persona` 落盘前会去掉界面回传的铁律，避免重复叠加。
 

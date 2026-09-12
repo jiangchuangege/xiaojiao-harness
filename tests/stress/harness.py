@@ -19,6 +19,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
+# CI（GitHub Windows runner）控制台不是 UTF-8，打印 ✅/❌ 会 UnicodeEncodeError → 整个套件崩掉。
+# 真实事故：CI 上 check_mermaid 就是这么失败的，导致压力测试从来没真正跑起来。这里统一兜住。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: silent-ok — 老环境没有 reconfigure 也不该让测试挂掉
+        pass
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLUGIN_PATH = os.path.join(REPO_ROOT, "plugins", "scrapling_bridge.py")
 

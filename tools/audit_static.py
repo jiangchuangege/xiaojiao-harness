@@ -29,6 +29,13 @@ import re
 import sys
 from collections import Counter
 
+# CI（GitHub Windows runner）控制台不是 UTF-8，打印中文会 UnicodeEncodeError —— 入口先切成 UTF-8
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: silent-ok — 老环境没有 reconfigure 也不该让工具挂掉
+        pass
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKIP_DIRS = {".git", ".venv", "venv", "__pycache__", "node_modules", "~", "logs", "books",
              "downloads", "media", "videos", "dsh_home", "dsh_sessions", "assets", "presets",
