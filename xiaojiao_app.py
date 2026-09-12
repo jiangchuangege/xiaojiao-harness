@@ -2149,6 +2149,14 @@ def api_env():
     missing = [i for i in items if not i["ok"]]
     return jsonify({"items": items, "missing": [i["name"] for i in missing], "ok": not missing})
 
+@app.route("/favicon.ico")
+def favicon():
+    """内联 SVG 图标：避免浏览器控制台一直报 favicon 404，也不额外增加文件。"""
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+           '<text y="50" font-size="50">🧡</text></svg>')
+    return Response(svg, mimetype="image/svg+xml")
+
+
 @app.route("/metrics")
 def metrics_endpoint():
     """抓取插件指标（Prometheus 文本格式）。
@@ -3480,7 +3488,13 @@ function setToolsOn(on){const b=document.getElementById('toolsBtn');b.className=
  const w=document.getElementById('wsInd');if(w){w.textContent=on?'🔐 Full access':'🔒 Read-only';} }
 async function toggleTools(){const r=await fetch('/api/tools_toggle',{method:'POST'});const d=await r.json();setToolsOn(d.tools_on);}
 async function loadModels(){try{const r=await fetch('/api/models');const d=await r.json();const sel=document.getElementById('modelSel');let ms=(d&&d.models)||[];
-  sel.innerHTML=ms.length?ms.map(m=>'<option value="'+esc(m.name)+'">'+esc(m.name)+'</option>').join(''):'<option value="">未配置模型</option>';
+  // 没有显式配置模型时，不要显示"未配置模型"误导用户 —— 自动模式其实用的是本地大脑/llama-swap
+  if(!ms.length){
+    const auto=d&&d.active==='auto';
+    sel.innerHTML='<option value="">'+(auto?'自动（本地大脑 :9292）':'未配置模型（点「设置」添加）')+'</option>';
+    return;
+  }
+  sel.innerHTML=ms.map(m=>'<option value="'+esc(m.name)+'">'+esc(m.name)+'</option>').join('');
   sel.value=(d&&d.current)||((ms[0]&&ms[0].name)||'');}catch(e){document.getElementById('modelSel').innerHTML='<option value="">模型加载失败</option>';}}
 async function selectModel(){const v=document.getElementById('modelSel').value;await fetch('/api/model/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:v})});}
 async function loadHistory(){try{const r=await fetch('/api/history');const hs=await r.json();if(Array.isArray(hs)&&hs.length){hs.forEach(h=>add(h.role==='用户'?'user':'bot',h.content));}}catch(e){}}
