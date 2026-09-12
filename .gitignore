@@ -118,3 +118,19 @@ plugins/code_intelligence.py
 plugins/workspace_search.py
 plugins/xiaojiao-plugins-main/
 create_db.py
+
+# ---------- 抓取插件运行时状态（自适应选择器指纹，属本机数据） ----------
+plugins/.scrapling_selectors.json
+# ---------- 抓取插件的运行产物 ----------
+books/
+downloads/
+media/screenshot/
+
+# ---------- 危险：项目根下若出现字面量 ~ 目录（家目录副本，含 .ssh 等凭据）绝不入库 ----------
+/~
+# ---------- 日志统一归档目录 ----------
+logs/
+*.log
+# 蒸馏/训练脚本硬编码写在根目录的两个日志（保留忽略，避免误提交）
+distill_loop.log
+massive_distill.log
