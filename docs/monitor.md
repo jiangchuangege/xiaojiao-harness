@@ -5,6 +5,7 @@
 ## 原理图
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph XJ["小焦 Web(5000) <br/> app_monitor.py + monitor.html"]
         A["🧠 大脑仓库监控面板"]

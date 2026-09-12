@@ -15,6 +15,7 @@
 它是个**字符级语言模型（Character-Level LM）**：给它一串字符，它预测"下一个字符最可能是谁"。中文句子就是一堆字符，学会"下一个字"就学会了"说话"。
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     A["你"] --> B["是"] --> C["?/呀"] --> D["<预测下一个>"]
 ```
@@ -28,6 +29,7 @@ flowchart LR
 小模型自己没本事"学会"自然对话，所以用**知识蒸馏**：让大模型当老师，生成大量标准对话和问答，灌给小模型当训练数据。
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph src["数据源"]
         A["LCCC 语料"]
@@ -68,6 +70,7 @@ flowchart LR
 ### 一张图看懂数据怎么流过它
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TD
     A["输入字符序列 (seq_len)"]
     A --> B["Embedding 查表<br/>每个字符 → 512 维"]
@@ -98,6 +101,7 @@ flowchart TD
 5. **训练目标**：交叉熵损失，让模型预测"下一个字符"的概率越来越准。
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     A["训练池"] --> B["采样一段字符"]
     B --> C["学生模型前向"]
@@ -114,6 +118,7 @@ flowchart LR
 只有小模型容易"接龙接飞了"。所以 `xiaojiao_harness.py` 加了一层**语义检索兜底**：
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TD
     Q["用户输入"] --> R{"检索：在训练语料里<br/>找最相似的历史问答"}
     R -- "相似度高" --> H["直接返回语料里的回答<br/>(grounded, 更靠谱)"]

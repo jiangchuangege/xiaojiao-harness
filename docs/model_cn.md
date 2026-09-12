@@ -8,6 +8,7 @@
 ## 1. 整体结构（一张图看懂）
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph UI["界面层"]
         U[浏览器 Web 页面<br/>小焦 · 聊天 UI]

@@ -169,6 +169,7 @@ This domain is for use in documentation examples without needing permission…
 ### 4.1 整体架构与数据流
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TB
     Q["🧑 用户：抓一下 xxx / 把这个 PDF 下载下来 / 最近 7 天的高危漏洞"] --> DI["① 意图识别<br/>抓 / 爬 / 下载 + 网址 → 直接选工具<br/>漏洞 / CVE / 高危 → collect_vulnerabilities"]
     DI --> SEC["② 安全闸门<br/>SSRF · robots · 同域限速"]
@@ -291,6 +292,7 @@ URL 去重 → 逐条限速（≥1s/域）→ 遇 429 指数退避（1→2→4�
 `SessionManager` 用三条规则兜住（任一命中即回收，并真正调用 `close_session`）：
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TB
     A["open_session 成功"] --> R["登记: 创建时间 / 最后使用时间"]
     R --> G{"巡检（每 60 秒）"}
@@ -314,6 +316,7 @@ flowchart TB
 原来批量是**串行**的：3 个域名也要排队逐个抓；直接放开并发又会把单个站点打挂。所以拆成两个维度：**跨域并发**（快）与**同域闸门**（礼貌）。
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TB
     U["bulk_get / bulk_fetch / bulk_stealthy_fetch（3 个 URL）"] --> D["去重 + 安全过滤（SSRF / robots）"]
     D --> P["有界并发池（concurrency = 3）"]
@@ -350,6 +353,7 @@ flowchart TB
 **不是**从插件代码学，而是**用户每次让它干活时**沉淀经验：
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     A["用户：抓一下 xxx"] --> B["小焦调用 stealthy_fetch"]
     B --> C{"成功?"}
@@ -415,6 +419,7 @@ xiaojiao_scrapling_uptime_seconds 3610.4
 ```
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     T["工具调用 execute()"] --> R["MetricsCollector.record()<br/>次数·成功·失败·耗时·熔断"]
     R --> M["内存计数（加锁，线程安全）"]

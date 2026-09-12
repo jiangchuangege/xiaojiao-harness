@@ -161,6 +161,7 @@ class XXPlugin:
 ### 6.1 🕷️ 抓取插件（scrapling_bridge）架构要点
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     REQ["用户：抓一下 xxx / 下载任意文件"] --> DI["抓取意图识别<br/>_detect_scrape_intent()"]
     DI --> SEC["SecurityGuard<br/>SSRF·robots·限速·UA"]
@@ -195,6 +196,7 @@ flowchart LR
 小焦还具备**本地 AI 文生视频**能力：网页点 🎬 → `video_service` **按需切换模型**（8G 显存互斥）：
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph XJ["🐱 小焦 Web (5000)"]
         direction TB
@@ -243,6 +245,7 @@ flowchart LR
 ## 7b. Agent 预设 · 大脑监控 · DSH 功能型插件兼容（最新能力）
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph XJ["🐱 小焦 Web(5000)"]
         direction TB
@@ -282,6 +285,7 @@ flowchart LR
 一键启动拉起 **N.E.K.O. 猫娘**（你下载的开源项目，Steam **桌面客户端 `N.E.K.O.exe`**）——成熟 Live2D 猫娘壳 + 小焦本地内核，二者互相学习：
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     ST["▶ start_xiaojiao.start_neko()"]
 

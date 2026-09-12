@@ -121,6 +121,7 @@ python start_xiaojiao.py
 一句话：**用户消息 → 小焦（注入人设 + 取记忆 + 取会话）→ 交给大脑推理 → 大脑决定调工具/联网 → 执行并回显 → 记忆沉淀 + 会话存 → 回答**。
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph UI["🖥️ 界面层"]
         direction LR
@@ -214,6 +215,7 @@ flowchart LR
 - **界面型插件（皮肤/UI）→ 走 DSH harness**：这类在 DSH 里原生跑，小焦当模型（`/v1`）供它调用；小焦自己的网页也能复用其素材做主题皮肤。
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph DSHC["🧩 DSH 社区插件"]
         direction TB
@@ -371,6 +373,7 @@ xiaojiao-harness/
 ### 蒸馏管线（大模型 → 小模型）
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph src["📚 数据源"]
         direction LR
@@ -414,6 +417,7 @@ flowchart LR
 | 参数量 | ≈ **几千万**（消费级 GPU 能训） |
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TD
     subgraph INP["📥 输入"]
         A["输入字符序列"] --> B["Embedding 查表 → 512 维"]
@@ -599,6 +603,7 @@ flowchart TD
 ## 🗺️ 文件 / 模型 互相调用一览
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph INPUT["🧑‍💻 用户 / 接入"]
         direction LR
@@ -716,6 +721,7 @@ flowchart LR
 小焦用**多个"大脑"**（聊天 / 视频 / 未来图像·推理），8G 显存下**按需热切换**，互不打架：
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph XJ["🧠 brain_manager · 调度中心"]
         direction TB
@@ -759,6 +765,7 @@ flowchart LR
 小焦的**多大脑**都能在一个网页里实时盯着并直接操作：看每个大脑的状态/显存/内存/任务，切换·唤醒·释放·重启，**调优 keep_warm/优先级/挂载内存（免写码）**，**添加大脑（选本地模型文件路径）**。
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     A["🧠 监控面板 /monitor"] -->|每 2 秒| B["/api/monitor"]
 
@@ -807,6 +814,7 @@ flowchart LR
 **猫娘 ↔ 小焦 互通原理图**：
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph NEKO["🐱 N.E.K.O. 猫娘（你本地开源项目，Steam 桌面客户端）"]
         direction TB
@@ -856,6 +864,7 @@ flowchart LR
 > 一句话：安装脚本不再"一把抓"——它把 11+ 项检测拆成 **必需** 和 **可选** 两组：**缺可选只会少一个功能，绝不会拦着你进小焦**。所有路径都**靠检测得到，一个都不写死**。
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TB
     START(["双击 一键安装.bat<br/>或 python install_all.py"]) --> SCAN["全盘扫描<br/>关键词 + 盘符探测 + where /r 兜底"]
 
@@ -914,6 +923,7 @@ flowchart TB
 - **路径三级解析，永不写死**（`xiaojiao_harness.py → _resolve_brain_paths()`）：
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     A["① 环境变量<br/>XIAOJIAO_BRAIN_MODEL 等"] --> B["② xiaojiao_control.json<br/>brain.xiaojiao.model_path / vocab_path / config_path"]
     B --> C["③ 全盘 glob<br/>*.pth + vocab*.pkl 就近配对"]
@@ -938,6 +948,7 @@ flowchart LR
 ### 🗺️ 安装器改动全景（原则 → 改动 → 验收）
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     P["🧭 9 条原则<br/>不写死路径 · 自己找模型 · 必需/可选分级<br/>先问再拉 · 抓完必解读 · 用完即学习<br/>安全第一 · 报错说人话 · 边界守规矩"]
 
@@ -1013,6 +1024,7 @@ flowchart LR
 ### 一张图看懂它怎么工作
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TB
     A["🧑 你说：抓一下 xxx.com / 把这个 PDF 下载下来"] --> B["① 抓取意图识别<br/>识别「抓 / 爬 / 下载 + 网址」→ 直接选工具"]
     B --> C["② 安全闸门<br/>SSRF 拦截 · robots.txt · 同域限速"]
@@ -1036,6 +1048,7 @@ flowchart TB
 **插件内部：5 个组件各管一件事**
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     P["🕷️ scrapling_bridge.py"] --> S["SecurityGuard<br/>SSRF · robots · 限速 · 日志脱敏"]
     P --> C["CircuitBreaker<br/>失败 3 次 → 暂停 30s → 自愈"]
@@ -1095,6 +1108,7 @@ This domain is for use in documentation examples…
 **不是**从插件代码里学，而是**你每次用它干活时**，它就把这次经验记下来：
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     A["用户：抓一下 xxx.com"] --> B["小焦调用 stealthy_fetch"]
     B --> C{"成功?"}

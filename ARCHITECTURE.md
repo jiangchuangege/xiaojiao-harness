@@ -21,6 +21,7 @@
 ## 2. 系统总览
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TB
     subgraph U["🧑 使用者"]
         WEB["网页对话 (127.0.0.1:5000)"]
@@ -123,6 +124,7 @@ flowchart TB
 ## 5. 一次对话的完整生命周期
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 sequenceDiagram
     autonumber
     participant U as 使用者
@@ -156,6 +158,7 @@ sequenceDiagram
 ## 6. 插件机制（扩展能力的主路径）
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     D["plugins/ 目录"] --> L["load_plugins()<br/>按后缀分派"]
     L --> P1[".py<br/>class + get_tool_descriptions/execute"]
@@ -202,6 +205,7 @@ def get_plugin():
 ## 8. 数据与状态
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     CFG["xiaojiao_control.json<br/>（含密钥，已 gitignore）"] --> APP["运行时配置"]
     APP --> MEM["记忆/会话/知识库<br/>*.json / *.txt"]
@@ -220,6 +224,7 @@ flowchart LR
 ## 9. 质量与安全（怎么保证"稳"）
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TB
     DEV["改动"] --> TESTS["tests/stress/run_all.py<br/>离线 + 联网真实调用"]
     DEV --> CI[".github/workflows/stress-test.yml<br/>每天 03:00 / 手动 / 变更触发"]

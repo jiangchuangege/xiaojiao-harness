@@ -7,6 +7,7 @@
 ## 0. 流程总览
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart LR
     subgraph src["数据源"]
         A["LCCC 语料"] --> B["convert.py / clean_data.py"]

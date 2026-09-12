@@ -81,6 +81,7 @@ force = bool(data.get("force", True)) and (request.remote_addr in ("127.0.0.1", 
 ## 3. 安全设计与控制点
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "14px"}, "flowchart": {"htmlLabels": true, "wrappingWidth": 320, "nodeSpacing": 46, "rankSpacing": 64, "useMaxWidth": true}}}%%
 flowchart TB
     IN["请求（URL / 参数）"] --> SCHEME{"协议白名单<br/>http / https"}
     SCHEME -->|"file/ftp/gopher/data/js…"| BLOCK1["拒绝（中文原因）"]
