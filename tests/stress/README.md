@@ -55,8 +55,8 @@ python tests/stress/run_all.py --json results.json --min-pass-rate 95
 - **摘要**：结果写入 GitHub Job Summary（总用例/通过/失败/通过率）
 
 > 注：CI 环境无自备 Chrome，workflow 会先 `python -m playwright install chromium`；
-> 若无网络或内核缺失，浏览器类用例会失败并被计入通过率 —— 这是**故意的**：
-> 宁可让 CI 红，也不要假装通过。
+> 若无网络或内核缺失，浏览器类用例会失败并被计入通过率 —— 这是**有意设计**：
+> 通过率不达标时 CI 直接失败，不做兜底放行。
 
 ## 本地实测基线
 

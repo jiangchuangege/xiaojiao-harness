@@ -486,10 +486,19 @@ _SEARCH_FILLERS = (
     "给我搜", "给我查", "给我找", "搜索一下", "搜一下", "查一下", "找一下", "抓一下", "爬一下",
     "搜索", "检索", "联网", "上网", "网上", "帮我", "帮忙", "请问", "麻烦", "谢谢", "一下",
     "一个", "一些", "给我", "来个", "给出", "列一下", "看看", "瞧瞧", "找找", "找一找",
+    "写个", "帮我写个", "做一个", "搞一个", "查查", "搜搜",
 )
 # 单字功能/语气词：只在"开头或两侧带空格"时算噪声，避免误伤"未来/在线/用户"这类真词
 _SEARCH_FUNC_CHARS = "用搜找抓查看搞请帮要想来去呗吧的了呢吗啊呀把给让我你它他她是个些就都还很这那与和在有"
 _SEARCH_MEANINGLESS = set(_SEARCH_FUNC_CHARS)
+# 空格后可以直接删的"纯助词/动作词"（删了不会把真词切坏：在线/未来/用户 都不在这个集合里）
+_SEARCH_MID_FUNC = "的了是用搜找查抓看请帮"
+# 纯寒暄/自我介绍：这种话不该拿去联网搜（搜出来只会是"你（汉语文字）_百度百科"这类词条）
+_SEARCH_GREETINGS = {
+    "你好", "您好", "哈喽", "在吗", "在么", "谢谢", "多谢", "辛苦了", "早", "早上好", "晚上好",
+    "你是谁", "你叫什么", "你叫啥", "介绍一下你", "自我介绍", "hi", "hello", "hey", "thanks",
+    "thank you", "ok", "好的", "嗯", "哦", "在不在",
+}
 SEARCH_KEYWORD_HINT = "请告诉我你要搜索的具体关键词（例如：最近的漏洞 CVE、2026 年 AI 新闻）。"
 
 
@@ -512,19 +521,69 @@ def extract_search_keywords(text):
         s = s.replace(w, " ")
     s = re.sub(r"\s+", " ", s).strip()
     if _has_search_marker(text or ""):
-        s = re.sub(r"(^|\s)[%s]+" % _SEARCH_FUNC_CHARS, r"\1", s)                    # 开头的成串功能字
+        # ⚠️ 真实缺陷（用户实测）：以前这里是**贪婪删掉开头一串功能字**，
+        # 于是"帮我搜索一下 你好"洗完只剩"好"，搜出来是"好（汉语文字）_百度百科"。
+        # 现在改成"逐个删，但必须给内容留够 2 个字"——"你好"不会被拆，"找漏洞"能洗成"漏洞"。
+        while len(s) >= 3 and s[0] in _SEARCH_MEANINGLESS:
+            s = s[1:].lstrip()
+        # 空格后出现的**纯助词/动作词**也算噪声（"apache 的漏洞" → "apache 漏洞"）；
+        # 但不动"在线/未来"这类会把真词切坏的字符。
+        s = re.sub(r"(?<=\s)[%s]+(?=\s|[\u4e00-\u9fa5]|$)" % _SEARCH_MID_FUNC, " ", s)
         s = re.sub(r"(^|\s)[%s](?=\s|$)" % _SEARCH_FUNC_CHARS, r"\1", s)            # 独立成词的功能字
     return re.sub(r"\s+", " ", s).strip()
 
 
+# 当前这次对话的用户原话（供工具层判断"模型是不是只截了一个碎片"）
+_CTX = {"user_input": ""}
+
+
+def _better_search_query(model_q, user_text):
+    """模型给的检索词常常只是用户整句里的**一个碎片**，这时改用整句清洗后的关键词。
+
+    真实缺陷（用户实测）：说"最近 AI 新闻"，模型只把"最近"丢给搜索 → 搜回来的是
+    "最近（李圣杰2006年演唱的歌曲）""最近（汉语词语）_百度百科" 这种词条，答非所问。
+    判据很保守：只有当"模型给的词**确实是用户这句话的一部分**、且整句能洗出更长的关键词"时才替换。
+    """
+    mq = (model_q or "").strip()
+    if not mq or not user_text:
+        return mq
+    uq, _ = resolve_search_query(user_text)
+    if uq and mq != uq and mq in uq and len(uq) > len(mq):
+        LOG.info("检索词过短/碎片化，已改用整句关键词：%r → %r", mq[:40], uq[:60])
+        return uq
+    return mq
+
+
 def _is_meaningless_query(q):
-    """清洗后的关键词是不是"根本没内容"（空 / 单个功能字 / 全是标点）。"""
+    """清洗后的关键词是不是"根本没内容"（空 / 单个功能字 / 全是标点 / 纯寒暄）。
+
+    真实缺陷：模型有时会把「用」「你」这种字当检索词丢给 web_search，
+    搜回来的是"你（汉语文字）_百度百科"这类词条 —— 跟用户想问的毫无关系。
+    """
     q = (q or "").strip()
     if not q:
         return True
     if len(q) == 1 and q in _SEARCH_MEANINGLESS:
         return True
+    if q.lower() in _SEARCH_GREETINGS:          # 寒暄/自我介绍类，本来就不该联网搜
+        return True
     return all((ch in _SEARCH_MEANINGLESS) or (not ch.isalnum()) for ch in q)
+
+
+def _strip_think(text):
+    """剥掉模型输出的思维块标签（`<think>…</think>` / `<thinking>` / 残留的半个标签）。
+
+    真实缺陷：模型偶尔把空的 `<think></think>` 一起吐到正文里，聊天窗就显示成
+    两行莫名其妙的标签。这里按"整块删掉 + 残留标签删掉 + 顺带清空多余空行"处理。
+    """
+    s = str(text or "")
+    # 注意：这里必须连**单独的闭标签**也算命中（`</think>` 里并没有 "<think" 这个子串）——
+    # 早期版本就是因为这个判断写窄了，"</think>" 残留在正文里。
+    if not re.search(r"</?(?:think|thinking|reasoning)>", s, re.I):
+        return s
+    s = re.sub(r"(?is)<(think|thinking|reasoning)>.*?</\1>", "", s)      # 成对：整块删
+    s = re.sub(r"(?is)</?(think|thinking|reasoning)>", "", s)            # 未闭合/残留：只删标签
+    return re.sub(r"\n{3,}", "\n\n", s).strip()
 
 
 def resolve_search_query(text):
@@ -595,16 +654,80 @@ def detect_vulnerability_query(text):
     return {"days": days, "severity": severity, "limit": max(1, min(limit, 50))}
 
 
-def web_search(query, num=6):
-    """免密钥 Bing/Sogou 中文搜索，返回 [(标题, 链接, 内容)]。
+def _query_variants(q):
+    """同一意图的多种写法，按"最干净"排前面。
 
-    注意：这里**再清洗一次**检索词（双保险）—— 上层（模型 tool_call / 自动检索）可能把
-    "用搜索工具找漏洞"这种整句、甚至单个功能字丢进来，直接搜会得到完全跑偏的结果。
+    真实缺陷（用户实测）：中文搜索引擎对"最近 X"这种前缀极不友好 —— 搜"最近的漏洞 CVE"、
+    "最近 AI 新闻"返回的全是歌曲《最近》/词典词条，因为引擎基本只认第一个词。
+    所以依次尝试：原词 → **只用主题词** → 去掉时间词 → 时间词后置。
     """
-    query = extract_search_keywords(query)
-    if _is_meaningless_query(query):
-        LOG.warning("检索词无效，已跳过搜索：%r", str(query)[:60])
-        return []
+    out = [q]
+    toks = _query_tokens(q)
+    if toks:
+        out.append(" ".join(toks))                    # 最干净：只留主题词
+    for w in _SEARCH_TIME_WORDS:
+        if q.startswith(w) and len(q) > len(w):
+            rest = q[len(w):].lstrip(" 的了是")
+            if rest:
+                out.append(rest)                      # 去掉时间词
+                out.append("%s %s" % (rest, w))        # 时间词后置
+    m = re.match(r"^(\d{4})\s*年?\s*(.+)$", q)         # 开头是年份也一样：引擎会只认年份
+    if m and len(m.group(2)) >= 2:
+        out.append(m.group(2))
+        out.append("%s %s" % (m.group(2), m.group(1)))
+    seen, uniq = set(), []
+    for v in out:
+        v = v.strip()
+        if v and v not in seen:
+            seen.add(v)
+            uniq.append(v)
+    return uniq[:3]                                   # 最多试 3 种，别把用户等急了
+
+
+_JUNK_TITLE_HINTS = ("_百度百科", "百度百科", "维基词典", "汉语国学", "的意思_", "怎么读",
+                     "新华字典", "词典", "在线翻译")
+_SEARCH_TIME_WORDS = ("最近", "最新", "近期", "这几天", "近几天", "今天", "今日", "本周", "这周", "本月")
+
+
+def _query_tokens(query):
+    """查询的"主题词"（用于相关度判断）：去掉时间词/助词/疑问尾巴，中英分开切。
+
+    "最近AI新闻" → ['AI', '新闻']；"最近的漏洞 CVE" → ['漏洞', 'CVE']。
+    时间词本身不带主题信息，参与打分只会把《最近》这种噪音顶上来。
+    """
+    q = query or ""
+    for w in _SEARCH_TIME_WORDS:
+        q = q.replace(w, " ")
+    q = re.sub(r"[的了是]", " ", q)
+    q = re.sub(r"(有哪些|有什么|是什么|怎么样|怎么办|怎么|多少|什么|吗|呢|啊|吧|[?？。！!]+)\s*$", " ", q)
+    toks = re.findall(r"[A-Za-z0-9][A-Za-z0-9.+#_\-]*|[\u4e00-\u9fa5]{2,}", q)
+    return [t for t in toks if len(t) >= 2]
+
+
+def _search_relevance(query, title, content):
+    """结果与查询的相关度 → (分数, 主题词覆盖率)。
+
+    覆盖率是判断"这批结果到底有没有跑题"的关键指标：搜"最近的漏洞 CVE"却全是
+    歌曲《最近》时，覆盖率 0；真正讲漏洞的结果覆盖率会到 1。排序用分数，换写法用覆盖率。
+    """
+    toks = _query_tokens(query)
+    text = ("%s %s" % (title or "", content or "")).lower()
+    hit = sum(1 for t in toks if t.lower() in text)
+    gram = 0.0
+    for t in toks:
+        if t.lower() in text:
+            continue
+        if re.search(r"[\u4e00-\u9fa5]", t):
+            gram += sum(0.5 for i in range(len(t) - 1) if t[i:i + 2] in text)
+    score = 2.0 * hit + gram
+    if toks and any(h in (title or "") for h in _JUNK_TITLE_HINTS):
+        score -= 3.0                                             # 词典/词条类：明显偏题
+    cov = (hit / len(toks)) if toks else 1.0
+    return score, cov
+
+
+def _search_engines(query, limit=8):
+    """依次问 Bing / Sogou / DuckDuckGo，返回去重后的 [(标题, 链接, 内容)]。"""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     engines = [("https://cn.bing.com/search?q=", r'<li class="b_algo"[^>]*>(.*?)</li>'),
                ("https://www.sogou.com/web?query=", r'<div class="vrwrap"[^>]*>(.*?)</div>'),
@@ -635,13 +758,43 @@ def web_search(query, num=6):
                 if len(content) > 30 and content[:40] not in seen:
                     seen.add(content[:40])
                     out.append((title, url, content))
-                if len(out) >= num:
+                if len(out) >= limit:
                     break
         except Exception:
             continue
-        if len(out) >= num:
+        if len(out) >= limit:
             break
-    return out[:num]
+    return out
+
+
+def web_search(query, num=6):
+    """免密钥 Bing/Sogou/DuckDuckGo 中文搜索，返回 [(标题, 链接, 内容)]。
+
+    两道保险：
+      ① 检索词清洗（上层可能丢进整句、功能字或只言片语）；
+      ② **多变体 + 相关度排序**：中文引擎对"最近 X"只认第一个词，所以先试原词，
+         结果里连一个内容词都命中不了就换写法（去时间词 / 时间词后置），并把
+         词典词条类噪音降权 —— 保证用户拿到的是跟主题相关的结果。
+    """
+    query = extract_search_keywords(query)
+    if _is_meaningless_query(query):
+        LOG.warning("检索词无效，已跳过搜索：%r", str(query)[:60])
+        return []
+    fallback = []
+    for v in _query_variants(query):
+        hits = _search_engines(v, limit=max(num, 8))
+        if not hits:
+            continue
+        hits.sort(key=lambda x: _search_relevance(query, x[0], x[2])[0], reverse=True)
+        top = hits[:num]
+        _sc, _cov = _search_relevance(query, top[0][0], top[0][2])
+        if _cov >= 0.6:                              # 主题词覆盖够高 → 这批结果是对的，不再多问引擎
+            LOG.info("检索命中：%r（%d 条，覆盖率 %.0f%%）", v[:40], len(top), _cov * 100)
+            return top
+        if not fallback:
+            fallback = top
+        LOG.info("检索词 %r 结果跑题（覆盖率 %.0f%%），换写法重试", v[:40], _cov * 100)
+    return fallback[:num]
 
 
 # ================== 记忆（自学习） ==================
@@ -892,12 +1045,20 @@ def run_tool(name, args, force=False):
             raw_q = str(args.get("query", "") or ""); n = int(args.get("num", 5))
             if not raw_q.strip():
                 return SEARCH_KEYWORD_HINT
+            _user_text = _CTX.get("user_input", "")
+            _user_q, _ = resolve_search_query(_user_text) if _user_text else ("", "")
+            # 用户这句话本身就没有可检索内容（"你好"/"用"/"帮我搜一下"），模型却拿其中一个碎片来搜
+            # → 直接拒绝，别去搜"好（汉语文字）_百度百科"这种词条（用户实测就是这个现象）。
+            if not _user_q and raw_q.strip() and raw_q.strip() in _user_text:
+                LOG.warning("用户这句话无可检索内容，拒绝搜索（模型给的词=%r）", raw_q.strip()[:40])
+                return "（这句话里没有需要联网查的内容）" + SEARCH_KEYWORD_HINT
             q, hint = resolve_search_query(raw_q)      # 强制清洗：功能字/整句都不许直接拿去搜
             if not q:
                 return hint
+            q = _better_search_query(q, _user_text)    # 模型只给碎片 → 用整句关键词
             res = web_search(q, num=n)
             _head = ""
-            if q != raw_q.strip():                     # 清洗过就如实说明，方便用户核对
+            if q != raw_q.strip():                     # 清洗/升级过就如实说明，方便用户核对
                 _head = "（已把「%s」清洗成检索关键词「%s」）\n" % (raw_q.strip()[:40], q)
             return _head + ("\n".join("%s%s：%s" % (t, (" [%s]" % u) if u else "", c) for t, u, c in res[:n])
                             or "(无结果)")
@@ -1465,6 +1626,7 @@ def agent_run(user_input, lean=False):
     DSH 兼容的正确方式是：DSH harness 连小焦的 /v1 当模型，DSH 的插件在 DSH 里自己跑。
     """
     # ===== 原有的 agent_run 逻辑 =====
+    _CTX["user_input"] = user_input          # 工具层要用（判断模型是否只给了碎片检索词）
     history = current_messages()
 
     # 1. 相关记忆（受操控文件 capabilities 控制）
@@ -1625,8 +1787,9 @@ def agent_run(user_input, lean=False):
     except Exception as e:
         LOG.debug("忽略异常(%s:%d): %s", __file__, 1427, e)
 
-    # 5. 落地上下文
+    # 5. 落地上下文（顺手剥掉模型偶尔吐出的 <think> 思维标签，别让标签进聊天记录）
     if answer:
+        answer = _strip_think(answer)
         needs_confirm = PENDING is not None and answer.startswith("〔待确认〕")
         return answer, True, info, needs_confirm, tool_trace
 
@@ -2459,6 +2622,7 @@ def api_chat():
     append_msg("小焦", "⏳__pending__")
     lean = bool((request.get_json(force=True, silent=True) or {}).get("lean", False))
     answer, online, info, needs_confirm, tool_trace = agent_run(user_input, lean=lean)
+    answer = _strip_think(answer)                  # 双保险：任何路径的 <think> 都不许进正文/会话
     # 把占位小焦消息更新为真实回答（含最后那句提示）
     answer_final = answer
     if not answer_final:
@@ -3069,6 +3233,7 @@ HTML = r"""<!DOCTYPE html>
   .tooltrace b{color:#4ade80}
   #feed{flex:1;overflow-y:auto;padding:24px;width:100%;display:flex;flex-direction:column;align-items:center}
   #feed>*{width:100%;max-width:860px}
+  #feed>*:has(.tblwrap){max-width:100%}   /* 带表格的消息放宽到整栏宽，别把表格挤成两行 */
   .m{display:flex;margin-bottom:14px;gap:10px;flex-wrap:wrap}
   .m.user{justify-content:flex-end}.m.bot{justify-content:flex-start}
   .b{max-width:82%;padding:11px 16px;border-radius:16px;line-height:1.65;font-size:15px;white-space:pre-wrap;word-break:break-word;box-shadow:none}
@@ -3085,17 +3250,36 @@ HTML = r"""<!DOCTYPE html>
   .srci .sc{color:#aab2c0;font-size:11px;line-height:1.5}
   .srcbox.show{display:block}
   .srcbox b{color:#a78bfa;margin-right:4px}
-  .b pre.code{background:#0d1117;border:none;border-radius:0;padding:14px;overflow-x:auto;margin:0}
-  .b pre.code::-webkit-scrollbar{height:5px;width:5px}
+  /* 代码块：底色必须干净纯色。
+     ⚠️ 真实缺陷：`.b code{background:#2a3140}` 会**连代码块里的 code 元素一起**上色，
+     于是整块代码躺在一个浅灰方块上（用户看到的"白色背景印记/阴影"就是这么来的）。
+     所以这里显式把 pre 内的 code 背景/内边距/阴影全部清掉。 */
+  .b pre.code{background:#0d1117;border:none;border-radius:0;padding:14px 16px;overflow-x:auto;margin:0;box-shadow:none;text-shadow:none}
+  .b pre.code::-webkit-scrollbar{height:6px;width:6px}
   .b pre.code::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
   .b pre.code::-webkit-scrollbar-track{background:transparent}
-  .b pre.code code{font-family:Consolas,'Courier New',monospace;font-size:13px;white-space:pre;color:#c9d1d9}
-  .b code{background:#2a3140;padding:1px 6px;border-radius:4px;font-family:Consolas,monospace;font-size:13px}
-  .codebox{border:none;border-radius:10px;margin:10px 0;overflow:hidden;background:#0d1117}
+  .b pre.code code{font-family:Consolas,'Courier New',monospace;font-size:13px;line-height:1.7;white-space:pre;color:#c9d1d9;background:none;padding:0;border-radius:0;border:none;box-shadow:none;text-shadow:none}
+  .b pre.code,.b pre.code *,.b table,.b table *{text-shadow:none;box-shadow:none}
+  /* 行内 code（正文里的小代码）才需要浅底 */
+  .b code{background:#242b39;padding:1px 6px;border-radius:4px;font-family:Consolas,monospace;font-size:13px;color:#e6edf3}
+  .codebox{border:none;border-radius:10px;margin:12px 0;overflow:hidden;background:#0d1117;box-shadow:none}
   .codehead{display:flex;align-items:center;gap:8px;background:#0d1117;padding:10px 12px 0}
   .lang{padding:2px 8px;font-size:11px;font-weight:600;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;background:transparent}
   .cp{margin-left:auto;background:transparent;border:1px solid #21262d;color:#7d8590;border-radius:6px;padding:2px 8px;font-size:11px;cursor:pointer}
   .cp:hover{background:#161b22;color:#e6edf3}
+  /* 语法高亮配色（深色下高对比、不刺眼） */
+  .tk-kw{color:#ff7b72}
+  .tk-str{color:#a5d6ff}
+  .tk-num{color:#79c0ff}
+  .tk-com{color:#7d8794;font-style:italic}
+  .tk-fn{color:#d2a8ff}
+  .tk-key{color:#7ee787}
+  .tk-bool{color:#79c0ff}
+  .tk-tag{color:#7ee787}
+  .tk-attr{color:#79c0ff}
+  .tk-op{color:#ffa657}
+  .tk-var{color:#ffa657}
+  .kw{color:#ff7b72}
   .lang.python,.lang.py{color:#6e7681}.lang.js,.lang.javascript{color:#6e7681}
   .lang.bash,.lang.sh{color:#6e7681}.lang.html,.lang.css{color:#6e7681}.lang.json{color:#6e7681}
   /* JSON / 长文本块：限高 + 纵向滚动，避免一大坨内容把聊天窗糊满 */
@@ -3107,10 +3291,18 @@ HTML = r"""<!DOCTYPE html>
   .lang.cpp,.lang.c{color:#6e7681}.lang.java{color:#6e7681}.lang.sql{color:#6e7681}
   .cp{background:#1f2533;border:1px solid #2a3140;color:#cbd0dc;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer}
   .cp:hover{background:#2a3140}
-  .kw{color:#ff7b72}
-  .b table{border-collapse:collapse;margin:8px 0;width:100%;font-size:13px}
-  .b table th,.b table td{border:1px solid #2a3140;padding:6px 10px;text-align:left}
-  .b table th{background:#1f2533;color:#cbd0dc}
+  /* 表格：给足留白、宽表横向滚动、短列不许被折断（以前 HIG H / CVE-2026- 这种断字很难看） */
+  .b .tblwrap{overflow-x:auto;margin:10px 0;border:1px solid #2a3140;border-radius:10px;background:#101520}
+  .b table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;margin:0}
+  .b table th,.b table td{border:none;border-bottom:1px solid #232a38;border-right:1px solid #1b2230;padding:11px 15px;text-align:left;line-height:1.65;vertical-align:top;word-break:keep-all;overflow-wrap:anywhere}
+  .b table th{background:#182031;color:#9fb0d0;font-weight:600;white-space:nowrap}
+  .b table tr:last-child td{border-bottom:none}
+  .b table th:last-child,.b table td:last-child{border-right:none}
+  .b table tbody tr:nth-child(even) td{background:#131926}
+  .b table td:not(:last-child){white-space:nowrap}   /* 只有最后一列（摘要）允许折行 */
+  /* 带表格/代码的消息给更宽的容器，别把内容挤在小框里 */
+  .b.wide{max-width:100%}
+  .m.widem{max-width:100%}
   .msgbot{display:flex;gap:8px;margin-top:6px;align-items:center;padding-left:2px}
   .msgbot button{background:#1f2533;border:1px solid #2a3140;color:#8b93a3;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer}
   .msgbot button:hover{background:#2a3140}
@@ -3432,15 +3624,52 @@ function inline(t){t=t.replace(/\*\*([^\n*]+)\*\*/g,'<strong>$1</strong>')
   .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>')
   .replace(/^[-*]\s+/gm,'· ')
   .replace(/\n/g,'<br>');return t;}
-// 简单关键词高亮（在已转义文本上）
-const KW={python:['def','import','from','print','class','return','if','else','for','while','in','not','and','or','try','except','self','None','True','False','lambda','with','as','elif'],
- js:['function','const','let','var','return','if','else','for','while','class','import','export','new','async','await'],
- javascript:['function','const','let','var','return','if','else','for','while','class','import','export','new','async','await'],
- bash:['echo','if','then','fi','for','do','done','git','cd','ls','rm','sudo'],sh:['echo','if','then','fi','for','do','done','git','cd','ls','rm','sudo']};
-function hl(s,lang){const kw=KW[lang]||[];let r=s;kw.forEach(k=>{r=r.replace(new RegExp('\\b'+k+'\\b','g'),'<span class="kw">'+k+'</span>');});return r;}
+// ===== 语法高亮：按语言分词上色（关键字/字符串/数字/注释/函数名/JSON 键…）=====
+// 规则里**不能有捕获组**（否则分组下标会错位），一律用 (?:...)。
+const HLRULES={
+  json:[['key',/"(?:\\.|[^"\\])*"(?=\s*:)/],['str',/"(?:\\.|[^"\\])*"/],['bool',/\b(?:true|false|null)\b/],['num',/-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/]],
+  python:[['com',/#[^\n]*/],['str',/["]{3}[\s\S]*?["]{3}|[']{3}[\s\S]*?[']{3}|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/],
+    ['kw',/\b(?:def|class|return|if|elif|else|for|while|try|except|finally|with|as|import|from|lambda|yield|pass|break|continue|in|is|not|and|or|None|True|False|self|async|await|global|nonlocal|raise|assert|del|match|case)\b/],
+    ['fn',/\b[A-Za-z_]\w*(?=\()/],['num',/\b\d+(?:\.\d+)?\b/],['op',/[+\-*/%=<>!&|^~]+/]],
+  js:[['com',/\/\/[^\n]*|\/\*[\s\S]*?\*\//],['str',/`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/],
+    ['kw',/\b(?:function|const|let|var|return|if|else|for|while|do|class|extends|new|async|await|try|catch|finally|throw|typeof|instanceof|import|export|default|from|of|in|null|undefined|true|false|this|super)\b/],
+    ['fn',/\b[A-Za-z_$][\w$]*(?=\()/],['num',/\b\d+(?:\.\d+)?\b/],['op',/[+\-*/%=<>!&|^~?:]+/]],
+  bash:[['com',/#[^\n]*/],['str',/"(?:\\.|[^"\\])*"|'[^']*'/],
+    ['kw',/\b(?:echo|if|then|fi|for|do|done|while|case|esac|function|export|source|cd|ls|rm|cp|mv|mkdir|git|python|python3|pip|curl|cat|grep|find|chmod|chown|sudo|apt|brew|winget|powershell|set|start|stop)\b/],
+    ['var',/\$\{?\w+\}?/],['op',/[|&><=]+/]],
+  sql:[['com',/--[^\n]*/],['str',/'(?:[^']|'')*'/],
+    ['kw',/\b(?:SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|ALTER|DROP|INDEX|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|AND|OR|NOT|NULL|AS|DISTINCT|COUNT|SUM|AVG|MAX|MIN|PRIMARY|KEY|FOREIGN|REFERENCES)\b/i],
+    ['num',/\b\d+\b/]],
+  css:[['com',/\/\*[\s\S]*?\*\//],['kw',/@[\w-]+/],['str',/"[^"]*"|'[^']*'/],
+    ['attr',/[.#]?[A-Za-z-][\w-]*(?=\s*\{)/],['fn',/[A-Za-z-]+(?=\s*:)/],['num',/-?\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|s|ms)?\b/]],
+  html:[['com',/<!--[\s\S]*?-->/],['tag',/<\/?[A-Za-z][\w-]*|\/?>/],['attr',/[A-Za-z-]+(?==)/],['str',/"[^"]*"|'[^']*'/]],
+};
+function _hlGeneric(code){       // 没有对应语言的规则时：只认字符串/数字/注释，别乱上色
+  const rules=[['com',/#[^\n]*|\/\/[^\n]*/],['str',/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/],['num',/\b\d+(?:\.\d+)?\b/]];
+  return rules;
+}
+function hl(code,lang){
+  const key=(lang||'').toLowerCase();
+  const alias={py:'python',python3:'python',javascript:'js',node:'js',ts:'js',typescript:'js',
+               shell:'bash',zsh:'bash',powershell:'bash',ps1:'bash',curl:'bash',
+               mysql:'sql',postgres:'sql',yml:'bash',yaml:'bash'};
+  const rules=HLRULES[key]||HLRULES[alias[key]]||_hlGeneric(code);
+  if(!code||code.length>40000)return esc(code);   // 超大文本不高亮，避免卡顿
+  let re;
+  try{re=new RegExp(rules.map(r=>'('+r[1].source+')').join('|'),'gm');}catch(e){return esc(code);}
+  let out='',last=0,m,guard=0;
+  while((m=re.exec(code))&&guard++<20000){
+    out+=esc(code.slice(last,m.index));
+    let gi=0;for(let i=1;i<=rules.length;i++){if(m[i]!==undefined){gi=i;break;}}
+    out+='<span class="tk-'+rules[gi-1][0]+'">'+esc(m[0])+'</span>';
+    last=m.index+m[0].length;
+    if(m[0]==='')re.lastIndex++;
+  }
+  return out+esc(code.slice(last));
+}
 function codeBlock(code,lang){
-  const ln=(lang||'code');const safe=esc(code.replace(/\n$/,''));
-  return '<div class="codebox lang-'+esc(ln)+'"><div class="codehead"><span class="lang '+esc(ln)+'">'+esc(ln)+'</span><button class="cp" onclick="copyCode(this)">⧉ 复制</button></div><pre class="code"><code>'+safe+'</code></pre></div>';
+  const ln=(lang||'code');const raw=code.replace(/\n$/,'');
+  return '<div class="codebox lang-'+esc(ln)+'"><div class="codehead"><span class="lang '+esc(ln)+'">'+esc(ln)+'</span><button class="cp" onclick="copyCode(this)">⧉ 复制</button></div><pre class="code"><code>'+hl(raw,ln)+'</code></pre></div>';
 }
 function copyCode(btn){const pre=btn.closest('.codebox').querySelector('code');const t=pre.innerText;
   navigator.clipboard.writeText(t).then(()=>{btn.textContent='✓ 已复制';setTimeout(()=>btn.textContent='⧉ 复制',1200);}).catch(()=>{});}
@@ -3622,18 +3851,23 @@ async function loadAccess(){try{const d=await (await fetch('/api/access')).json(
 
 function copyPage(){const t=(document.getElementById('feed')?.innerText||'').trim()||'（暂无对话）';
   navigator.clipboard.writeText(t).then(()=>{alert('已复制当前会话日志');}).catch(()=>{});}
+function stripThink(t){                 // 兜底：模型偶尔把 <think></think> 吐进正文
+  return (t||'').replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi,'')
+                .replace(/<\/?(think|thinking|reasoning)>/gi,'')
+                .replace(/\n{3,}/g,'\n\n').trim();
+}
 function renderTableBlock(text){
-  // 把一组以 | 开头的行转成 <table>
+  // 把一组以 | 开头的行转成 <table>（外面套一层横向滚动容器：宽表也不挤）
   const rows=text.split('\n').filter(l=>l.trim().startsWith('|'));
   if(rows.length<2)return null;
   const clean=l=>l.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(c=>c.trim());
   let html='<table>';
   rows.forEach((r,i)=>{const cells=clean(r);if(cells.every(c=>!c.replace(/[-:]/g,'')))return;const tag=i===0?'th':'td';
     html+='<tr>'+cells.map(c=>'<'+tag+'>'+inline(esc(c))+'</'+tag+'>').join('')+'</tr>';});
-  return html+'</table>';
+  return '<div class="tblwrap">'+html+'</table></div>';
 }
 function renderMd(text){
-  text=text||'';
+  text=stripThink(text||'');
   const fence=/```([\w+-]*)\n?([\s\S]*?)(?:```|$)/g;
   let out='',last=0,m;
   while((m=fence.exec(text))){
@@ -3680,7 +3914,8 @@ function add(role,text,src){const m=document.createElement('div');m.className='m
  let vm='';text=(''+text);
  if(role==='bot'&&text.indexOf('[video]')>=0){const mu=text.match(/\[video\]([^\[\]]+)\[\/video\]/);if(mu){vm='<video src="'+esc(mu[1])+'" controls style="max-width:100%;border-radius:12px;margin:4px 0"></video>';text=text.replace(mu[0],'');}}
  if(role==='bot'&&text.indexOf('[music]')>=0){const mu=text.match(/\[music\]([^\[\]]+)\[\/music\]/);if(mu){vm+='<audio src="'+esc(mu[1])+'" controls style="width:100%;margin:4px 0"></audio>';text=text.replace(mu[0],'');}}
- m.innerHTML='<div class="b">'+(role==='bot'?renderMd(text):esc(text))+'</div>'+vm;
+ const _html=(role==='bot'?renderMd(text):esc(text));
+ m.innerHTML='<div class="b'+(_html.indexOf('<table')>=0?' wide':'')+'">'+_html+'</div>'+vm;
  if(role==='bot'&&((''+text).indexOf('__pending__')>=0||text==='⏳')){m.innerHTML='<div class="b"><span class="spin"></span> 正在回答…</div>';feed.appendChild(m);return;}
    if(role==='bot'){const row=document.createElement('div');row.className='msgbot';
    row.innerHTML='<button onclick="copyMsg(this)">⧉ 复制</button>';m.appendChild(row);}
@@ -3711,11 +3946,15 @@ async function send(){const t=inp.value.trim();if(!t)return;inp.value='';
 // 打字机式浮现回答
 function typeAnswer(text,src,logId){
   const m=document.createElement('div');m.className='m bot';
+  text=stripThink(text);
   m.innerHTML='<div class="b"></div>';const b=m.querySelector('.b');feed.appendChild(m);
   let i=0;const step=Math.max(1,Math.round(text.length/120));const rl=setInterval(()=>{
     i+=step;b.innerHTML='';b.appendChild(document.createTextNode(text.slice(0,i)));
-    const last=document.getElementById('feed').lastElementChild;feed.scrollTop=feed.scrollHeight;
-    if(i>=text.length){clearInterval(rl);const bm=m.querySelector('.b');bm.innerHTML=renderMd(text);
+    feed.scrollTop=feed.scrollHeight;
+    if(i>=text.length){clearInterval(rl);const bm=m.querySelector('.b');
+      const full=renderMd(text);
+      if(full.indexOf('<table')>=0){bm.classList.add('wide');m.classList.add('widem');}
+      bm.innerHTML=full;
       const row=document.createElement('div');row.className='msgbot';row.innerHTML=
         '<button onclick="copyMsg(this)">⧉ 复制</button><button class="fb" onclick="fb(this,\''+logId+'\',\'good\')">👍</button>'+
         '<button class="fb" onclick="fb(this,\''+logId+'\',\'bad\')">👎</button>';

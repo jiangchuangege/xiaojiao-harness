@@ -135,4 +135,35 @@ def run(res: Results) -> Results:
         app.CONTROL_FILE = _old_ctl
         app.reload_control()                   # 把全局状态还原成真实操控文件
 
+    # ---------- 9. 检索质量：多变体 / 主题词 / 相关度 / <think> ----------
+    # 用户实测反馈："最近 AI 新闻"搜出歌曲《最近》、"帮我搜索一下 你好"搜出"好（汉语文字）"。
+    # 下面几条就是这件事的回归防线。
+    res.check("检索质量", "「帮我搜索一下 你好」不会把「你好」拆成「好」",
+              app.extract_search_keywords("帮我搜索一下 你好") == "你好",
+              app.extract_search_keywords("帮我搜索一下 你好"))
+    res.check("检索质量", "寒暄词不做检索（整句闸门返回空）",
+              app.resolve_search_query("你好")[0] == "" and app.resolve_search_query("用")[0] == "", "")
+    res.check("检索质量", "主题词提取：去掉时间词/助词/疑问尾巴",
+              (app._query_tokens("最近AI新闻") == ["AI", "新闻"]
+               and app._query_tokens("最近的漏洞 CVE") == ["漏洞", "CVE"]
+               and app._query_tokens("最近的AI新闻有哪些") == ["AI", "新闻"]),
+              str(app._query_tokens("最近的AI新闻有哪些")))
+    res.check("检索质量", "多变体：原词之后紧跟「只用主题词」的写法",
+              app._query_variants("最近 AI 新闻")[:2] == ["最近 AI 新闻", "AI 新闻"],
+              str(app._query_variants("最近 AI 新闻")))
+    res.check("检索质量", "多变体：2026年开头的查询也会把年份剥掉",
+              "AI新闻" in app._query_variants("2026年AI新闻"), str(app._query_variants("2026年AI新闻")))
+    _junk = app._search_relevance("最近的漏洞 CVE", "最近（李圣杰2006年演唱的歌曲）", "收录于专辑《关于你的歌》")[1]
+    _good = app._search_relevance("最近的漏洞 CVE", "腾讯漏洞情报", "漏洞 CVE 最新情报与修复建议")[1]
+    res.check("检索质量", "跑题结果覆盖率低、相关结果覆盖率高（据此换写法）",
+              _junk < 0.6 <= _good, "跑题=%.0f%% 相关=%.0f%%" % (_junk * 100, _good * 100))
+    res.check("检索质量", "模型只给碎片时改用整句关键词",
+              app._better_search_query("最近", "最近 AI 新闻") == "最近 AI 新闻", "")
+    res.check("检索质量", "碎片不属于用户原话时不乱改",
+              app._better_search_query("python 教程", "今天天气怎么样") == "python 教程", "")
+    res.check("思维标签", "<think> 整块与残留标签都被剥掉",
+              app._strip_think("<think>想一下</think>你好") == "你好"
+              and app._strip_think("</think>你好") == "你好"
+              and app._strip_think("<thinking>\n\n</thinking>\n\n正常回答") == "正常回答", "")
+
     return res

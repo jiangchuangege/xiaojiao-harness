@@ -1,6 +1,6 @@
 {
   "_说明": "小焦的「操控文件」模板。复制成 xiaojiao_control.json 后按需修改；该文件含本地密钥，已被 .gitignore 忽略，切勿提交。",
-  "_版本": "对应 v1.1.0+（新增 brain.xiaojiao 小脑路径 与 scrapling 抓取段）",
+  "_版本": "对应 v1.0（含 brain.xiaojiao 小脑路径 与 scrapling 抓取段）",
 
   "brain": {
     "_说明": "大脑=聊天主模型；小脑=自研 MiniGPT（项目核心，必需）",

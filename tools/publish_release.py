@@ -2,17 +2,17 @@
 """发布一个版本：打 tag + 建 Release（git 通道不通时也能用，走 REST API）
 
 设计要点：
-  · **不再写死版本号**（以前这个脚本把 TAG/TITLE/正文文件全硬编码成 v1.2.0，发下一版就得改代码）。
+  · **不再写死版本号**（以前这个脚本把 TAG/TITLE/正文文件全硬编码成某个固定版本，发下一版就得改代码）。
   · Release 正文默认从 `CHANGELOG.md` 里**按 tag 抽出对应小节**（单一事实来源，不会出现文档与 Release 不一致），
     也可以用 `--notes-file` 指定现成文件。
   · 所有动作都可核对：tag/Release 走 REST API 并打印返回结果；已存在的 tag/Release 只提示、不覆盖。
   · **绝不改写历史**：本脚本只打 tag + 建 Release，不碰 main 的任何提交。
 
 用法：
-    python tools/publish_release.py --tag v1.2.4
-    python tools/publish_release.py --tag v1.2.4 --title "v1.2.4 · 标题" --dry-run
-    python tools/publish_release.py --tag v1.2.4 --notes-file docs/release-notes-v1.2.4.md
-    python tools/publish_release.py --tag v1.2.4 --ref release/stabilize-20260912
+    python tools/publish_release.py --tag v1.0
+    python tools/publish_release.py --tag v1.0 --title "v1.0 · 标题" --dry-run
+    python tools/publish_release.py --tag v1.0 --notes-file CHANGELOG.md
+    python tools/publish_release.py --tag v1.0 --ref main
 
 退出码：0 = 成功（或 dry-run 展示完毕）；1 = 失败/参数不合法
 """
@@ -60,7 +60,7 @@ def changelog_section(tag: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="发布小焦版本（tag + GitHub Release）")
-    ap.add_argument("--tag", required=True, help="版本号，如 v1.2.4")
+    ap.add_argument("--tag", required=True, help="版本号，如 v1.0")
     ap.add_argument("--title", default="", help="Release 标题；默认用 CHANGELOG 小节的加粗摘要")
     ap.add_argument("--target", default="main", help="tag 指向的分支/提交（默认 main）")
     ap.add_argument("--notes-file", default="", help="Release 正文文件；默认从 CHANGELOG 抽")

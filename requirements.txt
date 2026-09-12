@@ -42,4 +42,4 @@ accelerate>=0.30
 # · 视频大脑（ComfyUI + Wan2.1）用 ComfyUI 自带 python_embeded，与本环境独立
 # · llama-swap（多大脑秒级切换）是独立 exe，不是 Python 包
 # · Node.js 仅 .js 插件需要（plugin_runner.js）
-# · DeepSeek Harness（DSH）相关依赖已于 v1.1.0 移除：本仓库不依赖任何 DSH Python 包
+# · DeepSeek Harness（DSH）相关依赖已移除：本仓库不依赖任何 DSH Python 包
