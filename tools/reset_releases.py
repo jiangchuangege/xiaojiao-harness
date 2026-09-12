@@ -50,7 +50,9 @@ def main() -> int:
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
                 body = r.read().decode("utf-8")
-                return json.loads(body) if body.strip() else {}
+                # 204 No Content（删除成功）没有响应体 → 这里显式带上状态码，
+                # 否则调用方拿到 {}，会把"删除成功"误报成失败（真实的坑）。
+                return json.loads(body) if body.strip() else {"_code": r.status}
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "ignore")
             if e.code in ok:
