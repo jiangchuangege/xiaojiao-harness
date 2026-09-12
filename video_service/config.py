@@ -37,7 +37,7 @@ def _default_video_root():
                 return near
             return os.path.dirname(cd.rstrip("\\/"))
     except Exception as e:
-        LOG.debug("忽略异常(%s:32): %s", __file__, 32, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 32, e)
     try:
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -75,7 +75,7 @@ def find_comfy_dir():
             if _c:
                 return _c
         except Exception as e:
-            LOG.debug("忽略异常(%s:70): %s", __file__, 70, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 70, e)
         return cand or ""
     # 递归找 main.py（最多 4 层）
     for root, dirs, files in os.walk(VIDEO_ROOT):

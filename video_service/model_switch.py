@@ -50,9 +50,9 @@ def _pid_on_port(port):
                 try:
                     return int(line.strip().split()[-1])
                 except Exception as e:
-                    LOG.debug("忽略异常(%s:45): %s", __file__, 45, e)
+                    LOG.debug("忽略异常(%s:%d): %s", __file__, 45, e)
     except Exception as e:
-        LOG.debug("忽略异常(%s:47): %s", __file__, 47, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 47, e)
     return None
 
 
@@ -91,7 +91,7 @@ def _pid_on_port(port):
                 parts = line.split()
                 return int(parts[-1])
     except Exception as e:
-        LOG.debug("忽略异常(%s:86): %s", __file__, 86, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 86, e)
     return None
 
 
@@ -101,7 +101,7 @@ def _kill_pid(pid):
     try:
         subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, timeout=15)
     except Exception as e:
-        LOG.debug("忽略异常(%s:96): %s", __file__, 96, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 96, e)
 
 
 def stop_brain():
@@ -137,7 +137,7 @@ def start_brain():
             _set("idle", "大脑已恢复(llama-swap)")
             return
     except Exception as e:
-        LOG.debug("忽略异常(%s:132): %s", __file__, 132, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 132, e)
     # 兜底：直接起 llama-server
     try:
         server, gguf, port, ctx = config.brain_llama()
@@ -202,7 +202,7 @@ def stop_comfy():
         try:
             _comfy_proc.kill()
         except Exception as e:
-            LOG.debug("忽略异常(%s:197): %s", __file__, 197, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 197, e)
         _comfy_proc = None
     for _ in range(10):
         if _pid_on_port(config.COMFY_PORT) is None:

@@ -85,7 +85,7 @@ def generate_qa(chunk):
                 if isinstance(qa_list, list) and len(qa_list) > 0:
                     all_json.append(qa_list)
             except Exception as e:
-                LOG.debug("忽略异常(%s:80): %s", __file__, 80, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 80, e)
             start = end
         
         if all_json:
@@ -98,7 +98,7 @@ def generate_qa(chunk):
             try:
                 return json.loads(matches[-1])
             except Exception as e:
-                LOG.debug("忽略异常(%s:93): %s", __file__, 93, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 93, e)
         
         print("⚠️ 未找到有效 JSON 数组")
         return []

@@ -44,7 +44,7 @@ def detect_model():
             if "ltx-video" in d.lower():
                 return "ltx"
     except Exception as e:
-        LOG.debug("忽略异常(%s:39): %s", __file__, 39, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 39, e)
     return "ltx"  # 默认 LTX
 
 

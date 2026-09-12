@@ -78,7 +78,7 @@ def _good(fb, corrected):
         if int(str(fb).strip("星")) >= 4:
             return True
     except Exception as e:
-        LOG.debug("忽略异常(%s:73): %s", __file__, 73, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 73, e)
     return False
 
 

@@ -60,7 +60,7 @@ def start_llama_brain():
             print("✅ 大脑已由 llama-swap(9292) 管理，跳过冗余直连(8080)。")
             return None
     except Exception as e:
-        LOG.debug("忽略异常(%s:55): %s", __file__, 55, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 55, e)
     server, gguf = resolve_llama_paths()
     port = int(BRAIN.get("llama", {}).get("port", 8080))
     if not (server and gguf and os.path.exists(server) and os.path.exists(gguf)):
@@ -78,7 +78,7 @@ def start_llama_brain():
                 print(f"✅ 大脑 {MODEL_NAME} 已就绪 (port {port})")
                 return proc
         except Exception as e:
-            LOG.debug("忽略异常(%s:73): %s", __file__, 73, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 73, e)
         time.sleep(2)
     print(f"⚠️ 大脑启动超时（可能在加载模型），小焦仍会尝试连接。")
     return proc
@@ -171,7 +171,7 @@ def start_neko():
                       cwd=os.path.dirname(os.path.abspath(__file__)), creationflags=subprocess.CREATE_NO_WINDOW)
             print("🎓 [N.E.K.O] 后台学习通道已启动(每5分钟学你与猫娘的对话)")
     except Exception as e:
-        LOG.debug("忽略异常(%s:166): %s", __file__, 166, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 166, e)
     return root
 
 
@@ -203,7 +203,7 @@ def start_llama_swap():
             s.connect(("127.0.0.1", 9292)); s.close()
             print("  [llama-swap] 已在运行(9292)"); return None
         except Exception as e:
-            LOG.debug("忽略异常(%s:198): %s", __file__, 198, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 198, e)
         finally:
             s.close()
         proc = subprocess.Popen([exe, "--config", cfg, "--listen", "127.0.0.1:9292"],
@@ -275,7 +275,7 @@ def main():
             try:
                 llama_proc.kill()
             except Exception as e:
-                LOG.debug("忽略异常(%s:270): %s", __file__, 270, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 270, e)
         print("🛑 所有服务已关闭。")
 
 if __name__ == "__main__":

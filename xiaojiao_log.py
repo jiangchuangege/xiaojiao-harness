@@ -51,16 +51,23 @@ def scrub(text) -> str:
 
 
 class _ScrubFilter(logging.Filter):
-    """写盘/输出前统一脱敏，任何地方漏打码都不会泄露。"""
+    """写盘/输出前统一脱敏，任何地方漏打码都不会泄露。
+
+    真实缺陷复盘：这里原来是 `record.args = tuple(scrub(a) for a in record.args)`，
+    等于把**每个参数都转成字符串**——于是所有用 %d / %.0f 写日志的地方在 emit 时抛
+    `TypeError: %d format: a real number is required, not str`，日志直接变成
+    "--- Logging error ---" 堆栈（熔断告警就是这么被打掉的）。
+    现在改为：先把消息**渲染成最终文本**再脱敏，并清空 args —— 既不破坏格式，
+    也保证"渲染前脱敏"的初衷（脱敏的是最终要写出去的那串字）。
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            record.msg = scrub(record.msg)
             if record.args:
-                if isinstance(record.args, dict):
-                    record.args = {k: scrub(v) for k, v in record.args.items()}
-                else:
-                    record.args = tuple(scrub(a) for a in record.args)
+                record.msg = scrub(record.getMessage())
+                record.args = ()
+            else:
+                record.msg = scrub(record.msg)
         except Exception:  # noqa: silent-ok — 日志过滤器必须永不抛错，否则会吃掉业务日志
             pass
         return True

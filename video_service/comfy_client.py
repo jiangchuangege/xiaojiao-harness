@@ -35,7 +35,7 @@ def wait_output(prompt_id, timeout=1800, progress_cb=None):
                 if pr and pr.get("max"):
                     progress_cb(int(pr.get("value", 0)), int(pr.get("max", 0)))
             except Exception as e:
-                LOG.debug("忽略异常(%s:30): %s", __file__, 30, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 30, e)
         try:
             h = requests.get(config.COMFY_URL + "/history/%s" % prompt_id, timeout=15).json()
         except Exception:

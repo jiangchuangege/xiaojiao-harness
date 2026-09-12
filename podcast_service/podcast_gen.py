@@ -137,7 +137,7 @@ def _get_tts():
             _tts = _app._tts_model
             return _tts
     except Exception as e:
-        LOG.debug("忽略异常(%s:132): %s", __file__, 132, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 132, e)
     # 否则独立加载
     import perth
     if getattr(perth, "PerthImplicitWatermarker", None) is None:
@@ -170,7 +170,7 @@ def _find_tts_dir():
                 if _ia._hit_keyword(_t, _kws) or _ia._hit_keyword(_t, ("downloads", "下载")):
                     bases.append(os.path.join(_drv, _t))
     except Exception as e:
-        LOG.debug("忽略异常(%s:165): %s", __file__, 165, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 165, e)
     for base in bases:
         try:
             subs = [base] + glob.glob(os.path.join(base, "*"))

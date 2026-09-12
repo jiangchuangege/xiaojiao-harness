@@ -63,7 +63,7 @@ def _nvidia():
             u, t = r.stdout.strip().split(",")[:2]
             return int(u), int(t)
     except Exception as e:
-        LOG.debug("忽略异常(%s:58): %s", __file__, 58, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 58, e)
     return 0, 0
 
 
@@ -74,7 +74,7 @@ def _mem():
         v = psutil.virtual_memory()
         return int(v.used / 1048576), int(v.total / 1048576)
     except Exception as e:
-        LOG.debug("忽略异常(%s:69): %s", __file__, 69, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 69, e)
     try:
         import ctypes
         class MEMORYSTATUSEX(ctypes.Structure):
@@ -183,7 +183,7 @@ def api_monitor_op():
                 requests.post("http://127.0.0.1:8188/free", json={"unload_models": True, "free_memory": True}, timeout=8)
                 requests.post("http://127.0.0.1:9292/api/models/unload/xiaojiao", timeout=8)
             except Exception as e:
-                LOG.debug("忽略异常(%s:178): %s", __file__, 178, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 178, e)
             note = "已紧急清空显存"
         elif op == "add":
             name = d.get("name") or tgt
@@ -220,4 +220,4 @@ def _save_conf(key, conf):
         d.setdefault("brain", {}).setdefault(key, {}).setdefault("conf", {}).update(conf)
         json.dump(d, open(cf, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     except Exception as e:
-        LOG.debug("忽略异常(%s:215): %s", __file__, 215, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 215, e)

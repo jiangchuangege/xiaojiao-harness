@@ -71,7 +71,7 @@ def _drives():
             if os.path.isdir(r):
                 out.append(r)
         except Exception as e:
-            LOG.debug("忽略异常(%s:66): %s", __file__, 66, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 66, e)
     return out
 
 
@@ -112,7 +112,7 @@ def _where_search(drv, name, timeout=25):
                 if p.lower().endswith(name.lower()):
                     return p
     except Exception as e:
-        LOG.debug("忽略异常(%s:107): %s", __file__, 107, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 107, e)
     return None
 
 
@@ -156,7 +156,7 @@ def discover_gguf():
                                 return os.path.join(dp, f)   # 官方同名优先
                             best = best or os.path.join(dp, f)
                 except Exception as e:
-                    LOG.debug("忽略异常(%s:151): %s", __file__, 151, e)
+                    LOG.debug("忽略异常(%s:%d): %s", __file__, 151, e)
     return best
 
 
@@ -375,7 +375,7 @@ def main():
         try:
             os.remove(dl)
         except Exception as e:
-            LOG.debug("忽略异常(%s:370): %s", __file__, 370, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 370, e)
         if not (ll.get("server") and os.path.exists(ll["server"])):
             missing.append("llama-server.exe")
 
@@ -560,7 +560,7 @@ def main():
             try:
                 os.remove(dl)
             except Exception as e:
-                LOG.debug("忽略异常(%s:555): %s", __file__, 555, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 555, e)
             if not sw:
                 missing.append("llama-swap.exe")
     if sw:

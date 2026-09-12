@@ -21,13 +21,13 @@ def _free_vram():
         ms._llama_swap_unload("coder")
         ms._llama_swap_unload("xiaojiao")
     except Exception as e:
-        LOG.debug("忽略异常(%s:16): %s", __file__, 16, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 16, e)
     try:
         import brain_manager as bm
         for k in list(bm.BRAINS.keys()):
             bm._full_stop(k)
     except Exception as e:
-        LOG.debug("忽略异常(%s:22): %s", __file__, 22, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 22, e)
 
 
 class MusicGeneration:

@@ -30,7 +30,7 @@ def video_mode():
         if mm in ("api", "local"):
             return mm
     except Exception as e:
-        LOG.debug("忽略异常(%s:25): %s", __file__, 25, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 25, e)
     return "api"
 
 def _sweep():
@@ -54,7 +54,7 @@ def _schedule_warm_idle(job_id, minutes=15):
                 import model_switch as _ms
                 _ms.stop_comfy()
         except Exception as e:
-            LOG.debug("忽略异常(%s:49): %s", __file__, 49, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 49, e)
     threading.Thread(target=_tick, daemon=True).start()
 
 
@@ -72,12 +72,12 @@ def _persist():
     try:
         json.dump(_jobs, open(_JOBS_FILE, "w", encoding="utf-8"), ensure_ascii=False)
     except Exception as e:
-        LOG.debug("忽略异常(%s:67): %s", __file__, 67, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 67, e)
 
 try:
     _jobs.update(json.load(open(_JOBS_FILE, encoding="utf-8")))
 except Exception as e:
-    LOG.debug("忽略异常(%s:72): %s", __file__, 72, e)
+    LOG.debug("忽略异常(%s:%d): %s", __file__, 72, e)
 
 def _load_workflow(prompt, ckpt):
     wf = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "workflow_wan.json"), encoding="utf-8"))
@@ -115,7 +115,7 @@ def _translate_zh(_p):
             if c:
                 return c
     except Exception as e:
-        LOG.debug("忽略异常(%s:110): %s", __file__, 110, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 110, e)
     return _p
 
 
@@ -156,7 +156,7 @@ def _refine_prompt(raw, save=True):
                     best = best.split("-> 精炼: ", 1)[1]
                 return best
         except Exception as e:
-            LOG.debug("忽略异常(%s:151): %s", __file__, 151, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 151, e)
     try:
         import json as _j, requests as _r, re as _re
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -187,10 +187,10 @@ def _refine_prompt(raw, save=True):
                         try:
                             V.add("用户: %s -> 精炼: %s" % (raw, out), tag="video_prompt")
                         except Exception as e:
-                            LOG.debug("忽略异常(%s:182): %s", __file__, 182, e)
+                            LOG.debug("忽略异常(%s:%d): %s", __file__, 182, e)
                 return out
     except Exception as e:
-        LOG.debug("忽略异常(%s:185): %s", __file__, 185, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 185, e)
     # 模板兜底(秒出): 加电影级修饰词
     return raw + ", cinematic, high detail, dramatic lighting, smooth motion, film quality"
 
@@ -218,7 +218,7 @@ def _worker(job_id, prompt):
                 try:
                     _jobs[job_id]["progress"] = {"value": v, "max": 100}
                 except Exception as e:
-                    LOG.debug("忽略异常(%s:213): %s", __file__, 213, e)
+                    LOG.debug("忽略异常(%s:%d): %s", __file__, 213, e)
             out, vurl = _cv.generate(refined, mode="ti2vid", progress_cb=_ap)
             _jobs[job_id].update(state="done", message="完成(云端 %s)" % _cv.provider(),
                                  url="/videos/" + os.path.basename(out), video_url=vurl)
@@ -249,7 +249,7 @@ def _worker(job_id, prompt):
             try:
                 _jobs[job_id]["progress"] = {"value": value, "max": maxv}
             except Exception as e:
-                LOG.debug("忽略异常(%s:244): %s", __file__, 244, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 244, e)
         fn, sub, ftype = cc.wait_output(pid, progress_cb=_prog)
         name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + "_wan"
         out = os.path.join(config.OUT_DIR, name + (os.path.splitext(fn)[1] or ".mp4"))
@@ -265,7 +265,7 @@ def _worker(job_id, prompt):
             import brain_manager as _bm3
             _bm3.switch_to("chat")
         except Exception as e:
-            LOG.debug("忽略异常(%s:260): %s", __file__, 260, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 260, e)
         _jobs[job_id].update(state="error", error=str(e), message="生成失败，已尽力恢复大脑")
     _persist()
 
@@ -287,7 +287,7 @@ def api_video_refine():
                 c = (r.json()["choices"][0].get("message",{}).get("content") or "").strip()
                 return c or _p
         except Exception as e:
-            LOG.debug("忽略异常(%s:282): %s", __file__, 282, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 282, e)
         return _p
     zh = _translate_zh(refined) if len(refined) > 15 else prompt
     return jsonify({"ok": True, "refined": refined, "zh": zh})
@@ -365,7 +365,7 @@ def api_video_promptkb():
                     recent.append(e.get("text", ""))
             recent = recent[-6:][::-1]
         except Exception as e:
-            LOG.debug("忽略异常(%s:360): %s", __file__, 360, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 360, e)
     return jsonify({"count": n, "recent": recent})
 
 

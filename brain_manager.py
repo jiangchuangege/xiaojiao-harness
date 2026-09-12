@@ -2,7 +2,7 @@
 # 原理：小焦/小脑作为调度中心，连接多个「大脑」(聊天/视频/图像/推理...)。
 #      空闲大脑 → sleep(权重从显存卸载到内存, ~1-2s)；要用 → wake(内存→显存, ~1-2s)。
 #      进程常驻不杀，只做权重 offload/onload → 秒级切换，省显存。
-import os, json, threading, time, subprocess
+import os, json, threading, time, subprocess, shutil
 import logging  # noqa: F401  （由 tools/fix_silent_except.py 注入）
 try:
     from xiaojiao_log import get_logger
@@ -42,6 +42,65 @@ BRAINS = {
 
 _lock = threading.Lock()
 
+_CONTROL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json")
+
+
+def _control_cfg():
+    """读操控文件的 brain 段（只读，读不到就返回空 dict，绝不抛）。"""
+    try:
+        with open(_CONTROL_FILE, encoding="utf-8") as f:
+            return (json.load(f) or {}).get("brain", {}) or {}
+    except Exception as e:
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 57, e)
+        return {}
+
+
+def _llama_cfg():
+    """解析本地 llama 大脑的 (server, gguf)：操控文件 → 环境变量 → PATH/常见目录。
+
+    真实缺陷：这两个函数以前**根本没定义**，`_start_llama` 一执行就 NameError，
+    被下面的 `except Exception: return False` 吞掉 → "唤醒大脑"永远失败，
+    多脑切换形同虚设（而且完全没有日志线索）。
+    """
+    brain = _control_cfg()
+    llama = brain.get("llama", {}) if isinstance(brain.get("llama"), dict) else {}
+    server = str(llama.get("server") or "")
+    gguf = str(llama.get("gguf") or "")
+    if not (server and os.path.exists(server)):
+        server = os.environ.get("XIAOJIAO_LLAMA_SERVER", "") or server
+    if not (gguf and os.path.exists(gguf)):
+        gguf = os.environ.get("XIAOJIAO_GGUF", "") or gguf
+    if not (server and os.path.exists(server)):
+        server = shutil.which("llama-server") or ""
+        if not server:
+            for d in ("C:/llama", ".", "..", os.path.expanduser("~")):
+                c = os.path.join(d, "llama-server.exe")
+                if os.path.exists(c):
+                    server = c
+                    break
+    if not (gguf and os.path.exists(gguf)):
+        for d in ("C:/llama", ".", "..", os.path.expanduser("~/Downloads")):
+            if not os.path.isdir(d):
+                continue
+            for fn in sorted(os.listdir(d)):
+                if fn.lower().endswith(".gguf"):
+                    gguf = os.path.join(d, fn)
+                    break
+            if gguf and os.path.exists(gguf):
+                break
+    return server, (gguf if gguf and os.path.exists(gguf) else "")
+
+
+def _comfy_dir():
+    """ComfyUI 目录：环境变量 → 操控文件 brain.comfy_dir → 项目同级常见位置。"""
+    root = os.environ.get("XIAOJIAO_COMFY_DIR", "") or str(_control_cfg().get("comfy_dir") or "")
+    if root and os.path.exists(os.path.join(root, "main.py")):
+        return root
+    for d in (os.path.join(os.path.dirname(_CONTROL_FILE), "ComfyUI"), "ComfyUI", ".."):
+        if os.path.exists(os.path.join(d, "main.py")):
+            return os.path.abspath(d)
+    return root                      # 交给调用方判断（它自己会检查 main.py 是否存在）
+
 
 def _port_alive(port):
     import socket
@@ -64,7 +123,7 @@ def _pid_on_port(port):
             try:
                 return int(line.strip().split()[-1])
             except Exception as e:
-                LOG.debug("忽略异常(%s:59): %s", __file__, 59, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 59, e)
     return None
 
 
@@ -86,7 +145,7 @@ def _start_llama(b):
         other = "coder" if mine == "xiaojiao" else "xiaojiao"
         _ms._llama_swap_unload(other)
     except Exception as e:
-        LOG.debug("忽略异常(%s:81): %s", __file__, 81, e)
+        LOG.debug("忽略异常(%s:%d): %s", __file__, 81, e)
     if _port_alive(b["port"]):
         return True
     try:
@@ -160,7 +219,7 @@ def _full_stop(brain_key):
             else:
                 _ms.stop_comfy()
         except Exception as e:
-            LOG.debug("忽略异常(%s:155): %s", __file__, 155, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 155, e)
         b["state"] = "OFF"
     return True
 
@@ -174,7 +233,7 @@ def _evict_ram_brains(except_key):
         try:
             _ms.stop_comfy()  # 第三方大脑占用时, 视频大脑让位(或按类型扩展)
         except Exception as e:
-            LOG.debug("忽略异常(%s:169): %s", __file__, 169, e)
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 169, e)
 
 
 def switch_to(target):

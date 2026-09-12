@@ -74,7 +74,7 @@ class VideoGeneration:
                     if out:
                         refined = out
             except Exception as e:
-                LOG.debug("忽略异常(%s:69): %s", __file__, 69, e)
+                LOG.debug("忽略异常(%s:%d): %s", __file__, 69, e)
             ckpt = config.find_checkpoint() or "dit_fp8.safetensors"
             wf = json.load(open(os.path.join(_ROOT, "video_service", "workflow_wan.json"), encoding="utf-8"))
             for n in wf.values():
