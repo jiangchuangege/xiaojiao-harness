@@ -21,6 +21,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from harness import Results, load_plugin, offline_only  # noqa: E402
 
 
+def _suite_line(tag, n0, res):
+    """打完一个套件就报一次小结（CI 日志/文档要按套件引用数字，别只能看总数）。"""
+    rows = res.rows[n0:]
+    p = sum(1 for r in rows if r.get("status") == "PASS")
+    s = sum(1 for r in rows if r.get("status") == "SKIP")
+    print("   └─ %s：通过 %d / 共 %d%s" % (tag, p, len(rows), ("（跳过 %d）" % s) if s else ""))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="小焦抓取插件压力测试")
     ap.add_argument("--json", default="results.json", help="结果 JSON 输出路径")
@@ -37,24 +45,32 @@ def main() -> int:
     print("=" * 62)
 
     print("\n[1/4] 离线用例（配置/安全闸门/会话/指标/参数校验/渲染契约/漏洞聚合）")
+    _n0 = len(res.rows)
     import test_units
     test_units.run(res, mod=mod)
+    _suite_line("离线用例", _n0, res)
 
     print("\n[2/4] 应用逻辑用例（检索词清洗/漏洞查询意图/提示词铁律/工具注册）")
+    _n0 = len(res.rows)
     import test_app_logic
     test_app_logic.run(res)
+    _suite_line("应用逻辑", _n0, res)
 
     print("\n[3/4] 安全用例（SSRF/robots/限速/脱敏/UA/穿越/命令端点/无遥测/无明文密钥）")
+    _n0 = len(res.rows)
     import test_security
     test_security.run(res, mod=mod)
+    _suite_line("安全用例", _n0, res)
 
     if args.offline or offline_only():
         print("\n[4/4] 联网用例 —— 已跳过（--offline 或 XJ_STRESS_OFFLINE=1）")
         res.skip("联网", "全部联网用例", "离线模式")
     else:
         print("\n[4/4] 联网用例（真实抓取/批量/会话/对抗/NVD 漏洞聚合）")
+        _n0 = len(res.rows)
         import test_network
         test_network.run(res, mod=mod, quick=args.quick)
+        _suite_line("联网用例", _n0, res)
 
     res.print_summary()
     path = res.save(args.json)

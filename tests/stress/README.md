@@ -97,6 +97,7 @@ python tests/stress/stability_30m.py --minutes 1 --interval 4 --chat-every 30   
 ## 本地实测基线
 
 ```
-离线 42/43（1 跳过）· 100%
-全部 67/67 · 100% · 74.3s
+离线 182/183（1 跳过）· 100% · 9.0s
+全部 217/217 · 100%
+实机验收 live_check 35/35 · UI 样式 21/21 · 预设 13/13
 ```
