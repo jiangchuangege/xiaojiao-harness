@@ -153,7 +153,48 @@ def run(res: Results, mod=None) -> Results:
     res.check("渲染/契约", "_fence_body 支持 Markdown 转义 JSON 兜底",
               bool(m) and "bfnrtu" in m.group(1), "")
 
-    # ---------- 8. 参数规范化 / 工具集完整性 ----------
+    # ---------- 8. 大 JSON 的展示与落盘（尺寸相关的回归，曾真实翻车）----------
+    # 背景：`stealthy_fetch` 抓 NVD 返回 10023 字，正好越过 10000 字截断线。
+    # 旧实现「先截断、后美化」→ 内容被截成**非法 JSON** → 既无法美化也无法包代码块，
+    # 用户看到一大坨原始 JSON（真实用户截图投诉）。所以这里专门用**超长 JSON** 做回归。
+    big_obj = {"resultsPerPage": 5,
+               "vulnerabilities": [{"cve": {"id": "CVE-2024-%05d" % i,
+                                            "desc": "x" * 200,
+                                            "metrics": {"score": i}}} for i in range(60)]}
+    big_raw = json.dumps(big_obj, ensure_ascii=False)          # 必然 > MAX_CONTENT_CHARS
+    big_escaped = big_raw.replace("_", "\\_")                  # 模拟 markdownify 的转义
+    res.check("大JSON", "样本确实超过截断线（%d > %d）" % (len(big_escaped), mod.MAX_CONTENT_CHARS),
+              len(big_escaped) > mod.MAX_CONTENT_CHARS, "")
+
+    shown = json.loads(mod.fmt_result(200, "u", big_escaped))["content"]
+    lines = shown.splitlines()
+    res.check("大JSON", "展示时被美化成多行 JSON（首行 '{'）", lines[0].strip() == "{", "%d 行" % len(lines))
+    res.check("大JSON", "超长自动折叠并给出提示", "已折叠显示" in shown, "展示 %d 字" % len(shown))
+    res.check("大JSON", "展示长度可控（≤ 折叠上限 + 提示行）",
+              len(shown) <= mod.JSON_DISPLAY_CHARS + 400, "%d 字" % len(shown))
+    res.check("大JSON", "Markdown 转义已修（不含 \\_ 残留）", "\\_" not in shown, "")
+
+    # 截断顺序：clip=True 会先截断（对批量友好），clip=False 保留全文（展示/落盘用）
+    truncated = mod.MCPClient._normalize_one({"status": 200, "url": "u", "content": big_raw}, clip=True)["content"]
+    full = mod.MCPClient._normalize_one({"status": 200, "url": "u", "content": big_raw}, clip=False)["content"]
+    res.check("大JSON", "clip=True 会截断到上限（批量路径）", len(truncated) <= mod.MAX_CONTENT_CHARS + 200,
+              "%d 字" % len(truncated))
+    res.check("大JSON", "clip=False 保留全文（展示/存文件路径）", len(full) == len(big_raw),
+              "%d 字" % len(full))
+
+    # 落盘：.json 必须写成**合法且完整**的 JSON（旧实现落盘带转义的非法 JSON）
+    saved = mod._materialize_content(big_escaped, "nvd.json")
+    ok_saved = False
+    try:
+        obj2 = json.loads(saved)
+        ok_saved = len(obj2.get("vulnerabilities") or []) == 60
+    except Exception:
+        ok_saved = False
+    res.check("大JSON", "存 .json 时写成合法且完整 JSON（可被程序解析）", ok_saved, "%d 字" % len(saved))
+    res.check("大JSON", "非 .json 文件名不改写内容",
+              mod._materialize_content(big_raw, "note.md") == big_raw, "")
+
+    # ---------- 9. 参数规范化 / 工具集完整性 ----------
     from harness import Bridge as _B
     b = mod.ScraplingBridge()
     bx = _B(mod, b)

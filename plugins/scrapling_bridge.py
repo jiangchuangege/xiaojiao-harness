@@ -460,6 +460,28 @@ def _unescape_md_json(s: str) -> str:
     return re.sub(r'\\([^"\\/bfnrtu])', r'\1', s)
 
 
+def _materialize_content(text: str, filename: str = "") -> str:
+    """存盘前的内容加工：`.json` 文件名 → 写成**合法且美化**的 JSON。
+
+    真实案例：抓 NVD 接口存成 `nvd.json`，落盘内容带着 Markdown 转义（`NVD\\_CVE`），
+    用 `json.load` 直接报 `Invalid \\escape` —— 用户看着是 .json 文件却解析不了。
+    这里做一次「去转义 → 解析 → 美化」，解析不了就原样返回（不破坏非 JSON 内容）。
+    """
+    s = text or ""
+    if not filename.lower().endswith(".json"):
+        return text
+    raw = s.strip()
+    if not raw or raw[0] not in "[{":
+        return text
+    for cand in (raw, _unescape_md_json(raw)):
+        try:
+            obj = json.loads(cand)
+            return json.dumps(obj, ensure_ascii=False, indent=2)
+        except Exception:
+            continue
+    return text
+
+
 def _shape_content(text: str) -> str:
     """把抓到的正文整理成"人看得下去"的样子（JSON 自动美化 + 智能截断）。
 
@@ -1577,7 +1599,7 @@ class MCPClient:
             self.last_error = "Scrapling 初始化失败: %s" % sanitize(e)[:120]
             return False
 
-    def call_tool(self, name: str, args: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    def call_tool(self, name: str, args: Dict[str, Any], timeout: float, clip: bool = True) -> Dict[str, Any]:
         """调用 Scrapling 工具（MCP 或 inproc），返回统一 dict。错误统一转中文可读。"""
         args = _adapt_args(name, args, default_timeout=self.cfg.timeout)   # 白名单过滤 + timeout 单位换算
         if not self.ensure():
@@ -1585,9 +1607,9 @@ class MCPClient:
                     "error": self.last_error or "Scrapling MCP 未运行，请先执行 scrapling mcp"}
         try:
             if self._mode_actual == "inproc":
-                res = self._call_inproc(name, args, timeout)
+                res = self._call_inproc(name, args, timeout, clip)
             else:
-                res = self._call_mcp(name, args, timeout)
+                res = self._call_mcp(name, args, timeout, clip)
         except TimeoutError as e:
             res = {"status": 0, "url": args.get("url", ""), "content": "", "error": str(e)}
         except Exception as e:
@@ -1598,7 +1620,7 @@ class MCPClient:
             res["error"] = _humanize_error(res["error"])
         return res
 
-    def _call_mcp(self, name: str, args: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    def _call_mcp(self, name: str, args: Dict[str, Any], timeout: float, clip: bool = True) -> Dict[str, Any]:
         res = self._rpc("tools/call", {"name": name, "arguments": args}, timeout=timeout)
         # MCP 工具结果：content 里是文本块（Scrapling 返回 JSON 字符串）
         texts = []
@@ -1624,9 +1646,9 @@ class MCPClient:
             data = json.loads(raw)
         except Exception:
             data = {"status": 0, "url": args.get("url", ""), "content": raw, "error": ""}
-        return self._normalize(data)
+        return self._normalize(data, clip)
 
-    def _call_inproc(self, name: str, args: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    def _call_inproc(self, name: str, args: Dict[str, Any], timeout: float, clip: bool = True) -> Dict[str, Any]:
         srv = self._inproc_server
 
         def _to_dict(model: Any) -> Dict[str, Any]:
@@ -1661,21 +1683,26 @@ class MCPClient:
             items = out if isinstance(out, list) else [out]
             return _handle_screenshot(items)
         if isinstance(out, list):
-            return self._normalize([_to_dict(x) for x in out])
-        return self._normalize(_to_dict(out))
+            return self._normalize([_to_dict(x) for x in out], clip)
+        return self._normalize(_to_dict(out), clip)
 
     # ---------- 结果标准化 ----------
     @staticmethod
-    def _normalize(data: Any) -> Dict[str, Any]:
-        """把 Scrapling 的 {status, content:[str], url} 统一成 {status,url,content,error}。"""
+    def _normalize(data: Any, clip: bool = True) -> Dict[str, Any]:
+        """把 Scrapling 的 {status, content:[str], url} 统一成 {status,url,content,error}。
+
+        clip=False 用于"要展示或要存文件"的路径：**先拿到完整内容**，
+        再交给 fmt_result 做「先美化、后截断」——顺序错了会把大 JSON 截成非法 JSON，
+        既无法美化也无法包成代码块（真实案例：stealthy_fetch 抓 NVD 返回 10023 字）。
+        """
         if isinstance(data, list):
-            items = [MCPClient._normalize_one(x) for x in data]
+            items = [MCPClient._normalize_one(x, clip) for x in data]
             return {"status": 200 if items else 0, "url": "", "content":
                     json.dumps(items, ensure_ascii=False), "error": "", "items": items}
-        return MCPClient._normalize_one(data)
+        return MCPClient._normalize_one(data, clip)
 
     @staticmethod
-    def _normalize_one(x: Any) -> Dict[str, Any]:
+    def _normalize_one(x: Any, clip: bool = True) -> Dict[str, Any]:
         if not isinstance(x, dict):
             return {"status": 0, "url": "", "content": str(x), "error": ""}
         status = x.get("status", 0)
@@ -1690,7 +1717,9 @@ class MCPClient:
         err = x.get("error", "") or ""
         if not err and isinstance(status, int) and status >= 400:
             err = "目标站点返回 HTTP %d" % status
-        return {"status": status, "url": url, "content": clip_content(c), "error": err}
+        # clip=False（展示/存文件路径）→ 保留完整内容，交由 fmt_result「先美化后截断」
+        return {"status": status, "url": url,
+                "content": clip_content(c) if clip else c, "error": err}
 
     def shutdown(self) -> None:
         """退出清理：确保不残留 Scrapling / Playwright 子进程。"""
@@ -1956,15 +1985,19 @@ class ScraplingBridge:
         if _ut > 0:
             args.setdefault("retries", 1)
         _client_to = _bound_client_timeout(tool, _ut, self._cfg.timeout)
-        res = _CLIENT.call_tool(tool, args, timeout=_client_to)
+        res = _CLIENT.call_tool(tool, args, timeout=_client_to, clip=False)   # 展示/存文件：要完整内容
         if res.get("error"):
             return fmt_result(res.get("status", 0), url, res.get("content", ""), res["error"])
         _body = res.get("content", "") or ""
         if save_to:                       # 存文件（长文/连载）
             try:
-                fp = _save_text_file(save_to, _body)
+                # 存 .json 时写入**合法且美化**的 JSON：抓下来的原始响应带着 Markdown 转义（\_ 等），
+                # 直接落盘会得到一个"看起来是 JSON、其实解析不了"的文件（真实验证发现）
+                _to_save = _materialize_content(_body, save_to)
+                fp = _save_text_file(save_to, _to_save)
                 return fmt_result(res.get("status", 0), url,
-                                  "💾 已保存：%s（%d 字）\n\n%s" % (fp, len(_body), _body[:600]), "")
+                                  "💾 已保存：%s（%d 字）\n\n%s"
+                                  % (fp, len(_to_save), _shape_content(_to_save)[:600]), "")
             except OSError as e:
                 return fmt_result(res.get("status", 0), url, _body,
                                   "保存失败（磁盘空间/权限）：%s" % sanitize(e)[:100])
@@ -2253,7 +2286,7 @@ class ScraplingBridge:
             _ut = 0
         if _ut > 0 and tool in _TIMEOUT_MS_TOOLS:
             _ut = _ut / 1000.0          # 浏览器类内部单位是毫秒
-        res = _CLIENT.call_tool(tool, args, timeout=_bound_client_timeout(tool, _ut, self._cfg.timeout))
+        res = _CLIENT.call_tool(tool, args, timeout=_bound_client_timeout(tool, _ut, self._cfg.timeout), clip=False)
         if res.get("error"):
             return fmt_result(res.get("status", 0), args.get("url", ""),
                               res.get("content", ""), _humanize_error(res["error"]))
@@ -2396,7 +2429,7 @@ class ScraplingBridge:
                                 "method": "GET", "timeout": _t}
         if self._cfg.executable_path:
             args["executable_path"] = self._cfg.executable_path
-        res = _CLIENT.call_tool("make_request", args, timeout=_t)
+        res = _CLIENT.call_tool("make_request", args, timeout=_t, clip=False)
         if res.get("error"):
             # 自适应重试：改走浏览器渲染 + 等元素
             args2 = {"url": url, "css_selector": selector, "extraction_type": _EXTRACT_TYPE,
@@ -2404,7 +2437,7 @@ class ScraplingBridge:
                      "timeout": _t}
             if self._cfg.executable_path:
                 args2["executable_path"] = self._cfg.executable_path
-            res = _CLIENT.call_tool("fetch", args2, timeout=_t)
+            res = _CLIENT.call_tool("fetch", args2, timeout=_t, clip=False)
         if res.get("error"):
             return fmt_result(res.get("status", 0), url, "", res["error"])
         # 选择器没匹配到 → 结构化 not_found，绝不"空内容 + 假装成功"
