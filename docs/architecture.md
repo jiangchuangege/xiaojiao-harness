@@ -137,6 +137,20 @@ class XXPlugin:
     def execute(self, tool_name, params):  # 按 name 分发并返回结果
 ```
 
+### 6.1 工具选择四层架构（防止"调错工具 / 乱试 / 漏调"）
+
+模型"选工具不稳"是这套系统最容易翻车的地方，因此**从描述到路由到纠错**分四层兜：
+
+| 层 | 位置 | 做什么 |
+| --- | --- | --- |
+| ① 描述场景化 | 各插件的 `get_tool_descriptions()` | 每条描述必须写「**什么时候用** + 输入 + 输出」；同类工具写明区别（`get` 静态首选 → `fetch` 要渲染 → `stealthy_fetch` 被风控才用；`net_ip` 查自己 vs `get_ip_info` 查指定 IP） |
+| ② 决策树 | `xiaojiao_app._TOOL_RULES` | 【工具选择顺序】八条：网址→抓取链 ｜ 信息→web_search ｜ 画图→archify 工作流 ｜ 漏洞→collect_vulnerabilities ｜ IP→net_ip ｜ 纯聊天→不调工具 ｜ 命令文件 ｜ 兜底 web_search |
+| ③ 关键词路由 | `agent_run` 入口（规则先于模型） | `_looks_like_url()` / `_asks_diagram()` / `detect_vulnerability_query()` / `_asks_net_ip()` 命中就**跳过模型判断**直连工具；画图任务按意图**收窄本轮工具**（只给 `archify_*`） |
+| ④ 调错修正 | 工具循环 | 候选表 `_TOOL_FALLBACK`（`get`→`fetch`→`stealthy_fetch`…）+ `_scrape_failed()` 抓取自动升级 + 同一工具**连续 2 次调错即停止**并如实报错；多步链路有 240 秒时间预算 |
+
+**重名防呆**：工具名必须全局唯一。`_build_tools()` 里内置优先、插件重名**跳过并告警** ——
+重名会让 `_TOOL2PLUGIN` 路由表被覆盖，模型以为调 A 实际执行 B（"调错工具"的典型成因）。
+
 这种形态与主流 Agent tool-calling 的 schema 一致，便于未来扩展为真正的“可调用工具”。当前内置：
 
 - `memory.py` → `save_memory` / `read_memory`（持久化到 `xiaojiao_memory.txt`）
