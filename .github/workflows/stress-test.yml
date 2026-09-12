@@ -1,0 +1,104 @@
+name: 抓取插件压力测试
+
+# 改进 3：定时 + 手动 + 插件变更时自动跑压力测试，通过率 < 95% 直接失败
+on:
+  schedule:
+    # 每天凌晨 3 点（UTC+8）跑一次 = 19:00 UTC
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+    inputs:
+      quick:
+        description: "快速模式（跳过并发/熔断自愈等耗时用例）"
+        type: boolean
+        default: false
+  push:
+    paths:
+      - "plugins/scrapling_bridge.py"
+      - "tests/stress/**"
+      - ".github/workflows/stress-test.yml"
+  pull_request:
+    paths:
+      - "plugins/scrapling_bridge.py"
+      - "tests/stress/**"
+
+jobs:
+  stress:
+    name: 压力测试（${{ github.event_name }}）
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖（抓取栈）
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "scrapling[fetchers]>=0.4.15" "markdownify>=1.0" mcp
+          python -m pip install requests
+
+      - name: 安装浏览器内核（CI 无自备 Chrome）
+        run: python -m playwright install chromium
+        continue-on-error: true
+
+      - name: 生成最小可用配置（CI 无 xiaojiao_control.json）
+        shell: pwsh
+        run: |
+          @'
+          {
+            "scrapling": {
+              "mode": "inproc",
+              "rate_limit": 1.0,
+              "timeout": 60,
+              "max_sessions": 10,
+              "session_ttl": 600,
+              "session_idle": 120,
+              "batch": { "concurrency": 3, "per_domain_limit": 1, "max_retries": 2, "backoff_base": 1.0 }
+            }
+          }
+          '@ | Out-File -Encoding utf8 xiaojiao_control.json
+
+      - name: 运行压力测试（通过率门槛 95%）
+        shell: pwsh
+        run: |
+          $quick = "${{ github.event.inputs.quick }}" -eq "true"
+          $extra = if ($quick) { @("--quick") } else { @() }
+          python tests/stress/run_all.py --json tests/stress/results.json --min-pass-rate 95 @extra
+
+      - name: 上传测试结果（无论成败）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-results-${{ github.run_id }}
+          path: |
+            tests/stress/results.json
+            tests/stress/_metrics.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 结果摘要（写入 Job Summary）
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path tests/stress/results.json) {
+            $r = Get-Content tests/stress/results.json -Raw | ConvertFrom-Json
+            @"
+          ## 抓取插件压力测试结果
+
+          | 指标 | 值 |
+          | --- | --- |
+          | 用例总数 | $($r.total) |
+          | 通过 | $($r.passed) |
+          | 失败 | $($r.failed) |
+          | 跳过 | $($r.skipped) |
+          | **通过率** | **$($r.pass_rate)%** |
+          | 耗时 | $($r.duration_s) 秒 |
+          "@ | Out-File -Encoding utf8 -Append $env:GITHUB_STEP_SUMMARY
+          } else {
+            "⚠️ 未生成 results.json" | Out-File -Encoding utf8 -Append $env:GITHUB_STEP_SUMMARY
+          }

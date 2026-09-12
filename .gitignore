@@ -121,6 +121,9 @@ create_db.py
 
 # ---------- 抓取插件运行时状态（自适应选择器指纹，属本机数据） ----------
 plugins/.scrapling_selectors.json
+# ---------- 压力测试产物（结果 JSON / 指标文件，CI 会作为 artifact 上传） ----------
+tests/stress/results*.json
+tests/stress/_metrics.json
 # ---------- 抓取插件的运行产物 ----------
 books/
 downloads/
