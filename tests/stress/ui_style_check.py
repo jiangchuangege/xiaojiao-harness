@@ -175,7 +175,8 @@ def main() -> int:
         page.wait_for_timeout(400)
         check("漏洞表格已渲染", bool(got) and page.query_selector(".b.wide .tblwrap table") is not None, "")
         if page.query_selector("table"):
-            t = page.evaluate("""() => {
+            def _measure():
+                return page.evaluate("""() => {
                 const wrap=document.querySelector('.tblwrap');
                 const th=document.querySelector('.tblwrap th');
                 const td=document.querySelector('.tblwrap td');
@@ -188,6 +189,14 @@ def main() -> int:
                         bWide:!!b, bWidth:b?b.clientWidth:0, feedWidth:feed?feed.clientWidth:0,
                         shadow:td?cs(td).textShadow:''};
             }""")
+            # 量之前等布局稳定：气泡宽度会随"欢迎卡收起 / 侧栏 / 流式渲染"的收尾动画变化，
+            # 实测同一套代码偶尔量到 545px（动画中间态）→ 假失败。最多重试 3 次。
+            t = _measure()
+            for _ in range(3):
+                if t.get("bWidth", 0) >= 1000:
+                    break
+                page.wait_for_timeout(1000)
+                t = _measure()
             check("表格外面有横向滚动容器", t["hasWrap"] and t["wrapScroll"] == "auto", t["wrapScroll"])
             check("表头/单元格留白足够（≥10px）",
                   t["thPad"].startswith(("1", "2")) and t["tdPad"].startswith(("1", "2")),
@@ -195,14 +204,48 @@ def main() -> int:
             check("短列不折字（nowrap），只有摘要列允许折行",
                   t["thNowrap"] == "nowrap" and t["tdNowrap"] == "nowrap",
                   "th=%s td=%s" % (t["thNowrap"], t["tdNowrap"]))
-            check("带表格的消息占了更宽的容器", t["bWide"] and t["bWidth"] >= 0.85 * t["feedWidth"],
-                  "气泡=%dpx 容器=%dpx" % (t["bWidth"], t["feedWidth"]))
+            # 判据用**绝对宽度**而不是"占容器百分之几"：容器宽度会随侧栏是否展开、
+            # 窗口宽度变化（实测同一套代码 1190 与 1400 都出现过），按比例判会偶发误报。
+            # 真正的不变量是：带表格的气泡走的是"宽气泡"样式（1140px），比普通 820px 宽。
+            check("带表格的消息占了更宽的容器", t["bWide"] and t["bWidth"] >= 1000,
+                  "气泡=%dpx 容器=%dpx 宽气泡=%s" % (t["bWidth"], t["feedWidth"], t["bWide"]))
             check("表格文字无阴影", t["shadow"] in ("none", ""), t["shadow"])
 
         # ---------- 3. <think> 标签不外泄 ----------
         print("\n[3] <think> 标签处理")
         body = page.inner_text("body")
         check("页面上看不到 <think> 标签", "<think>" not in body and "</think>" not in body, "")
+
+        # ---------- 4. 预设下拉 / 提示条位置（真实缺陷：选好的预设名不见了、提示盖住输入区） ----------
+        print("\n[4] 预设下拉与轻提示位置")
+        _ps = page.evaluate("""() => {
+          const el = document.getElementById('presetSel');
+          if (!el) return {missing:true};
+          const r = el.getBoundingClientRect();
+          return {value: el.value, text: (el.selectedOptions[0]||{}).text || '',
+                  options: [...el.options].length, y: Math.round(r.top), h: Math.round(r.height)};
+        }""")
+        check("页面上有「预设」下拉且有可选项", (not _ps.get("missing")) and _ps.get("options", 0) >= 2,
+              str(_ps)[:90])
+        # 下拉里若不是占位项，说明"当前预设"被正确回填了（回填不上就会掉回「🎭 预设」）
+        check("预设下拉能回填当前预设（不是只剩占位项）",
+              _ps.get("text", "").strip() not in ("", "🎭 预设"), str(_ps.get("text"))[:40])
+        # 触发一次 toast，确认它出现在**顶部**、不会压在输入区那排胶囊上
+        _t = page.evaluate("""() => {
+          if (typeof toast === 'function') toast('样式自检：提示条位置',400);
+          const el = document.getElementById('toast');
+          if (!el) return {missing:true};
+          const r = el.getBoundingClientRect();
+          const cmp = document.querySelector('.composer');
+          const c = cmp ? cmp.getBoundingClientRect() : null;
+          return {top: Math.round(r.top), bottom: Math.round(r.bottom),
+                  cmpTop: c ? Math.round(c.top) : -1, vh: window.innerHeight,
+                  overlap: c ? (r.bottom > c.top && r.top < c.bottom) : false};
+        }""")
+        check("轻提示出现在页面上方（不与输入区重叠）",
+              (not _t.get("missing")) and _t.get("top", 999) < _t.get("vh", 0) * 0.5
+              and not _t.get("overlap"), str(_t)[:110])
+
         page.screenshot(path=out_path)
         print("\n  截图：%s" % out_path)
         check("控制台无错误", not errors, str(errors[:2]))

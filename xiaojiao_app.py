@@ -2088,6 +2088,18 @@ def agent_run(user_input, lean=False):
         except Exception as e:
             LOG.debug("忽略异常(%s:%d): %s", __file__, 1520, e)
 
+    # 1b3. 问"现在几点/今天几号" → 直接用真实时间回答，不交给模型
+    #      真实缺陷：这一步原来靠模型自己答，实测它会**编日期**（答"2025 年 1 月 13 日"），
+    #      或者干脆说"我无法获取实时时间"。时间是最不该猜的东西，规则直答最稳。
+    if answer is None and re.search(r"(现在|当前|今天|此刻).{0,4}(几点|时间|日期|几号|星期|礼拜)|"
+                                    r"(几点|几号|星期几|what time|current time)", user_input or "", re.I):
+        _now = datetime.now()
+        _wd = "一二三四五六日"[_now.weekday()]
+        answer = ("🕐 现在是 **%s**（%s，星期%s）\n\n- 北京时间（本机时区）：%s"
+                  % (_now.strftime("%Y-%m-%d %H:%M:%S"), _now.strftime("%A"),
+                     _wd, _now.strftime("%Y-%m-%d %H:%M:%S")))
+        tool_trace.append({"tool": "now", "args": {}, "result": "系统时钟直答"})
+
     # 2. 联网检索（受操控文件 capabilities 控制）
     #    检索词必须先过闸门：整句/功能字一律清洗，清洗后为空就干脆不搜（不再拿"用"去搜百科）。
     info = []
@@ -2545,7 +2557,14 @@ def api_plugin_generate():
 
 @app.route("/api/presets")
 def api_presets():
-    """列出所有预设。"""
+    """列出所有预设。
+
+    `current` 必须回**文件名**：前端的下拉选项 value 就是文件名（`编程助手.json`），
+    而这里原来直接回 `CONTROL["preset"]`（那是**显示名** `编程助手`）—— 名字对不上
+    `sel.value` 就设不进去，下拉于是回落到占位项"🎭 预设"，用户看到的就是
+    "选好的预设名字不见了"。所以这里做一次「显示名 → 文件名」的换算，并额外带上
+    `current_name` 供界面显示。
+    """
     res = []
     for f in _list_preset_files():
         try:
@@ -2554,8 +2573,17 @@ def api_presets():
                         "desc": d.get("desc") or (d.get("role") or "")[:70]})
         except Exception:
             res.append({"name": f[:-5], "file": f, "engine": "?"})
-    cur = CONTROL.get("preset", "")
-    return jsonify({"presets": res, "current": cur})
+    cur = CONTROL.get("preset", "") or ""
+    cur_file = cur if cur.endswith(".json") else ""
+    cur_name = ""
+    for p in res:
+        if cur_file and p["file"] == cur_file:
+            cur_name = p["name"]
+            break
+        if not cur_file and cur and p["name"] == cur:
+            cur_file, cur_name = p["file"], p["name"]
+            break
+    return jsonify({"presets": res, "current": cur_file, "current_name": cur_name})
 
 
 @app.route("/api/presets", methods=["POST"])
@@ -3914,10 +3942,12 @@ HTML = r"""<!DOCTYPE html>
   .welcome .chip{background:#141a26;border:1px solid #262d3d;color:#cbd0dc;border-radius:12px;
                  padding:10px 14px;font-size:13px;cursor:pointer;transition:.15s}
   .welcome .chip:hover{background:#1c2432;border-color:#4f46e5;color:#fff;transform:translateY(-1px)}
-  /* 轻提示（toast） */
-  #toast{position:fixed;left:50%;bottom:120px;transform:translateX(-50%) translateY(12px);opacity:0;
+  /* 轻提示（toast）—— 放在**顶部居中**：原来 bottom:120px 正好压在输入区那排
+     「预设 / 模型 / 工具」胶囊上，弹提示时把用户正在点的下拉盖住，看着像"字没了"。 */
+  #toast{position:fixed;left:50%;top:16px;transform:translateX(-50%) translateY(-10px);opacity:0;
          background:#1b2231;border:1px solid #3a4560;color:#e8ebf3;padding:10px 16px;border-radius:12px;
-         font-size:13px;z-index:60;pointer-events:none;transition:.2s}
+         font-size:13px;z-index:90;pointer-events:none;transition:.2s;max-width:70vw;
+         box-shadow:0 10px 30px rgba(0,0,0,.35)}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   input,textarea,select{background:#0f1117;border:1px solid #2a3140;color:#e6e8ee;border-radius:10px;padding:11px 14px;font-size:14px;outline:none;width:100%;font-family:inherit}
   input:focus,textarea:focus,select:focus{border-color:#4f46e5}
@@ -4400,16 +4430,19 @@ function toast(msg,ms){let t=document.getElementById('toast');
   if(!t){t=document.createElement('div');t.id='toast';document.body.appendChild(t);}
   t.textContent=msg;t.classList.add('show');clearTimeout(t._tm);
   t._tm=setTimeout(()=>t.classList.remove('show'),ms||2600);}
-function fillPresetSelect(list,current){
+function fillPresetSelect(list,current,currentName){
   const sel=document.getElementById('presetSel');if(!sel)return;
   sel.innerHTML='<option value="">🎭 预设</option>'+(list||[]).map(p=>'<option value="'+esc(p.file)+'">🎭 '+esc(p.name)+'</option>').join('');
-  if(current)sel.value=current;
+  if(current){sel.value=current;}
+  // 名字也匹配一次：万一后端只给到"显示名"（老接口/自定义预设），别让下拉掉回占位项
+  if(!sel.value&&currentName){const hit=(list||[]).find(p=>p.name===currentName);if(hit)sel.value=hit.file;}
+  if(!sel.value){const hit=(list||[]).find(p=>p.name===current);if(hit)sel.value=hit.file;}
 }
 function loadPresets(){try{fetch('/api/presets').then(r=>r.json()).then(d=>{
   window._presets=d.presets||[];
-  fillPresetSelect(window._presets,d.current||'');
+  fillPresetSelect(window._presets,d.current||'',d.current_name||'');
   const h=document.getElementById('cmpHint');
-  if(h&&d.current)h.textContent='当前预设：'+d.current+' · 联网检索 · 抓取网页 · 查 NVD 漏洞 · 写文件';
+  if(h&&(d.current_name||d.current))h.textContent='当前预设：'+(d.current_name||d.current)+' · 联网检索 · 抓取网页 · 查 NVD 漏洞 · 写文件';
   loadPresetCards();
 }).catch(()=>{});}catch(e){}}
 function _afterPreset(d,file){

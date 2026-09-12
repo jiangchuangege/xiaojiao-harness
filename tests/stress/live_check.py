@@ -163,8 +163,15 @@ def main() -> int:
         real = [s for s in softs if s and "未收录" not in s]
         check("受影响软件每行都有交代（真名或「未收录」标注），不出现裸 n/a",
               len(softs) == 5 and all(s and s != "n/a" for s in softs), str(softs)[:70])
-        check("至少 1 行拿到真实软件名（NVD 全未收录时才可能为 0）", len(real) >= 1,
-              "有名字的行=%d/5" % len(real))
+        # 这一条**不能当硬门槛**：NVD 当天新发布的 CVE 常常整批都没收录 CPE
+        # （实测出现过 5/5 全是「(NVD 未收录产品配置)」）。有名字就顺带验证
+        # "CPE 被翻成人话"，没有就如实说明是数据侧的事，不算失败。
+        if real:
+            check("有 CPE 的行被翻成可读软件名（不是裸 cpe:2.3…）",
+                  not any(s.startswith("cpe:") for s in real), str(real)[:70])
+        else:
+            print("  ℹ️ 本次 5 行的 NVD 记录都没收录 CPE（数据侧）→ 跳过「软件名可读性」"
+                  "（该逻辑在离线用例另有覆盖：CPE→人话）")
     else:
         check("用例 2 可执行", False, "HTTP %s" % code)
 
