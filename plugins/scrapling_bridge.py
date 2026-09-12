@@ -87,6 +87,9 @@ ROBOTS_TIMEOUT: float = 8.0             # robots.txt 拉取超时（秒）
 ROBOTS_MAX_BYTES: int = 256 * 1024      # robots.txt 最大读取字节（防超大文件）
 ROBOTS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+# 抓到的 JSON 展示上限：超过就美化后折叠（避免把几十 KB 压缩 JSON 糊满聊天窗）
+JSON_DISPLAY_LINES: int = 120
+JSON_DISPLAY_CHARS: int = 3500
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SELECTOR_STORE = os.path.join(SCRIPT_DIR, ".scrapling_selectors.json")
 CONTROL_FILE = os.path.join(os.path.dirname(SCRIPT_DIR), "xiaojiao_control.json")
@@ -327,12 +330,57 @@ def normalize_markdown(s: str) -> str:
     return s
 
 
+def _unescape_md_json(s: str) -> str:
+    """去掉 Markdown 转换给 JSON 加的转义反斜杠（`\\_` `\\*` `\\[` …）。
+
+    为什么：extraction_type=markdown 时，markdownify 会把 `_` `*` `[` 等转义成 `\\_` `\\*`，
+    于是原本合法的 JSON 变成 `"NVD\\_CVE"` 这种**非法 JSON**，导致后续美化/解析全部失效。
+    这里只清理"JSON 里本来就不合法"的转义（保留 \\" \\\\ \\/ \\b \\f \\n \\r \\t \\uXXXX）。
+    """
+    return re.sub(r'\\([^"\\/bfnrtu])', r'\1', s)
+
+
+def _shape_content(text: str) -> str:
+    """把抓到的正文整理成"人看得下去"的样子（JSON 自动美化 + 智能截断）。
+
+    为什么需要：直接抓 JSON API 时，原始响应是一整行几十 KB 的压缩 JSON，
+    塞进聊天窗就是一大坨乱码般的文字（真实用户反馈："这咋看这么乱"）。
+    这里统一做：美化缩进 → 超长按行截断 → 明确告知剩余内容怎么拿。
+    """
+    s = (text or "").strip()
+    if not s or s[0] not in "[{":
+        return text
+    obj = None
+    for cand in (s, _unescape_md_json(s)):
+        try:
+            obj = json.loads(cand)
+            break
+        except Exception:
+            continue
+    if obj is None:
+        return text                      # 不是合法 JSON（或已被截断）→ 原样返回
+    try:
+        pretty = json.dumps(obj, ensure_ascii=False, indent=2)
+    except Exception:
+        return text
+    lines = pretty.splitlines()
+    if len(pretty) <= JSON_DISPLAY_CHARS and len(lines) <= JSON_DISPLAY_LINES:
+        return pretty
+    keep = lines[:JSON_DISPLAY_LINES]
+    out = "\n".join(keep)
+    if len(out) > JSON_DISPLAY_CHARS:
+        out = out[:JSON_DISPLAY_CHARS].rsplit("\n", 1)[0]
+    return ("%s\n\n… ⋯ 内容较长已折叠显示（共 %d 行 / %d 字符）\n"
+            "· 想看完整内容：说「存成文件」或加参数 save_to=xxx.json\n"
+            "· 只想看某个字段：告诉小焦具体要哪些（例如「只列 id 和 baseScore」）" % (out, len(lines), len(pretty)))
+
+
 def fmt_result(status: Any, url: str, content: str = "", error: str = "") -> str:
     """统一返回结构（字符串 JSON，交给小焦展示）。content 默认 Markdown。"""
     payload = {
         "status": int(status) if isinstance(status, (int, float, str)) and str(status).isdigit() else status,
         "url": url or "",
-        "content": clip_content(content),
+        "content": clip_content(_shape_content(content)),
         "error": error or "",
     }
     try:

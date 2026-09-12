@@ -1135,6 +1135,32 @@ def _auto_outline(body: str, limit: int = 6) -> str:
     return "\n".join(lines[:limit])
 
 
+def _fence_body(text: str) -> str:
+    """按内容类型给抓取正文套上合适的展示格式。
+
+    JSON → ```json 代码块（前端渲染成带"复制"按钮、限高滚动的代码框）
+    含 ``` 的文本 → 原样（避免嵌套围栏把后面的内容吃掉）
+    其它（Markdown/HTML→MD）→ 原样，交给 Markdown 渲染
+    """
+    s = (text or "").strip()
+    if not s:
+        return s
+    if "```" in s:
+        return s
+    if s[0] in "[{":
+        for cand in (s, re.sub(r'\\([^"\\/bfnrtu])', r'\1', s)):   # 兼容 Markdown 转义过的 JSON
+            try:
+                json.loads(cand)
+                return "```json\n" + cand + "\n```"
+            except Exception:
+                continue
+        # 美化后被折叠的 JSON（尾部带了"已折叠"说明，严格解析必然失败）→ 首行是 { 或 [ 就当 JSON 展示
+        _first = (s.splitlines() or [""])[0].strip()
+        if _first in ("{", "["):
+            return "```json\n" + s + "\n```"
+    return s
+
+
 def _explain_content(text: str, url: str = "") -> str:
     """让大脑对抓到的内容做**逐条解读**，帮用户快速看懂含义、快速上手。
 
@@ -1350,7 +1376,7 @@ def agent_run(user_input, lean=False):
                             _lines.append(_h + "\n\n⚠️ " + str(_it["error"]))
                             continue
                         _c = (_it.get("content") or "")[:1500]
-                        _lines.append(_h + "\n\n" + _c)
+                        _lines.append(_h + "\n\n" + _fence_body(_c))
                         if _idx < 3:                          # 逐条解读（限前 3 条，避免过慢）
                             _e = _explain_content(_c, _it.get("url", ""))
                             if _e:
@@ -1358,7 +1384,8 @@ def agent_run(user_input, lean=False):
                     answer = "🌐 批量抓取完成\n\n" + "\n\n---\n\n".join(_lines)
                 else:                                         # 单页：正文 + 逐条解读
                     answer = "🌐 **%s** · HTTP %s\n\n%s" % (
-                        _jd.get("url", ""), _jd.get("status", ""), _body[:4000] or "(页面无正文)")
+                        _jd.get("url", ""), _jd.get("status", ""),
+                        _fence_body(_body[:4000]) or "(页面无正文)")
                     _exp = _explain_content(_body, _jd.get("url", ""))
                     if _exp:
                         answer += "\n\n---\n\n📖 **小焦解读**\n\n" + _exp
@@ -2791,6 +2818,10 @@ HTML = r"""<!DOCTYPE html>
   .cp:hover{background:#161b22;color:#e6edf3}
   .lang.python,.lang.py{color:#6e7681}.lang.js,.lang.javascript{color:#6e7681}
   .lang.bash,.lang.sh{color:#6e7681}.lang.html,.lang.css{color:#6e7681}.lang.json{color:#6e7681}
+  /* JSON / 长文本块：限高 + 纵向滚动，避免一大坨内容把聊天窗糊满 */
+  .codebox.lang-json pre.code,.codebox.lang-text pre.code{max-height:380px;overflow-y:auto}
+  .codebox.lang-json pre.code::-webkit-scrollbar,.codebox.lang-text pre.code::-webkit-scrollbar{width:6px}
+  .codebox.lang-json pre.code::-webkit-scrollbar-thumb,.codebox.lang-text pre.code::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
   .lang.cpp,.lang.c{color:#6e7681}.lang.java{color:#6e7681}.lang.sql{color:#6e7681}
   .cp{background:#1f2533;border:1px solid #2a3140;color:#cbd0dc;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer}
   .cp:hover{background:#2a3140}
@@ -3127,7 +3158,7 @@ const KW={python:['def','import','from','print','class','return','if','else','fo
 function hl(s,lang){const kw=KW[lang]||[];let r=s;kw.forEach(k=>{r=r.replace(new RegExp('\\b'+k+'\\b','g'),'<span class="kw">'+k+'</span>');});return r;}
 function codeBlock(code,lang){
   const ln=(lang||'code');const safe=esc(code.replace(/\n$/,''));
-  return '<div class="codebox"><div class="codehead"><span class="lang '+esc(ln)+'">'+esc(ln)+'</span><button class="cp" onclick="copyCode(this)">⧉ 复制</button></div><pre class="code"><code>'+safe+'</code></pre></div>';
+  return '<div class="codebox lang-'+esc(ln)+'"><div class="codehead"><span class="lang '+esc(ln)+'">'+esc(ln)+'</span><button class="cp" onclick="copyCode(this)">⧉ 复制</button></div><pre class="code"><code>'+safe+'</code></pre></div>';
 }
 function copyCode(btn){const pre=btn.closest('.codebox').querySelector('code');const t=pre.innerText;
   navigator.clipboard.writeText(t).then(()=>{btn.textContent='✓ 已复制';setTimeout(()=>btn.textContent='⧉ 复制',1200);}).catch(()=>{});}
