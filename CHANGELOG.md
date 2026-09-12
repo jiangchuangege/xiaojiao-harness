@@ -7,6 +7,7 @@
 **🕷️ 网页抓取能力 + 🧠 小脑成为必需项 + 🛠️ 安装器分级与体验修复。**
 
 ### Added
+- ⚡ **批量并发可配置（BatchConfig）**：原来批量是串行的，3 个域名也要排队；现在拆成**跨域并发**（`batch.concurrency`，默认 3）与**同域闸门**（`batch.per_domain_limit`，默认 1，永不并发打同一个站），外加 `rate_limit` / `max_retries` / `backoff_base`。实测 3 个不同域名 **6.20s → 0.92s（提速 85%）**；同域实测最大并发仍为 1。非法配置（如 `concurrency=0`）**不静默忽略**，批量工具直接返回中文错误。复测 **18/18 通过**。
 - 📊 **指标与观测（MetricsCollector）**：每次工具调用自动记录 `calls / success / fail / total_latency / avg_latency / max_latency / circuit_breaks / last_error`，三种取法：`GET /metrics`（Prometheus 文本，可直接抓取）、`GET /api/scrapling/metrics`（JSON，含活跃会话明细与熔断状态）、`logs/scrapling_metrics.json`（落盘）。安全拦截（SSRF/robots）不计失败；错误信息**脱敏后**入库。实测 **17/17 通过**，`/metrics` 线上返回 200。
 - 🔒 **`sanitize()` 脱敏补强**：原来只认 `key=value` 形式，**裸凭据会原样泄露**（指标自测发现 `sk-xxx` 未被抹掉）。现在额外覆盖 `sk-…` / `ghp_…` / `AKIA…` / `xox…` / JWT / `password=`，日志与指标一律打码。
 - 🧹 **会话自动回收（SessionManager）**：`open_session` 每开一次就真起一个浏览器，忘了 `close_session` 会一直占内存。现在三条规则任一命中即自动回收并真关闭：**TTL**（`session_ttl`，默认 30 分钟）/ **空闲**（`session_idle`，默认 5 分钟）/ **上限**（`max_sessions`，默认 20，超出踢最久未用 LRU）；后台线程每 60 秒巡检；配置非法（0/负数/非数字）回退默认并中文告警。实测 **10/10 通过**（LRU、TTL、空闲、真实会话回收、用户主动关闭从回收表移除）。

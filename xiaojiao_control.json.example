@@ -40,7 +40,16 @@
     "_会话回收": "开一次会话就真起一个浏览器，忘了关会一直占内存 —— 下面三条规则任一命中即自动回收",
     "max_sessions": 20,                              "//max_sessions": "同时最多保留几个会话；超出时踢掉最久未使用的（LRU）",
     "session_ttl": 1800,                             "//session_ttl": "单个会话最长存活秒数（默认 30 分钟，到期强制回收）",
-    "session_idle": 300,                             "//session_idle": "空闲多少秒没用就回收（默认 5 分钟）"
+    "session_idle": 300,                             "//session_idle": "空闲多少秒没用就回收（默认 5 分钟）",
+
+    "_批量并发": "不同域名可以同时抓（快），同一个域名永远不并发打（礼貌）；非法值会让批量工具直接报中文错误",
+    "batch": {
+      "concurrency": 3,                              "//concurrency": "跨域同时抓几个（≥1，实测 3 个域可从 6.2s 降到 0.9s）",
+      "per_domain_limit": 1,                         "//per_domain_limit": "同一域名同时最多几个请求（默认 1=串行，别把人家打挂）",
+      "rate_limit": 1.0,                             "//rate_limit": "同域最小间隔（秒）",
+      "max_retries": 3,                              "//max_retries": "429/失败重试次数（0~10）",
+      "backoff_base": 1.0,                           "//backoff_base": "退避基数（秒）：1→2→4→8"
+    }
   },
 
   "capabilities": {

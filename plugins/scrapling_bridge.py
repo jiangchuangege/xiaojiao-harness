@@ -107,6 +107,95 @@ _DL_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 
+# ---------- 批量并发（改进 4）默认值 ----------
+DEFAULT_BATCH_CONCURRENCY: int = 3      # 跨域同时抓几个
+DEFAULT_PER_DOMAIN_LIMIT: int = 1       # 同一域名同时最多几个请求（防把人家打挂）
+
+
+@dataclass
+class BatchConfig:
+    """批量抓取的可配置策略（改进 4）。
+
+    设计意图：原来的批量是**串行**的（1 个 URL 抓完再下一个），4 个域名也要 4 秒起步；
+    但直接放开并发又容易把单个站点打挂。所以拆成两个维度：
+      · `concurrency`      —— **跨域**并发上限（不同域名可以同时抓）
+      · `per_domain_limit` —— **同域**并发上限（默认 1，永远不并发打同一个站）
+    再加 `rate_limit`（同域最小间隔秒）与 `max_retries` / `backoff_base`（429 指数退避）。
+
+    配置来源：xiaojiao_control.json → scrapling.batch {...}，或环境变量
+    `XIAOJIAO_SCRAPLING_BATCH_CONCURRENCY` / `_PER_DOMAIN_LIMIT` / `_BATCH_RETRIES` / `_BATCH_BACKOFF`。
+    非法值（如 concurrency=0）→ **不静默忽略**：记中文错误并在批量工具里明确返回可读错误。
+    """
+    concurrency: int = DEFAULT_BATCH_CONCURRENCY
+    rate_limit: float = DEFAULT_RATE_LIMIT
+    per_domain_limit: int = DEFAULT_PER_DOMAIN_LIMIT
+    max_retries: int = BULK_MAX_RETRIES
+    backoff_base: float = BULK_BACKOFF_BASE
+    error: str = ""                     # 非空表示配置非法（中文原因）
+
+    @staticmethod
+    def load(scrapling_section: Dict[str, Any], base_rate: float) -> "BatchConfig":
+        cfg = BatchConfig(rate_limit=base_rate)
+        raw = (scrapling_section or {}).get("batch") or {}
+        if isinstance(raw, dict):
+            for k in ("concurrency", "per_domain_limit", "max_retries"):
+                if raw.get(k) is not None:
+                    try:
+                        setattr(cfg, k, int(raw[k]))
+                    except Exception:
+                        cfg.error = "batch.%s 必须是整数（收到 %r）" % (k, raw[k])
+            for k in ("rate_limit", "backoff_base"):
+                if raw.get(k) is not None:
+                    try:
+                        setattr(cfg, k, float(raw[k]))
+                    except Exception:
+                        cfg.error = "batch.%s 必须是数字（收到 %r）" % (k, raw[k])
+        envs = {"XIAOJIAO_SCRAPLING_BATCH_CONCURRENCY": ("concurrency", int),
+                "XIAOJIAO_SCRAPLING_BATCH_PER_DOMAIN": ("per_domain_limit", int),
+                "XIAOJIAO_SCRAPLING_BATCH_RETRIES": ("max_retries", int),
+                "XIAOJIAO_SCRAPLING_BATCH_BACKOFF": ("backoff_base", float)}
+        for env_k, (attr, cast) in envs.items():
+            v = os.environ.get(env_k)
+            if v:
+                try:
+                    setattr(cfg, attr, cast(float(v)))
+                except Exception:
+                    cfg.error = "%s 环境变量不是数字（收到 %r）" % (env_k, v)
+        cfg.error = cfg.error or cfg.validate()
+        return cfg
+
+    def validate(self) -> str:
+        """返回空串=合法；否则返回中文可读原因。"""
+        if self.concurrency < 1:
+            return "批量并发 concurrency 必须 ≥ 1（当前 %r）—— 请修正 xiaojiao_control.json 的 scrapling.batch 段" % self.concurrency
+        if self.concurrency > BULK_MAX_URLS:
+            return "批量并发 concurrency 不能超过单批上限 %d（当前 %r）" % (BULK_MAX_URLS, self.concurrency)
+        if self.per_domain_limit < 1:
+            return "同域并发 per_domain_limit 必须 ≥ 1（当前 %r）" % self.per_domain_limit
+        if self.rate_limit < 0:
+            return "同域间隔 rate_limit 不能为负（当前 %r）" % self.rate_limit
+        if self.max_retries < 0 or self.max_retries > 10:
+            return "max_retries 必须在 0~10 之间（当前 %r）" % self.max_retries
+        if self.backoff_base < 0:
+            return "backoff_base 不能为负（当前 %r）" % self.backoff_base
+        return ""
+
+    def describe(self) -> str:
+        return ("并发 %d（跨域）/ 同域 %d / 同域间隔 %.1fs / 重试 %d 次 / 退避基数 %.1fs"
+                % (self.concurrency, self.per_domain_limit, self.rate_limit,
+                   self.max_retries, self.backoff_base))
+
+
+def _load_scrapling_section() -> Dict[str, Any]:
+    """读 xiaojiao_control.json 的 scrapling 段（供 BatchConfig 用；读不到返回空 dict）。"""
+    try:
+        with open(CONTROL_FILE, encoding="utf-8") as f:
+            return (json.load(f) or {}).get("scrapling") or {}
+    except Exception as e:
+        logger.warning("读取 scrapling 配置段失败(用默认值): %s", sanitize(e))
+        return {}
+
+
 def _markdown_available() -> bool:
     """探测 markdownify 是否可用（Scrapling 的 markdown 提取依赖它）。
 
@@ -779,11 +868,64 @@ class BatchManager:
       · 代理池轮换：同一代理最多用 5 次，避免代理被封耗尽。
     """
 
-    def __init__(self, cfg: BridgeConfig, guard: SecurityGuard) -> None:
+    def __init__(self, cfg: BridgeConfig, guard: SecurityGuard,
+                 bcfg: Optional["BatchConfig"] = None) -> None:
         self.cfg = cfg
         self.guard = guard
+        self.bcfg = bcfg or BatchConfig(rate_limit=getattr(cfg, "rate_limit", DEFAULT_RATE_LIMIT))
         self._proxy_uses: Dict[str, int] = {}
         self._proxy_lock = threading.Lock()
+        self._domain_sem: Dict[str, threading.Semaphore] = {}
+        self._domain_lock = threading.Lock()
+
+    # ---------- 改进 4：跨域并发 + 同域串行 ----------
+    def _sem_for(self, url: str) -> threading.Semaphore:
+        """取该域名专属的并发闸门（同域最多 per_domain_limit 个同时进行）。"""
+        try:
+            host = urllib.parse.urlparse(url).netloc or "default"
+        except Exception:
+            host = "default"
+        with self._domain_lock:
+            sem = self._domain_sem.get(host)
+            if sem is None:
+                sem = threading.Semaphore(max(1, self.bcfg.per_domain_limit))
+                self._domain_sem[host] = sem
+            return sem
+
+    def run_batch(self, fn: Callable[[str], Dict[str, Any]], urls: Sequence[str]) -> List[Dict[str, Any]]:
+        """并发跑一批 URL，返回**与输入同序**的结果列表。
+
+        并发模型（务实取舍）：
+          · 插件对外的工具接口是**同步**的，而 Scrapling 内核跑在专用事件循环线程里
+            （`AsyncRunner`）。在事件循环线程内部再用 asyncio.Semaphore 反而会自锁，
+            所以这里用「有界线程池 + 每域信号量」实现同样的语义：
+              - 跨域：最多 `concurrency` 个同时进行
+              - 同域：最多 `per_domain_limit` 个同时进行（默认 1 = 串行，礼貌抓取）
+              - 同域最小间隔仍由 SecurityGuard.wait_rate_limit 保证
+        """
+        if not urls:
+            return []
+        n = min(max(1, self.bcfg.concurrency), max(1, len(urls)))
+        results: List[Optional[Dict[str, Any]]] = [None] * len(urls)
+
+        def _wrapped(idx: int, url: str) -> None:
+            with self._sem_for(url):
+                try:
+                    results[idx] = fn(url)
+                except Exception as e:                       # 单个失败不影响其它 URL
+                    results[idx] = {"status": 0, "url": url, "content": "",
+                                    "error": "抓取失败：%s" % sanitize(e)[:120]}
+
+        if n == 1:
+            for i, u in enumerate(urls):
+                _wrapped(i, u)
+        else:
+            with ThreadPoolExecutor(max_workers=n, thread_name_prefix="xj-bulk") as pool:
+                futures = [pool.submit(_wrapped, i, u) for i, u in enumerate(urls)]
+                for f in futures:
+                    f.result()
+        return [r if r is not None else {"status": 0, "url": urls[i], "content": "", "error": "未执行"}
+                for i, r in enumerate(results)]
 
     @staticmethod
     def dedupe(urls: Sequence[str]) -> List[str]:
@@ -1517,7 +1659,11 @@ class MCPClient:
 _RUNNER = AsyncRunner()                # 全局事件循环线程（进程内共享）
 _CONFIG = BridgeConfig.load()
 _GUARD = SecurityGuard(_CONFIG.rate_limit, _CONFIG.allow_robots_skip)
-_BATCH = BatchManager(_CONFIG, _GUARD)
+# 改进 4：批量策略从 scrapling.batch 段读取（也可用环境变量覆盖）
+_BATCH_CFG = BatchConfig.load(_load_scrapling_section(), _CONFIG.rate_limit)
+if _BATCH_CFG.error:
+    logger.error("批量配置不合法：%s（批量工具会返回该错误提示）", _BATCH_CFG.error)
+_BATCH = BatchManager(_CONFIG, _GUARD, _BATCH_CFG)
 _SELECTORS = SelectorManager()
 _BREAKER = CircuitBreaker(_CONFIG.circuit_breaker_threshold, _CONFIG.circuit_breaker_timeout)
 _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="xj-scrapling")
@@ -1970,16 +2116,17 @@ class ScraplingBridge:
         clean, why = self._norm_urls(urls)
         if why:
             return fmt_result(0, "", "", why)
+        # 改进 4：批量配置非法（如 concurrency=0）→ 明确中文报错，不静默降级
+        if _BATCH.bcfg.error:
+            return fmt_result(0, "", "", "批量配置不合法：%s" % _BATCH.bcfg.error)
         allowed, blocked = _BATCH.prepare(clean, ignore_robots)
         items: List[Dict[str, Any]] = list(blocked)
-        used = 0
-        for u in allowed:
-            single = self._bulk_one(base_tool, u, extra, stealth)
-            items.append(single)
-            used += 1
+        if allowed:
+            items.extend(_BATCH.run_batch(lambda u: self._bulk_one(base_tool, u, extra, stealth), allowed))
+        used = len(allowed)
         ok_n = sum(1 for i in items if not i.get("error"))
-        head = "批量%s完成：成功 %d / 共 %d（去重+安全过滤后实际请求 %d）" % (
-            "隐身抓取" if stealth else "抓取", ok_n, len(items), used)
+        head = "批量%s完成：成功 %d / 共 %d（去重+安全过滤后实际请求 %d，%s）" % (
+            "隐身抓取" if stealth else "抓取", ok_n, len(items), used, _BATCH.bcfg.describe())
         # 关键：全部失败时顶层必须是错误（否则调用方/熔断器会当成"成功"，一直死磕坏源）
         if ok_n == 0 and items:
             first = next((i.get("error") for i in items if i.get("error")), "未知原因")
@@ -1990,10 +2137,11 @@ class ScraplingBridge:
                            "error": "", "items": items}, ensure_ascii=False)
 
     def _bulk_one(self, tool: str, url: str, extra: Dict[str, Any], stealth: bool) -> Dict[str, Any]:
-        """单个 URL（批量内）：429 指数退避 1→2→4→8，最多重试 3 次。"""
-        delay = BULK_BACKOFF_BASE
+        """单个 URL（批量内）：429 指数退避（基数/次数来自 BatchConfig，改进 4）。"""
+        delay = max(0.0, _BATCH.bcfg.backoff_base)
+        max_retries = max(0, int(_BATCH.bcfg.max_retries))
         last: Dict[str, Any] = {"status": 0, "url": url, "content": "", "error": "未执行"}
-        for attempt in range(BULK_MAX_RETRIES + 1):
+        for attempt in range(max_retries + 1):
             try:
                 _GUARD.wait_rate_limit(url)
                 if stealth:
@@ -2009,7 +2157,7 @@ class ScraplingBridge:
                     args.setdefault("proxy", proxy)
                 res = _CLIENT.call_tool(tool, args, timeout=self._cfg.timeout)
                 last = MCPClient._normalize_one(res)
-                if last.get("status") == 429 and attempt < BULK_MAX_RETRIES:
+                if last.get("status") == 429 and attempt < max_retries:
                     logger.info("429 退避 %.0fs：%s", delay, url)
                     time.sleep(delay)
                     delay *= 2

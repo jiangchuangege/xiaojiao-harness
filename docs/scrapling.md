@@ -245,8 +245,13 @@ URL 去重 → 逐条限速（≥1s/域）→ 遇 429 指数退避（1→2→4�
 | `max_sessions` | `20` | **会话回收**：同时最多保留几个会话，超出踢掉最久未用的（LRU）|
 | `session_ttl` | `1800` | **会话回收**：单个会话最长存活秒数（到期强制回收）|
 | `session_idle` | `300` | **会话回收**：空闲多少秒没用就回收 |
+| `batch.concurrency` | `3` | **批量并发**：跨域同时抓几个（≥1）|
+| `batch.per_domain_limit` | `1` | **批量并发**：同一域名同时最多几个请求（默认串行，礼貌抓取）|
+| `batch.rate_limit` | `1.0` | **批量并发**：同域最小间隔（秒）|
+| `batch.max_retries` | `3` | **批量并发**：429/失败重试次数（0~10）|
+| `batch.backoff_base` | `1.0` | **批量并发**：退避基数（秒），1→2→4→8 |
 
-环境变量覆盖：`XIAOJIAO_SCRAPLING_MODE` / `_MCP_URL` / `_CHROME` / `_TIMEOUT` / `_RATE` / `_MAX_SESSIONS` / `_SESSION_TTL` / `_SESSION_IDLE`
+环境变量覆盖：`XIAOJIAO_SCRAPLING_MODE` / `_MCP_URL` / `_CHROME` / `_TIMEOUT` / `_RATE` / `_MAX_SESSIONS` / `_SESSION_TTL` / `_SESSION_IDLE` / `_BATCH_CONCURRENCY` / `_BATCH_PER_DOMAIN` / `_BATCH_RETRIES` / `_BATCH_BACKOFF`
 
 ### 5.1 会话回收（为什么必须要有）
 
@@ -272,6 +277,40 @@ flowchart TB
 - 后台线程按需启动（首次登记才起），daemon 线程 + 可 `stop()`，对测试友好
 
 复测结果（真实开会话 + 真关）：LRU 踢最久未用 ✅、TTL 到期回收 ✅、空闲回收且"用过的留下" ✅、真实会话被回收器关掉 ✅、用户主动 close 从回收表移除 ✅ —— 共 **10/10 通过**。
+
+### 5.2 批量并发模型（快，但不失礼）
+
+原来批量是**串行**的：3 个域名也要排队逐个抓；直接放开并发又会把单个站点打挂。所以拆成两个维度：**跨域并发**（快）与**同域闸门**（礼貌）。
+
+```mermaid
+flowchart TB
+    U["bulk_get / bulk_fetch / bulk_stealthy_fetch（3 个 URL）"] --> D["去重 + 安全过滤（SSRF / robots）"]
+    D --> P["有界并发池（concurrency = 3）"]
+    P --> SA["同域闸门 A（per_domain_limit = 1）"]
+    P --> SB["同域闸门 B（per_domain_limit = 1）"]
+    P --> SC["同域闸门 C（per_domain_limit = 1）"]
+    SA --> R["结果按输入顺序回填"]
+    SB --> R
+    SC --> R
+    R --> O["成功 N / 共 M + 策略说明<br/>单个失败只标记该项"]
+```
+
+实测（真实抓 3 个不同域名）：
+
+| 配置 | 耗时 | 提速 |
+| --- | --- | --- |
+| `concurrency=1`（串行） | **6.20s** | — |
+| `concurrency=3`（并发） | **0.92s** | **85%** |
+
+同域仍然**严格串行**（实测最大并发 = 1）并遵守 `rate_limit`；配置非法（如 `concurrency=0`）不静默忽略，批量工具直接返回中文错误：
+
+```text
+批量配置不合法：批量并发 concurrency 必须 ≥ 1（当前 0）—— 请修正 xiaojiao_control.json 的 scrapling.batch 段
+```
+
+> 实现说明（务实取舍）：插件对外是**同步**接口，Scrapling 内核跑在专用事件循环线程里，
+> 在事件循环内部再用 `asyncio.Semaphore` 会自锁 → 改用「**有界线程池 + 每域信号量**」实现等价语义。
+> 复测 **18/18 通过**（7 种非法配置 + 并发提速 + 同域串行 + 顺序保持 + 失败隔离 + 非法配置报错）。
 
 ---
 
