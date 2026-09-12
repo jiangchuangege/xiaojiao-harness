@@ -283,4 +283,21 @@ def run(res: Results) -> Results:
     res.check("资产插件", "插件绝不把异常抛给调用方",
               isinstance(_inst.execute("asset_intel_lookup", {"ips": None}), str), "")
 
+    # ---------- 14. 公网 IP 直答 & 工具铁律（用户实测：模型编 IP / 寒暄也狂调工具） ----------
+    # 实测缺陷 a：问"你现在可以显示IP了吗"，模型嘴上说"我通过 net_ip 查了"，内容却是模板
+    #             占位符（IP 地址: [查询结果]），换个问法甚至**编了一个 IP**（103.152.24.108）。
+    # 实测缺陷 b：一句"你好"云端模型连调 read_file / get_ip / list_files，147 秒才回一句问候。
+    res.check("公网 IP", "「我的公网IP是多少」→ 走 net_ip 直答",
+              app._asks_own_ip("我的公网IP是多少"), "")
+    res.check("公网 IP", "「你现在可以显示IP了吗」也算（这句话原来被模型编了个 IP）",
+              app._asks_own_ip("你现在可以显示IP了吗"), "")
+    res.check("公网 IP", "给了具体 IP 时不抢答（那是要查那个地址）",
+              not app._asks_own_ip("这个 IP 111.17.158.238 是哪里的"), "")
+    res.check("公网 IP", "闲聊里提到 IP 概念也不抢答",
+              not app._asks_own_ip("IP 协议是什么"), "")
+    res.check("工具铁律", "寒暄明确禁止调工具（否则打招呼都会去 read_file/list_files）",
+              "一个工具都不要调" in app._TOOL_RULES and "寒暄" in app._TOOL_RULES, "")
+    res.check("工具铁律", "仍然保留「要做事就调工具」的正向要求",
+              "明确要你做事" in app._TOOL_RULES and "才调用对应工具" in app._TOOL_RULES, "")
+
     return res

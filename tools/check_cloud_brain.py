@@ -40,20 +40,28 @@ def load_brain():
                 "api_key": os.environ.get("LLM_API_KEY", ""), "model": os.environ.get("LLM_MODEL", "")}
 
 
-def probe(base, key, model, n):
-    """打 n 次 chat（+顺带打 n 次 models 作参考），返回 (chat 成功数, models 成功数, 首错, 末次 request id)。"""
+def probe(base, key, model, n, timeout=60):
+    """打 n 次 chat（+顺带打 n 次 models 作参考）。
+
+    返回 (chat 成功数, models 成功数, 首错, 末次 request id, 401/403 次数, 超时次数)。
+    **区分"被拒"和"太慢"**：实测这家慢起来一次要 100 秒（agnes-2.0-flash 冷启动到 103s），
+    把超时也算成"Key 被拒"会给出完全错误的结论。
+    """
     hdr = {"Content-Type": "application/json"}
     if key:
         hdr["Authorization"] = "Bearer " + key
-    ok_c = ok_m = 0
+    ok_c = ok_m = denied = timed_out = 0
     first_err, last_rid = "", ""
     for _ in range(n):
         try:
             r2 = requests.post(base + "/chat/completions", headers=hdr,
                                json={"model": model, "messages": [{"role": "user", "content": "只回两个字：在的"}],
-                                     "max_tokens": 16}, timeout=45)
-            ok_c += r2.status_code == 200
-            if r2.status_code != 200:
+                                     "max_tokens": 16}, timeout=timeout)
+            if r2.status_code == 200:
+                ok_c += 1
+            else:
+                if r2.status_code in (401, 403):
+                    denied += 1
                 if not first_err:
                     first_err = "POST /chat/completions -> HTTP %s %s" % (r2.status_code, r2.text[:140])
                 _m = r2.text
@@ -61,6 +69,10 @@ def probe(base, key, model, n):
                 _rid = _re.search(r"request id:\s*([A-Za-z0-9]+)", _m)
                 if _rid:
                     last_rid = _rid.group(1)
+        except requests.exceptions.Timeout:
+            timed_out += 1
+            if not first_err:
+                first_err = "POST /chat/completions -> 超时（%ds 内没返回）" % timeout
         except Exception as e:
             if not first_err:
                 first_err = "POST /chat/completions -> %s: %s" % (type(e).__name__, str(e)[:100])
@@ -69,7 +81,7 @@ def probe(base, key, model, n):
         except Exception:
             pass
         time.sleep(0.5)
-    return ok_c, ok_m, first_err, last_rid
+    return ok_c, ok_m, first_err, last_rid, denied, timed_out
 
 
 def main():
@@ -97,11 +109,13 @@ def main():
         print("\n❌ Key 前后有空白字符（复制时带进来的），请删掉。")
         return 2
     n = max(1, min(args.n, 30))
-    print("\n  各打 %d 次（约 %d 秒）…" % (n, int(n * 1.2)))
-    ok_c, ok_m, first_err, rid = probe(base, key, model, n)
+    print("\n  各打 %d 次（单次最长等 60 秒；这家慢起来一次要 100 秒以上）…" % n)
+    ok_c, ok_m, first_err, rid, denied, timed_out = probe(base, key, model, n)
     print("\n  结果：")
     print("    POST /chat/completions  %d/%d 成功   ← 这条才算数" % (ok_c, n))
     print("    GET  /models            %d/%d 成功   ← 仅参考（空 Key 有时也能 200，别拿它下结论）" % (ok_m, n))
+    if denied or timed_out:
+        print("    其中：被拒 %d 次 ｜ 超时 %d 次" % (denied, timed_out))
     if first_err:
         print("    首个错误：", first_err.replace("\n", " ")[:170])
     if rid:
@@ -110,7 +124,12 @@ def main():
     if ok_c == n:
         print("    ✅ 云端大脑可用（chat 全通）。")
     elif ok_c > 0:
-        print("    ⚠️ 时通时不通（%d/%d）：网关偶发拒签。小焦已内置退避重试 + 本地大脑兜底。" % (ok_c, n))
+        print("    ⚠️ 时通时不通（%d/%d）：网关偶发拒签/偶发变慢。小焦已内置退避重试 + 本地大脑兜底。"
+              % (ok_c, n))
+    elif timed_out and not denied:
+        print("    ⚠️ chat **全超时**（%d/%d，没有一次被拒）——**Key 是好的**，是对方响应太慢"
+              "（实测 agnes-2.0-flash 冷启动能到 103 秒）。换个更快的模型（agnes-2.5-flash）"
+              "或稍后再试；期间小焦会自动用本地大脑顶着。" % (timed_out, n))
     else:
         print("    ❌ chat **一次都没通** —— 这**不是**偶发，是这把 Key 在服务商那边没被接受。")
         print("       常见原因，按顺序排：")

@@ -214,7 +214,19 @@ class _ToolsPlugin:
             self._tp[d["name"]] = d
     def get_tool_descriptions(self):
         return [{"name": d["name"], "description": d["description"],
+                 "url": d.get("url", ""),
                  "parameters": {"type": "object", "properties": {}}} for d in self._descs]
+
+    def has_url(self, tool_name):
+        """这个工具到底能不能执行（清单里带 url 才算）。
+
+        为什么单独给方法：`get_tool_descriptions()` 返回的是**给模型看的**精简结构，
+        某些工具（旧版清单）里没带 url —— 直接拿它判"能不能执行"会把
+        `plugins/ip.json` 这种**带 url 的正常插件**也误杀（这个坑我踩过：修幻影工具时
+        把 get_ip/get_ip_info 一起过滤掉了）。判据必须看插件**自己的**清单。
+        """
+        d = self._tp.get(tool_name) or {}
+        return bool(d.get("url") or (d.get("manifest") or {}).get("url"))
     def execute(self, tool_name, params):
         d = self._tp.get(tool_name)
         if not d:
@@ -446,9 +458,10 @@ def _build_tools():
                 # 其实**执行不了**（execute 只会回一句"需对应运行时或填写 url"）。原来照样塞给
                 # 模型 → 模型真的去调它，拿到一句废话，用户看到的就是"调用了工具却没结果"
                 # （实测截图上就出现过 `调用 get_time → 需填写 url` 这种徽标）。
-                # 执行不了的就不摆进工具表；设置页里仍然看得到（方便你补 url）。
-                if getattr(p.get("instance"), "_tp", None) and not (
-                        t.get("url") or (t.get("manifest") or {}).get("url")):
+                # 判据问插件自己的清单（has_url）——**不能**看 get_tool_descriptions() 的返回值，
+                # 那里面本来就不带 url，会把 plugins/ip.json 这种正常插件一起误杀。
+                _inst = p.get("instance")
+                if hasattr(_inst, "has_url") and not _inst.has_url(t["name"]):
                     continue
                 _TOOL2PLUGIN[t["name"]] = pname
                 tools.append({"type": "function", "function": {
@@ -881,12 +894,13 @@ def _grounding(answer, sources, question=""):
 
 
 def _grounding_note(g):
-    """给用户看的一句话（不打扰：只有确实没引用时才提示）。"""
-    if not g or g.get("grounded") is None:
-        return ""
-    if g.get("grounded"):
-        return "📎 已引用检索资料（命中资料独有信息 %d 处）" % g.get("matched", 0)
-    return "⚠️ 这条回答基本没用到检索资料（可能是模型自己编的，建议点「查看来源」核对）"
+    """给界面的一句话提示。
+
+    **按用户要求关掉界面提示**（"没必要提示这个"）：这条"⚠️ 这条回答基本没用到检索资料"
+    在正常聊天里也常出现，属于打扰。核对数据仍然照算（`/api/chat` 的 `grounding` 字段、
+    压测报告里都在用），只是不再往聊天界面上挂徽标；要看就点「查看来源」。
+    """
+    return ""
 
 
 # ================== 记忆（自学习） ==================
@@ -1113,26 +1127,36 @@ def _fallback_worthy(status):
 def _llm_post(target, payload, timeout=90, tries=4):
     """往某个大脑目标 POST 一次（带重试）。返回 (response 或 None, 最后一次的状态码, 正文)。
 
-    **为什么必须重试**：实测 Agnes 网关**同一个 Key、同一个请求**连打 10 次，结果是
-    [401, 200, 401, 401, 401, 401, 200, 401, 401, 200] —— 3 成成功、7 成回 "Invalid token"。
-    这是**网关偶发拒签**，不是用户 Key 填错。原来只试一次：运气不好就回一句"模型调用出错"，
-    或者干脆切本地大脑 —— 白白丢掉三成成功率。
+    **为什么必须重试**：实测某家网关**同一个 Key、同一个请求**连打 10 次，结果是
+    [401, 200, 401, 401, …, 200] —— 三成成功、七成回 "Invalid token"。这是网关偶发拒签，
+    不是用户 Key 填错。只试一次：运气不好就回一句"模型调用出错"或直接切本地，白丢成功率。
+
+    **超时不重试**：对方"慢"和"拒"是两回事（实测慢起来一次 100 秒以上）。超时还硬重试
+    只会让用户干等好几分钟 —— 直接交给本地大脑顶上，回答先出来。
     """
     import time as _t
     resp = None
+    status = None
     for i in range(max(1, tries)):
         try:
             resp = requests.post(target["url"], headers=_llm_headers(target), json=payload, timeout=timeout)
-            if resp.status_code == 200:
+            status = resp.status_code
+            if status == 200:
                 _llm_stat(True)
                 _cloud_break_note(target.get("local"), True)     # 本地成功 → 云端熔断计数归零
                 return resp, 200, ""
-            if not _fallback_worthy(resp.status_code):
+            if not _fallback_worthy(status):
                 _llm_stat(False)
-                return resp, resp.status_code, resp.text
+                _cloud_break_note(target.get("local"), False)
+                return resp, status, resp.text
             _llm_stat(False)
+        except requests.exceptions.Timeout:
+            _llm_stat(False)
+            _cloud_break_note(target.get("local"), False)
+            return None, None, "超时（%ds 内没返回；对方慢，不是被拒）" % timeout
         except Exception as e:
             resp = None
+            status = None
             _llm_stat(False)
             if i == tries - 1:
                 _cloud_break_note(target.get("local"), False)
@@ -1142,7 +1166,7 @@ def _llm_post(target, payload, timeout=90, tries=4):
     if resp is None:
         return None, None, "无响应"
     _cloud_break_note(target.get("local"), False)
-    return resp, resp.status_code, resp.text
+    return resp, status, resp.text
 
 
 def _scrub_secret(s):
@@ -1983,7 +2007,10 @@ def _asks_asset_list(text):
 
 
 def _asset_result_text(res):
-    """把资产插件返回的 JSON 取成正文（失败就给一句中文说明）。"""
+    """把工具返回的 JSON/纯文本统一取成正文（失败就给一句中文说明）。
+
+    资产测绘插件与 `net_ip` 都用它：JSON 就取 content/error，纯文本就原样返回。
+    """
     try:
         _j = json.loads(res)
         if isinstance(_j, dict):
@@ -2021,6 +2048,34 @@ def _asset_answer(user_input, vuln_table):
         head = ("⚠️ 资产测绘这一步没返回内容（插件 `plugins/asset_intel.py` 在不在？"
                 "对我说「资产测绘状态」可以看各数据源是否可用）。")
     return head + "\n\n---\n\n**这些漏洞本身（NVD 实时数据）**：\n\n" + vuln_table
+
+
+def _asks_own_ip(text):
+    """是不是在问"我的公网 IP / 本机 IP / 你给我显示 IP"（要直连 net_ip 真查）。
+
+    触发条件三条同时成立：① 提到 IP；② 指向自己/当前/对方；③ **没有给出具体 IP**
+    （用户给了具体 IP 那是要查那个地址，别抢答）。
+    """
+    q = text or ""
+    return bool(re.search(r"(?<![a-z])ip(?![a-z])|ip\s*地址", q, re.I)
+                and re.search(r"(我|我的|本机|自己|当前|这台|这电脑|你)", q)
+                and not re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", q))
+
+
+# 工具铁律：**只在用户真的要你做事时**才调工具。
+# 真实缺陷：原来是"凡是要帮我做实事都必须先调工具"，云端模型于是把寒暄也当"实事"——
+# 实测一句"你好"它连调 read_file / get_ip / read_file / list_files 四个工具，147 秒才回一句问候。
+# 工具是给"做事"用的，不是给聊天用的。（抽成模块常量：可被用例直接断言，不再埋在函数里。）
+_TOOL_RULES = ("\n[工具铁律] 只有当用户**明确要你做事**（写/改文件、建网页、跑命令、查资料、"
+               "读文件、查 IP、抓网页…）时才调用对应工具；"
+               "寒暄、闲聊、概念解释、单纯问答**一个工具都不要调**（别为了打招呼去 read_file / "
+               "list_files / get_ip）；不确定就别调，直接用已有信息回答。"
+               "\n[简洁原则] 回答要极简：只给结果/代码/结论，不要寒暄、不要说【好的我来帮你】、"
+               "不要复述问题、不要多余解释。写代码只输出代码块。"
+               "\n[代码工作流] 写/改代码请这样：① 先 read_file 看相关文件再动手；"
+               "② 新增用 write_file，修改用 edit_file 精准替换；"
+               "③ 改完用 run_command 验证（Python 用 python -c 语法检查、JS 用 node --check、"
+               "或直接运行看结果）；④ 有报错就读出来修复。不要凭空猜测文件内容。")
 
 
 # ================== 智能体 ==================
@@ -2100,6 +2155,21 @@ def agent_run(user_input, lean=False):
                      _wd, _now.strftime("%Y-%m-%d %H:%M:%S")))
         tool_trace.append({"tool": "now", "args": {}, "result": "系统时钟直答"})
 
+    # 1b4. 问"我的公网 IP / 本机 IP / 你给我显示 IP" → 直接调 net_ip 摆出**真实结果**
+    #      真实缺陷（用户实测）：这一步原来交给模型 → 它嘴上说"我通过 net_ip 查了"，
+    #      内容却是模板占位符（`IP 地址: [查询结果]`）；换个问法（"你现在可以显示IP了吗"）
+    #      它甚至**编了一个 IP**（103.152.24.108）。"查出来的东西"最不该由模型转述。
+    #      触发条件：提到 IP ＋ 指向自己/当前 ＋ **没给具体 IP**（给了具体 IP 是要查那个 IP，别抢）。
+    if answer is None and _asks_own_ip(user_input):
+        try:
+            _build_tools()
+            _ipres = _asset_result_text(_tool_result_str(run_tool("net_ip", {}, force=True)))
+            if _ipres and "未知工具" not in _ipres:
+                tool_trace.append({"tool": "net_ip", "args": {}, "result": "公网 IP 查询（插件直答）"})
+                answer = "🌐 **我的公网 IP（net_ip 实测）**\n\n```\n%s\n```" % _ipres.strip()
+        except Exception as e:
+            LOG.debug("忽略异常(%s:%d): %s", __file__, 1560, e)
+
     # 2. 联网检索（受操控文件 capabilities 控制）
     #    检索词必须先过闸门：整句/功能字一律清洗，清洗后为空就干脆不搜（不再拿"用"去搜百科）。
     info = []
@@ -2125,9 +2195,8 @@ def agent_run(user_input, lean=False):
                     % (time.strftime("%Y-%m-%d %H:%M:%S %A"), os.getcwd(), home, desktop, desktop))
         tool_guidance = "\n[工具用法] 写文件/建网站/代码用 write_file(路径用 Windows 绝对路径, 会自动建目录); 查信息/运行命令用 run_command(PowerShell 语法, 不能用并字连接命令要用分号; 不要用 run_command 去写文件)。\n"
         skills = "\n\n[技能插件] " + "\n\n".join(c for _, c in PLUGIN_SKILLS) if PLUGIN_SKILLS else ""
-        skills = tool_guidance + "\n[铁律] 凡是要帮我做实事(写文件/建网页/运行命令/查资料/列文件/读取/打开)，你必须先调用对应工具，不能只把结果或代码直接打在聊天里。" \
-                 + "\n[简洁原则] 回答要极简：只给结果/代码/结论，不要寒暄、不要说【好的我来帮你】、不要复述问题、不要多余解释。写代码只输出代码块。" \
-                 + "\n[代码工作流] 写/改代码请这样：① 先 read_file 看相关文件再动手；② 新增用 write_file，修改用 edit_file 精准替换；③ 改完用 run_command 验证（Python 用 python -c 语法检查、JS 用 node --check、或直接运行看结果）；④ 有报错就读出来修复。不要凭空猜测文件内容。" + skills
+        # 工具铁律 + 简洁原则 + 代码工作流（见模块常量 _TOOL_RULES，用例直接断言它）
+        skills = tool_guidance + _TOOL_RULES + skills
         if lean:
             # 语音精简模式: 短提示, 不背工具/技能, 生成快
             messages = [{"role": "system", "content": (SYSTEM_PROMPT[:240] + "\n[语音对话] 请简短、口语化、直接回答，一两句话；不要调用工具、不要长篇大论、不要列表。")}]
@@ -3422,6 +3491,7 @@ def _cloud_key_problem(base, key, model):
     if key:
         hdr["Authorization"] = "Bearer " + key
     try:
+        # 只等 20 秒：这是给用户"当场反馈"用的探测，不该让"切模型"这个动作卡住半分钟
         r = requests.post(url, headers=hdr, timeout=20,
                           json={"model": model, "messages": [{"role": "user", "content": "在的"}],
                                 "max_tokens": 4})
@@ -3431,6 +3501,10 @@ def _cloud_key_problem(base, key, model):
             return ("这个云端 Key 被服务商拒了（HTTP %s）→ 小焦先用本地大脑顶；"
                     "跑 `python tools/check_cloud_brain.py` 可确诊是哪把 Key 的问题" % r.status_code)
         return "已切到云端大脑 %s，但接口返回 HTTP %s（小焦会先用本地大脑顶）" % (model, r.status_code)
+    except requests.exceptions.Timeout:
+        # 超时 ≠ Key 错：实测这家冷启动能到 100 秒以上，报成"Key 被拒"会把人带偏
+        return ("已切到云端大脑 %s：首次探测 20 秒没返回（对方慢，不是 Key 错）→ "
+                "小焦会先本地大脑顶着，稍后自动再试云端" % model)
     except Exception as e:
         return "云端接口连不上（%s）→ 小焦会先用本地大脑顶" % str(e)[:40]
 
@@ -4628,9 +4702,9 @@ function typeAnswer(text,src,logId,note){
       const full=renderMd(text);
       if(full.indexOf('<table')>=0){bm.classList.add('wide');m.classList.add('widem');}
       bm.innerHTML=full;
-      // 检索引用校验：让用户一眼看出"这条回答到底有没有真读资料"
-      if(note){const g=document.createElement('div');g.className='gnd'+(note.indexOf('⚠️')===0?' bad':'');
-        g.textContent=note;bm.appendChild(g);}
+      // 注：检索引用校验的徽标已按用户要求撤掉（正常聊天里太吵，见过"这条回答基本没用到
+      // 检索资料"的打扰提示）。核对数据仍在 /api/chat 的 grounding 字段里，压测与
+      // 「查看来源」照常使用，所以 note 参数保留但不再渲染。
       const row=document.createElement('div');row.className='msgbot';row.innerHTML=
         '<button onclick="copyMsg(this)">⧉ 复制</button><button class="fb" onclick="fb(this,\''+logId+'\',\'good\')">👍</button>'+
         '<button class="fb" onclick="fb(this,\''+logId+'\',\'bad\')">👎</button>';

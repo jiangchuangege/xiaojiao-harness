@@ -153,12 +153,31 @@ def main() -> int:
             check("代码块内文字无 text-shadow",
                   style["codeShadow"] in ("none", ""), style["codeShadow"])
             check("代码元素无多余内边距", style["codePad"] in ("0px", "0"), style["codePad"])
-            check("语法高亮生效（≥3 个着色片段）", style["toks"] >= 3,
-                  "片段=%d 关键词/字符串=%d" % (style["toks"], style["kw"]))
-            if style["kw"] >= 2:
+            # 高亮是否生效，改成**喂固定样例**给页面自己的高亮函数 —— 不依赖"这次模型
+            # 恰好写了一段够长的代码"（实测偶发只出 1 个片段就假失败）。仍然测的是真函数。
+            _hl = page.evaluate("""() => {
+                const src = 'def add(a, b):\\n    # 求和\\n    return a + b  # 42\\nprint("hi")';
+                const html = (typeof codeBlock === 'function') ? codeBlock(src, 'python') : '';
+                const box = document.createElement('div');
+                box.innerHTML = html;
+                return {toks: box.querySelectorAll('span[class^=tk-]').length,
+                        kw: box.querySelectorAll('.tk-kw,.tk-str,.tk-num,.tk-key').length,
+                        hasKw: box.querySelectorAll('.tk-kw').length > 0};
+            }""")
+            check("语法高亮生效（固定 python 样例≥3 个着色片段）", _hl["toks"] >= 3,
+                  "片段=%d 关键词/字符串=%d" % (_hl["toks"], _hl["kw"]))
+            check("关键字被单独着色（def/return 这类）", _hl["hasKw"], str(_hl)[:70])
+            if _hl["kw"] >= 2:
+                # 同样用固定样例取色：现场答案里可能只有一种成分，会假失败
                 colors = page.evaluate("""() => {
-                    const g=s=>{const el=document.querySelector(s);return el?getComputedStyle(el).color:'';};
-                    return [g('.tk-kw'),g('.tk-str'),g('.tk-num'),g('.tk-key')].filter(Boolean);
+                    const src = 'def add(a, b):\\n    # 求和\\n    return a + b  # 42\\nprint("hi")';
+                    const box = document.createElement('div');
+                    box.innerHTML = (typeof codeBlock === 'function') ? codeBlock(src, 'python') : '';
+                    document.body.appendChild(box);
+                    const g = s => { const el = box.querySelector(s); return el ? getComputedStyle(el).color : ''; };
+                    const out = [g('.tk-kw'), g('.tk-str'), g('.tk-num'), g('.tk-key')].filter(Boolean);
+                    box.remove();
+                    return out;
                 }""")
                 check("不同语法成分颜色确实不同", len(set(colors)) >= 2, str(colors))
         else:
@@ -183,10 +202,11 @@ def main() -> int:
                 const b=document.querySelector('.b.wide');
                 const feed=document.getElementById('feed');
                 const cs=el=>el?getComputedStyle(el):null;
+                const wide=[...document.querySelectorAll('.b.wide')].map(x=>x.clientWidth);
                 return {hasWrap:!!wrap, wrapScroll:wrap?cs(wrap).overflowX:'',
                         thPad:th?cs(th).paddingLeft:'', tdPad:td?cs(td).paddingLeft:'',
                         tdNowrap:td?cs(td).whiteSpace:'', thNowrap:th?cs(th).whiteSpace:'',
-                        bWide:!!b, bWidth:b?b.clientWidth:0, feedWidth:feed?feed.clientWidth:0,
+                        bWide:!!b, bWidth:wide.length?Math.max(...wide):0, feedWidth:feed?feed.clientWidth:0,
                         shadow:td?cs(td).textShadow:''};
             }""")
             # 量之前等布局稳定：气泡宽度会随"欢迎卡收起 / 侧栏 / 流式渲染"的收尾动画变化，
@@ -218,6 +238,13 @@ def main() -> int:
 
         # ---------- 4. 预设下拉 / 提示条位置（真实缺陷：选好的预设名不见了、提示盖住输入区） ----------
         print("\n[4] 预设下拉与轻提示位置")
+        # 先问后端"当前到底套用了哪个预设"：没套用就只验下拉本身可用，
+        # 不要因为"当前没有预设"就把用例判失败（那是用户状态，不是缺陷）。
+        _cur = page.evaluate("""async () => {
+          try { const r = await fetch('/api/presets'); const d = await r.json();
+                return {file: d.current || '', name: d.current_name || '', n: (d.presets||[]).length}; }
+          catch (e) { return {file:'', name:'', n:-1}; }
+        }""")
         _ps = page.evaluate("""() => {
           const el = document.getElementById('presetSel');
           if (!el) return {missing:true};
@@ -227,9 +254,15 @@ def main() -> int:
         }""")
         check("页面上有「预设」下拉且有可选项", (not _ps.get("missing")) and _ps.get("options", 0) >= 2,
               str(_ps)[:90])
-        # 下拉里若不是占位项，说明"当前预设"被正确回填了（回填不上就会掉回「🎭 预设」）
-        check("预设下拉能回填当前预设（不是只剩占位项）",
-              _ps.get("text", "").strip() not in ("", "🎭 预设"), str(_ps.get("text"))[:40])
+        if _cur.get("file"):
+            # 有当前预设时，下拉必须把它回填出来（回填不上就会掉回占位项「🎭 预设」）
+            check("预设下拉能回填当前预设（不是只剩占位项）",
+                  _ps.get("value") == _cur["file"] and _ps.get("text", "").strip() not in ("", "🎭 预设"),
+                  "当前=%s 下拉=%s" % (_cur["file"], _ps.get("text")))
+        else:
+            check("未套用预设时下拉停在占位项（不假报当前预设）",
+                  _ps.get("value") == "" and _ps.get("text", "").strip() == "🎭 预设",
+                  "下拉=%s" % _ps.get("text"))
         # 触发一次 toast，确认它出现在**顶部**、不会压在输入区那排胶囊上
         _t = page.evaluate("""() => {
           if (typeof toast === 'function') toast('样式自检：提示条位置',400);
