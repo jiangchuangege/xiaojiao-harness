@@ -72,7 +72,9 @@ _SEARCH_RULES = (
     "禁止把「用/搜/找/抓/看/搞/请/帮」这类功能字、语气词或整句话当检索词；"
     "② 漏洞/CVE/高危 类问题**优先**调用 collect_vulnerabilities(days=7, severity=\"HIGH\", limit=5)，"
     "不要用新闻搜索代替；"
-    "③ 用户没说清要搜什么时，先反问「请告诉我你要搜索的具体关键词」，绝不用单个字去搜。"
+    "③ 用户没说清要搜什么时，先反问「请告诉我你要搜索的具体关键词」，绝不用单个字去搜；"
+    "④ **检索到的资料必须真读进去**：回答要落在资料的具体内容上（标题、数字、结论、原文措辞），"
+    "不许把资料当摆设、自己另编一套；资料里没有的就直说没有。"
 )
 
 
@@ -795,6 +797,69 @@ def web_search(query, num=6):
             fallback = top
         LOG.info("检索词 %r 结果跑题（覆盖率 %.0f%%），换写法重试", v[:40], _cov * 100)
     return fallback[:num]
+
+
+# ================== 检索引用校验（回答到底有没有"真读"资料） ==================
+# 真实需求：光搜到没用 —— 得看模型有没有把资料读进去。这里用"资料里的**独有**用语"
+# 去回答里找：独有 = 出现在资料但**不在用户问题**里。命中越多，说明越是在照着资料说；
+# 一个都命中不了，多半是自己另编了一套（或者干脆没读），这时前端会标注出来。
+_GROUND_STOP = {
+    "the", "and", "for", "with", "this", "that", "from", "http", "https", "www", "com",
+    "首页", "登录", "注册", "更多", "详情", "相关", "推荐", "广告", "网站", "页面", "内容",
+    "查看", "了解", "点击", "我们", "你们", "他们", "可以", "以下", "关于", "最新", "最近",
+}
+
+
+def _grounding_applies(question, sources, answer):
+    """这条回答需不需要"必须引用资料"？
+
+    写代码/跑命令这类请求本来就不该拿新闻资料去对答案，硬校验只会误报；
+    检索本身就跑题（覆盖率低）时也不能怪模型没读。这两种情况都不给结论。
+    """
+    if not sources:
+        return False
+    _act = re.compile(r"(写|生成|实现|做个|做一个|创建一个|新建|改一下|修复|优化|重构|运行|执行|命令|脚本|代码|函数|类|页面|网页|插件|安装|配置|部署)")
+    if _act.search(question or "") and "```" in (answer or ""):
+        return False
+    try:
+        covs = [_search_relevance(question, s[0], s[2])[1] for s in sources[:5] if len(s) >= 3]
+    except Exception:
+        covs = []
+    if covs and max(covs) < 0.4:
+        return False
+    return True
+
+
+def _grounding(answer, sources, question=""):
+    """判断回答是否真的基于检索资料 → {"matched", "considered", "grounded"}。
+
+    只看"资料里独有"的词（排除问题里已有的），避免"把问题复述一遍"就算读过。
+    不适用（写代码/检索跑题/没有资料）时 grounded=None，前端不显示任何标记。
+    """
+    src_text = " ".join("%s %s" % (s[0], s[2]) for s in (sources or [])[:5] if len(s) >= 3)
+    ans = str(answer or "")
+    if not src_text.strip() or not ans.strip() or not _grounding_applies(question, sources, ans):
+        return {"matched": 0, "considered": 0, "grounded": None}
+    q_toks = set(_query_tokens(question or "") + re.findall(r"[A-Za-z0-9]{2,}", question or ""))
+    lat = {t for t in re.findall(r"[A-Za-z][A-Za-z0-9.+#_-]{3,}", src_text)
+           if t.lower() not in _GROUND_STOP}
+    cjk = {t for t in re.findall(r"[\u4e00-\u9fa5]{2,4}", src_text) if t not in _GROUND_STOP}
+    uniq = [t for t in (lat | cjk) if t not in q_toks and t.lower() not in (x.lower() for x in q_toks)]
+    if not uniq:
+        return {"matched": 0, "considered": 0, "grounded": None}
+    matched = sum(1 for t in uniq if t.lower() in ans.lower())
+    considered = len(uniq)
+    # 命中 2 个以上独有词就算"确实读了资料"（中文 2-gram 噪音大，所以要求 ≥2）
+    return {"matched": matched, "considered": considered, "grounded": matched >= 2}
+
+
+def _grounding_note(g):
+    """给用户看的一句话（不打扰：只有确实没引用时才提示）。"""
+    if not g or g.get("grounded") is None:
+        return ""
+    if g.get("grounded"):
+        return "📎 已引用检索资料（命中资料独有信息 %d 处）" % g.get("matched", 0)
+    return "⚠️ 这条回答基本没用到检索资料（可能是模型自己编的，建议点「查看来源」核对）"
 
 
 # ================== 记忆（自学习） ==================
@@ -2218,7 +2283,11 @@ def api_presets_load():
     CONTROL["preset"] = preset.get("name", file[:-5])
     json.dump(CONTROL, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xiaojiao_control.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     reload_control()  # 热更新内存配置, 无需重启
-    return jsonify({"ok": True, "preset": CONTROL.get("preset"), "role": (CONTROL.get("role") or "")[:60]})
+    # 回给前端足够的信息：前端要用它提示"联网/工具开关"到底变成什么了
+    return jsonify({"ok": True, "preset": CONTROL.get("preset"),
+                    "role": (CONTROL.get("role") or "")[:60],
+                    "capabilities": CAP, "engine": BRAIN_ENGINE,
+                    "temperature": TEMPERATURE, "max_tokens": MAX_TOKENS})
 
 
 @app.route("/api/presets/current")
@@ -2633,6 +2702,11 @@ def api_chat():
             m["content"] = answer_final
     _save_sessions(d)
     log_id = _record_interaction(user_input, answer_final, tool_trace)   # 内置·自动记录
+    # 回答是否真的用上了检索资料（"只搜到不算，读进去才算"）
+    g = _grounding(answer, info, user_input)
+    if g.get("grounded") is False:
+        LOG.warning("回答疑似未引用检索资料（命中 %d / 候选 %d）：问题=%r",
+                    g.get("matched"), g.get("considered"), user_input[:40])
     return jsonify({
         "answer": answer,
         "brain_online": online,
@@ -2642,6 +2716,8 @@ def api_chat():
         "session_id": get_current_session()[0].get("id"),
         "log_id": log_id,
         "sources": [{"title": t, "content": c, "url": u} for t, u, c in info],
+        "grounding": g,
+        "grounding_note": _grounding_note(g),
         "history": _hist_json(),
     })
 
@@ -3304,6 +3380,10 @@ HTML = r"""<!DOCTYPE html>
   .b.wide{max-width:100%}
   .m.widem{max-width:100%}
   .msgbot{display:flex;gap:8px;margin-top:6px;align-items:center;padding-left:2px}
+  /* 检索引用校验标记：绿色=确实读了资料；黄色=疑似没读（自己编的） */
+  .gnd{margin-top:8px;font-size:11px;color:#6ee7a8;background:#0f1d18;border:1px solid #1d3a2c;
+       border-radius:8px;padding:5px 9px;display:inline-block}
+  .gnd.bad{color:#fbbf24;background:#1d1908;border-color:#4a3c12}
   .msgbot button{background:#1f2533;border:1px solid #2a3140;color:#8b93a3;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer}
   .msgbot button:hover{background:#2a3140}
   .msgbot .fb{font-size:14px;padding:2px 8px}
@@ -3319,8 +3399,40 @@ HTML = r"""<!DOCTYPE html>
   .fetchhead .u{color:#8b93a3;font-weight:400}
   .b ul,.b ol{padding-left:20px;margin:6px 0}
   .b h1,.b h2,.b h3{color:#fff;margin:10px 0 6px}
-  footer{padding:12px 20px;background:#11141c;border-top:1px solid #20263a}
+  footer{padding:10px 20px 18px;background:transparent;border-top:none}
   .bar{max-width:880px;margin:0 auto;display:flex;gap:10px}
+  /* 居中输入区（Composer）：像现代 AI 客户端那样收成一张卡片，宽度统一、视觉焦点明确 */
+  .composer{max-width:820px;margin:0 auto;background:#12161f;border:1px solid #262d3d;border-radius:16px;
+            padding:10px 12px 8px;box-shadow:0 8px 28px rgba(0,0,0,.28);transition:border-color .15s}
+  .composer:focus-within{border-color:#4f46e5;box-shadow:0 8px 28px rgba(79,70,229,.18)}
+  .cmp-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  .chip-sel{width:auto;background:#171d29;border:1px solid #2a3140;color:#cbd0dc;border-radius:999px;
+            padding:5px 12px;font-size:12px;cursor:pointer;outline:none}
+  .chip-sel:hover{background:#1e2635;border-color:#3a4560}
+  .chip-btn{background:#171d29;border:1px solid #2a3140;color:#cbd0dc;border-radius:999px;
+            padding:5px 12px;font-size:12px;cursor:pointer}
+  .chip-btn:hover{background:#212a3a;border-color:#405a99}
+  .cmp-input{display:flex;align-items:flex-end;gap:10px}
+  .cmp-input textarea{flex:1;background:transparent;border:none;outline:none;color:#e8ebf3;font-size:15px;
+                      line-height:1.6;resize:none;max-height:220px;padding:8px 4px;font-family:inherit}
+  .cmp-send{flex:0 0 auto;width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#5b5ff5,#7c5cf0);
+            border:none;color:#fff;font-size:16px;cursor:pointer;padding:0}
+  .cmp-send:hover{filter:brightness(1.12)}
+  .cmp-hint{font-size:11px;color:#5f6a7d;margin-top:8px;padding-left:4px;min-height:14px}
+  /* 空状态欢迎卡（居中） */
+  .welcome{max-width:820px;margin:6vh auto 0;text-align:center}
+  .welcome .wl{font-size:30px;font-weight:800;background:linear-gradient(135deg,#8b8ff8,#c4b5fd);
+               -webkit-background-clip:text;background-clip:text;color:transparent;margin-bottom:10px}
+  .welcome .ws{color:#8b93a3;font-size:14px;margin-bottom:22px}
+  .welcome .chips{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  .welcome .chip{background:#141a26;border:1px solid #262d3d;color:#cbd0dc;border-radius:12px;
+                 padding:10px 14px;font-size:13px;cursor:pointer;transition:.15s}
+  .welcome .chip:hover{background:#1c2432;border-color:#4f46e5;color:#fff;transform:translateY(-1px)}
+  /* 轻提示（toast） */
+  #toast{position:fixed;left:50%;bottom:120px;transform:translateX(-50%) translateY(12px);opacity:0;
+         background:#1b2231;border:1px solid #3a4560;color:#e8ebf3;padding:10px 16px;border-radius:12px;
+         font-size:13px;z-index:60;pointer-events:none;transition:.2s}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   input,textarea,select{background:#0f1117;border:1px solid #2a3140;color:#e6e8ee;border-radius:10px;padding:11px 14px;font-size:14px;outline:none;width:100%;font-family:inherit}
   input:focus,textarea:focus,select:focus{border-color:#4f46e5}
   button{background:#4f46e5;color:#fff;border:none;border-radius:10px;padding:11px 22px;font-size:14px;cursor:pointer}
@@ -3464,14 +3576,24 @@ HTML = r"""<!DOCTYPE html>
     <button class="icon-btn" onclick="copyPage()">📄 Session log ⚡</button>
   </div>
 </header>
-<div id="feed"><div class="think">👋 你好，我是小焦。有问题直接问我，我会联网搜索并结合记忆回答。</div></div>
-<footer><div class="bar">
-  <span class="ws-ind" id="wsInd" onclick="toggleAccess()" title="点击：Full access(所有命令直接执行,危险也不询问)/Read-only(每次执行都询问)">🔐 Full access</span>
-  <button class="icon-btn" onclick="openVideo()" title="本地零算力生成视频">🎬</button>
-  <input id="inp" placeholder="向小焦提问…（Enter 发送）" autocomplete="off" onkeydown="if(event.key==='Enter')send()"/>
-  <select id="modelSel" class="iconselect" onchange="selectModel()"></select>
-  <button onclick="send()" title="发送">➤</button>
-</div></footer>
+<div id="feed"></div>
+<footer>
+  <div class="composer" id="composer">
+    <div class="cmp-top">
+      <select id="presetSel" class="chip-sel" onchange="selectPreset(this.value)" title="Agent 预设：人格 + 大脑 + 工具开关，选中即生效"></select>
+      <select id="modelSel" class="chip-sel" onchange="selectModel()" title="当前模型"></select>
+      <span class="ws-ind" id="wsInd" onclick="toggleAccess()" title="点击：Full access(所有命令直接执行)/Read-only(每次执行都询问)">🔐 Full access</span>
+      <button class="chip-btn" onclick="openVideo()" title="本地零算力生成视频">🎬 视频</button>
+      <button class="chip-btn" id="toolsBtn" onclick="toggleTools()" title="工具调用开关">🛠️ 工具</button>
+    </div>
+    <div class="cmp-input">
+      <textarea id="inp" rows="1" placeholder="向小焦提问…（Enter 发送，Shift+Enter 换行）" autocomplete="off"
+                oninput="autoGrow(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}"></textarea>
+      <button class="cmp-send" onclick="send()" title="发送">➤</button>
+    </div>
+    <div class="cmp-hint"><span id="cmpHint">小焦会联网检索 · 抓取网页 · 查 NVD 漏洞 · 写文件</span></div>
+  </div>
+</footer>
   </div>
 </div>
 
@@ -3784,19 +3906,50 @@ async function resumeVideoJob(){let job='';
 function loadCost(){try{fetch('/api/cost').then(r=>r.json()).then(d=>{
   const el=document.getElementById('costBadge');if(el)el.textContent='💸 今日节省 ¥'+d.saved+' · '+d.calls+'次';
 });}catch(e){}}
+// ===== 预设：选中即生效（人格 + 大脑 + 工具开关）=====
+// 真实缺陷：以前 loadPresets() 里 `if(d.current)sel.value=d.current` 写在判空之外，
+// 而页面上根本没有 #presetSel 元素 → 抛 TypeError 被外层 try/catch 吞掉；
+// loadPresetCards() 又从来没人调用 → "Agent 预设"面板永远空白，用户设置半天"跟没生效一模一样"。
+function toast(msg,ms){let t=document.getElementById('toast');
+  if(!t){t=document.createElement('div');t.id='toast';document.body.appendChild(t);}
+  t.textContent=msg;t.classList.add('show');clearTimeout(t._tm);
+  t._tm=setTimeout(()=>t.classList.remove('show'),ms||2600);}
+function fillPresetSelect(list,current){
+  const sel=document.getElementById('presetSel');if(!sel)return;
+  sel.innerHTML='<option value="">🎭 预设</option>'+(list||[]).map(p=>'<option value="'+esc(p.file)+'">🎭 '+esc(p.name)+'</option>').join('');
+  if(current)sel.value=current;
+}
 function loadPresets(){try{fetch('/api/presets').then(r=>r.json()).then(d=>{
-  const sel=document.getElementById('presetSel');if(sel&&sel.options.length<=1){sel.innerHTML='<option value="">🎭 预设</option>'+ (d.presets||[]).map(p=>'<option value="'+esc(p.file)+'"'+(p.file===d.current?' selected':'')+'>'+esc(p.name)+'</option>').join('');}
-  if(d.current)sel.value=d.current;});}catch(e){}}
-function selectPreset(file){if(!file)return;fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})}).then(r=>r.json()).then(d=>{
-  alert('✅ 已加载预设：'+(d.preset||'')+'\n'+((d.role||'').slice(0,60))+'…');location.reload();}).catch(e=>alert('加载失败：'+e));}
+  window._presets=d.presets||[];
+  fillPresetSelect(window._presets,d.current||'');
+  const h=document.getElementById('cmpHint');
+  if(h&&d.current)h.textContent='当前预设：'+d.current+' · 联网检索 · 抓取网页 · 查 NVD 漏洞 · 写文件';
+  loadPresetCards();
+}).catch(()=>{});}catch(e){}}
+function _afterPreset(d,file){
+  if(!d.ok){toast('⚠️ 加载失败：'+(d.error||''));return;}
+  const c=d.capabilities||{};
+  toast('✅ 已切换预设：'+(d.preset||'')+' · 联网'+(c.web_search===false?'关':'开')
+        +' · 工具'+(c.run_tools===false?'关':'开'),3800);
+  const h=document.getElementById('cmpHint');
+  if(h)h.textContent='当前预设：'+(d.preset||'')+' · 人格与工具开关已立即生效';
+  setToolsOn(c.run_tools!==false);
+  loadPresets();
+}
+function selectPreset(file){if(!file)return;
+  fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})})
+   .then(r=>r.json()).then(d=>_afterPreset(d,file)).catch(e=>toast('⚠️ 加载失败：'+e));}
 function loadPresetCards(){try{fetch('/api/presets').then(r=>r.json()).then(d=>{
+  window._presets=d.presets||[];
   const el=document.getElementById('presetCards');if(!el)return;
-  el.innerHTML=(d.presets||[]).map(p=>'<div class="pcard" onclick="loadPreset(\''+esc(p.file)+'\')">'+
-    '<div class="pinfo"><span class="pname">'+esc(p.name)+'</span><span class="ptag">内置</span>'+(p.file===d.current?'<span class="cur">当前使用</span>':'')+'</div>'+
+  el.innerHTML=window._presets.length?window._presets.map(p=>'<div class="pcard'+(p.file===d.current?' on':'')+'" onclick="loadPreset(\''+esc(p.file)+'\')">'+
+    '<div class="pinfo"><span class="pname">'+esc(p.name)+'</span><span class="ptag">'+(p.file===d.current?'当前使用':'点击切换')+'</span></div>'+
     '<div class="pdesc">'+esc(p.desc||'')+'</div><div class="pfile">'+esc(p.file)+'</div>'+
-    '<div class="picons"><span title="编辑" onclick="event.stopPropagation();editPreset(\''+esc(p.file)+'\')">✏️</span><span title="复制" onclick="event.stopPropagation();duplicatePreset(\''+esc(p.file)+'\')">⧉</span><span title="使用" onclick="event.stopPropagation();loadPreset(\''+esc(p.file)+'\')">📂</span><span title="删除" onclick="event.stopPropagation();delPreset(\''+esc(p.file)+'\')">🗑️</span></div></div>').join('');
- }).catch(()=>{});}catch(e){}}
-function loadPreset(file){fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})}).then(r=>r.json()).then(d=>{alert('✅ 已加载预设：'+(d.preset||''));location.reload();}).catch(e=>alert('加载失败：'+e));}
+    '<div class="picons"><span title="编辑" onclick="event.stopPropagation();editPreset(\''+esc(p.file)+'\')">✏️</span><span title="复制" onclick="event.stopPropagation();duplicatePreset(\''+esc(p.file)+'\')">⧉</span><span title="使用" onclick="event.stopPropagation();loadPreset(\''+esc(p.file)+'\')">📂</span><span title="删除" onclick="event.stopPropagation();delPreset(\''+esc(p.file)+'\')">🗑️</span></div></div>').join('')
+    :'<div class="think">还没有预设，点下面「＋ 创作自定义预设」</div>';
+}).catch(()=>{});}catch(e){}}
+function loadPreset(file){fetch('/api/presets/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:file})})
+  .then(r=>r.json()).then(d=>_afterPreset(d,file)).catch(e=>toast('⚠️ 加载失败：'+e));}
 function duplicatePreset(file){fetch('/api/presets',{method:'GET'}).then(r=>r.json()).then(async d=>{const p=(d.presets||[]).find(x=>x.file===file);const n=p?(p.name+'·副本'):'新预设';await fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,parent:file})});loadPresetCards();});}
 function editPreset(file){fetch('/api/presets/detail?file='+file).then(r=>r.json()).then(d=>{
   const x=d.data||{};
@@ -3910,7 +4063,8 @@ function renderBlocks(seg){
   });
   return html;
 }
-function add(role,text,src){const m=document.createElement('div');m.className='m '+role;
+function add(role,text,src){const w=document.querySelector('#feed .welcome');if(w)w.remove();
+ const m=document.createElement('div');m.className='m '+role;
  let vm='';text=(''+text);
  if(role==='bot'&&text.indexOf('[video]')>=0){const mu=text.match(/\[video\]([^\[\]]+)\[\/video\]/);if(mu){vm='<video src="'+esc(mu[1])+'" controls style="max-width:100%;border-radius:12px;margin:4px 0"></video>';text=text.replace(mu[0],'');}}
  if(role==='bot'&&text.indexOf('[music]')>=0){const mu=text.match(/\[music\]([^\[\]]+)\[\/music\]/);if(mu){vm+='<audio src="'+esc(mu[1])+'" controls style="width:100%;margin:4px 0"></audio>';text=text.replace(mu[0],'');}}
@@ -3937,14 +4091,14 @@ async function send(){const t=inp.value.trim();if(!t)return;inp.value='';
    const tt=document.createElement('div');tt.className='tooltrace';
     tt.innerHTML=d.tool_trace.map(x=>'🔧 调用 <b>'+esc(x.tool)+'</b> → '+esc((x.result||'').slice(0,200))).join('<br>');feed.appendChild(tt);}
   setToolsOn(d.tools_on);
-  typeAnswer(d.answer,d.sources||[],d.log_id);
+  typeAnswer(d.answer,d.sources||[],d.log_id,d.grounding_note||'');
   if(d.needs_confirm){const m=document.createElement('div');m.className='m bot';
     m.innerHTML='<button class="icon-btn" onclick="confirmAction()">✅ 确认执行</button>';feed.appendChild(m);}}
  catch(e){clearInterval(timer);th.remove();add('bot','⚠️ 出错了：'+e.message);}
  loadSessions();
  feed.scrollTop=feed.scrollHeight;}
 // 打字机式浮现回答
-function typeAnswer(text,src,logId){
+function typeAnswer(text,src,logId,note){
   const m=document.createElement('div');m.className='m bot';
   text=stripThink(text);
   m.innerHTML='<div class="b"></div>';const b=m.querySelector('.b');feed.appendChild(m);
@@ -3955,6 +4109,9 @@ function typeAnswer(text,src,logId){
       const full=renderMd(text);
       if(full.indexOf('<table')>=0){bm.classList.add('wide');m.classList.add('widem');}
       bm.innerHTML=full;
+      // 检索引用校验：让用户一眼看出"这条回答到底有没有真读资料"
+      if(note){const g=document.createElement('div');g.className='gnd'+(note.indexOf('⚠️')===0?' bad':'');
+        g.textContent=note;bm.appendChild(g);}
       const row=document.createElement('div');row.className='msgbot';row.innerHTML=
         '<button onclick="copyMsg(this)">⧉ 复制</button><button class="fb" onclick="fb(this,\''+logId+'\',\'good\')">👍</button>'+
         '<button class="fb" onclick="fb(this,\''+logId+'\',\'bad\')">👎</button>';
@@ -3987,15 +4144,33 @@ async function loadSessions(){try{const r=await fetch('/api/sessions');const d=a
   el.innerHTML=(d.sessions||[]).map(s=>'<button class="sess '+(s.id===d.current?'active':'')+'" onclick="openSession(\''+s.id+'\')">'+esc(s.title||'新对话')+'</button>').join('')||'<div class="think">暂无会话</div>';}catch(e){}}
 async function newChat(){await fetch('/api/session/new',{method:'POST'});clearFeed();loadSessions();}
 async function openSession(id){const r=await fetch('/api/session/'+id);const d=await r.json();clearFeed();(d.messages||[]).forEach(h=>add(h.role==='用户'?'user':'bot',h.content));loadSessions();}
-function clearFeed(){document.getElementById('feed').innerHTML='<div class="think">👋 新对话，问小焦一个问题…</div>';}
+function clearFeed(){document.getElementById('feed').innerHTML='';renderWelcome();}
+// 空状态：居中的欢迎卡 + 可点的示例（比一行灰字好看，也让新用户知道能干什么）
+function renderWelcome(){
+  const f=document.getElementById('feed');if(!f||f.children.length)return;
+  const chips=[['抓取最近 7 天的高危漏洞','🔐 查漏洞'],['最近 AI 新闻','📰 搜新闻'],
+               ['抓一下 https://example.com','🌐 抓网页'],['用 Python 写个计算斐波那契的脚本','🐍 写代码'],
+               ['记住：我偏好用中文注释','🧠 存记忆']];
+  f.innerHTML='<div class="welcome"><div class="wl">你好，我是小焦 🐳</div>'
+    +'<div class="ws">本地部署 · 会联网检索 · 会抓网页 · 会查 NVD 漏洞 · 会写文件；每一步都能在左侧「轨迹」里看到</div>'
+    +'<div class="chips">'+chips.map(c=>'<div class="chip" onclick="useChip(this)">'+esc(c[1])+'</div>').join('')+'</div></div>';
+}
+function useChip(el){
+  const map={'🔐 查漏洞':'抓取最近 7 天的高危漏洞','📰 搜新闻':'最近 AI 新闻','🌐 抓网页':'抓一下 https://example.com',
+             '🐍 写代码':'用 Python 写个计算斐波那契的脚本','🧠 存记忆':'记住：我偏好用中文注释'};
+  inp.value=map[el.textContent.trim()]||el.textContent.trim();autoGrow(inp);inp.focus();
+}
+function autoGrow(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,220)+'px';}
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('hidden');}
 function hideSplash(){const sp=document.getElementById('splash');if(sp){sp.style.transition='opacity .5s';sp.style.opacity='0';setTimeout(function(){sp.remove();},500);}}
   (async()=>{try{loadModels();}catch(e){}try{loadHistory();}catch(e){}try{loadSessions();}catch(e){}try{loadPresets();}catch(e){}try{loadCost();}catch(e){}
  try{const r=await fetch('/api/tools_toggle');const d=await r.json();setToolsOn(d.tools_on);}catch(e){}
+ try{renderWelcome();}catch(e){}
+ try{const ta=document.getElementById('inp');if(ta)autoGrow(ta);}catch(e){}
  resumeVideoJob();resumeChat();})();
 async function confirmAction(){const r=await fetch('/api/confirm',{method:'POST'});const d=await r.json();
  add('bot',(d.result||'已执行').slice(0,1200));}
-inp.addEventListener('keydown',e=>{if(e.key==='Enter')send();});
+inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
 
 const plugEl=document.getElementById('s_plugins');let plugins=[];
 function applyPersona(){const v=document.getElementById('s_persona').value;if(!v)return;
