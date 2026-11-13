@@ -618,18 +618,36 @@ def run_round(allow_comment=None, budget=None, manual=True):
     # 【判重表会把老视频全挡掉 → 再按"最新"捞一次】
     # 实测：关键词搜回来的前几条永远是那几条，判重之后一条不剩，于是"跑了但没东西"。
     # 所以第一轮全被挡住时，换 `pubdate`（最新）再搜一遍 —— 那才是"新刷出来的"。
+    _last_raw, _cand_n = "", 0
     if not picked and kws:
-        for kw in kws[:2]:
-            raw = str(X.run_tool("bili_search", {"keyword": kw, "num": max(10, n_fetch * 3),
-                                                 "order": "pubdate"}, force=True))
-            cand = _parse_search(raw)
-            fresh = [p for p in cand if _bvid_of(p) and _bvid_of(p) not in seen_bv]
-            if fresh:
-                picked = fresh[:n_fetch]
+        # 【换排序 + 加大数量】实测：关键词搜回来的前几条永远是那几条，60 多条判重之后
+        #   一条不剩 → 用户看到"跑一轮没挑到新视频"（截图）。
+        #   这里依次换 pubdate/click/dm 三种排序、数量拉到 100，尽量捞出没看过的。
+        for _order in ("pubdate", "click", "dm"):
+            if picked:
                 break
+            for kw in kws[:2]:
+                raw = str(X.run_tool("bili_search", {"keyword": kw, "num": 100,
+                                                     "order": _order}, force=True))
+                if raw:
+                    _last_raw = raw
+                cand = _parse_search(raw)
+                _cand_n = max(_cand_n, len(cand))
+                fresh = [p for p in cand if _bvid_of(p) and _bvid_of(p) not in seen_bv]
+                if fresh:
+                    picked = fresh[:n_fetch]
+                    break
 
     if not picked:
-        return {"ok": False, "error": "这一轮没挑到新视频（可能都被刷过了，或搜索没返回结果）"}
+        # 【报错要说真话】原来只有一句"可能都被刷过了" —— 用户没法判断到底怎么了。
+        # 现在按实际观测分三种情况说明：搜索报错 / 搜到但都已看过 / 一条都没解析出来。
+        if not _last_raw:
+            why = "搜索接口没返回任何内容（可能被限流或网络不通）"
+        elif _cand_n == 0:
+            why = "搜索返回了内容，但解析不出视频（接口可能改版了）：%s" % _last_raw[:80]
+        else:
+            why = "搜到 %d 条，但全部在'已看过'里（判重表挡住了）" % _cand_n
+        return {"ok": False, "error": "这一轮没挑到新视频 —— %s" % why}
 
     today = time.strftime("%Y-%m-%d")
     lines, comments = [], []
