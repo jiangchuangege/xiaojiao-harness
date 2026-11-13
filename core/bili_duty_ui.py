@@ -1376,6 +1376,25 @@ def scan_dm(c=None):
         return {"ok": True, "why": "主人最近没有文字私信", "replied": 0}
     _ts = int(_latest.get("timestamp") or 0)
     if _ts <= _last_reply_ts:
+        # 【还有更新的、但没文字的消息？→ 回一句提示，别装作没看见】
+        #   实测用户就卡在这里：他最后发的是 `{"content":"。"}`（无文字），
+        #   我的规则"取最近一条有文字的"于是认为"已经回过"，**静默不动**，
+        #   用户看到的就是"我回它它不理我"。
+        _newest = max(_from_owner, key=lambda x: int(x.get("timestamp") or 0))
+        _nts = int(_newest.get("timestamp") or 0)
+        if _nts > _last_reply_ts and not _dm_text(_newest.get("content") or ""):
+            try:
+                X = _tools()
+                X.run_tool("bili_send_message",
+                           {"receiver_uid": owner, "uid": owner, "force": True,
+                            "text": "这条我看不到文字（图片/表情/空白），打字跟我说吧。"},
+                           force=True)
+                _st["replied_ts"] = _nts
+                os.makedirs(_ROOT_LOGS, exist_ok=True)
+                json.dump(_st, open(_st_path, "w", encoding="utf-8"), ensure_ascii=False)
+                return {"ok": True, "replied": 1, "why": "提示了主人：这条没文字"}
+            except Exception as e:      # noqa: BLE001
+                return {"ok": False, "why": "提示发送失败：%s" % str(e)[:80]}
         return {"ok": True, "why": "主人的消息已经回过了", "replied": 0}
     if not _txt:
         return {"ok": True, "why": "这条不是文本消息，跳过", "replied": 0}
