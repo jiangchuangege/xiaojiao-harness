@@ -58,7 +58,7 @@ _DIR = os.path.join(_ROOT, "logs", "spirit_memory")
 _LOCK = threading.Lock()
 
 # 同题判据的阈值：低于它明确不是同一件事，高于它需要大脑判断（见模块头说明）
-SAME_TOPIC_THRESHOLD = 0.6
+SAME_TOPIC_THRESHOLD = 0.92
 # 一句话认知的长度上限。超过它多半是被误传进来的答案原文。
 _MAX_TEXT = 400
 # 答案原文的特征字段：出现即拒收
@@ -130,8 +130,29 @@ def same_topic(text_a, text_b):
     return num / (na * nb)
 
 
+def _shared_terms(a, b):
+    """两条文本共享多少个"实词"（中文取双字滑窗，英文取 3 字以上单词）。
+
+    【为什么要它】实测：这份嵌入给**互不相关的句子**也算出 0.75~0.85 ——
+    只看相似度的话，几乎所有新认知都会被判"同题"而拒收，记忆库长期不增长
+    （这也是"学习有效性 1 好 3 平 1 差"的真因：新东西压根没存进去）。
+    所以同题必须**同时**满足：相似度高 + 真的有共同实词。
+    """
+    import re as _re
+    def bigrams(s):
+        s = str(s or "")
+        out = set()
+        for i in range(len(s) - 1):
+            w = s[i:i + 2]
+            if _re.match(r"[\u4e00-\u9fff]{2}", w):
+                out.add(w)
+        out |= {w.lower() for w in _re.findall(r"[A-Za-z]{3,}", s)}
+        return out
+    return len(bigrams(a) & bigrams(b))
+
+
 def should_merge(sim, llm_judge=None, text_a="", text_b=""):
-    """按相似度决定"要不要并成同一条"。
+    """按相似度（**加上实词重合**）决定"要不要并成同一条"。
 
     返回 (是否同题, 判据说明)。说明是要给日志与用户看的，必须如实写是谁判的：
     `规则`（相似度低于阈值直接分开）、`大脑`（>= 阈值且判官给了答案）、
@@ -141,6 +162,11 @@ def should_merge(sim, llm_judge=None, text_a="", text_b=""):
         return False, "保守：算不出相似度，当作不同题分开存"
     if sim < SAME_TOPIC_THRESHOLD:
         return False, "规则：相似度 %.3f < %.2f，明确不同题" % (sim, SAME_TOPIC_THRESHOLD)
+    # 【高相似但没共同实词 → 判不同题】"后台挂了三天…" 和 "遇到报错先读堆栈…"
+    #   实测相似度 0.79，但它们讲的根本不是一件事。
+    _n = _shared_terms(text_a, text_b)
+    if _n < 3:
+        return False, "规则：相似度 %.3f 但只共享 %d 个实词，不是同一件事" % (sim, _n)
     if callable(llm_judge):
         try:
             verdict = llm_judge(text_a, text_b)
