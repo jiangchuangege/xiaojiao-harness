@@ -1142,9 +1142,18 @@ def scan_mentions(c=None):
         # 【rpid 用 source_id，不是 id】实测拿 `id` 去回会报 B站 12006「没有该评论」——
         #   `id` 是这条 @ 通知的 id，真正的评论 id 在 `source_id`
         #   （`native_uri` 里也能看到 `comment_root_id=<source_id>`）。
-        rp = str(inner.get("source_id") or it.get("id") or "")
-        if not rp or rp in replied:
+        # 【判重键必须是**这条通知的 id**，不是评论树根】
+        #   实测用户："他在评论区回我一条之后，我再回他他就不回了"。
+        #   根因：我用 `source_id`（整条评论树的**根** rpid）当判重键 ——
+        #   你在同一个帖子下再回一次，根 id 不变 → 被当成"回过了"永远跳过。
+        #   `it["id"]` 是每条 @ 通知唯一的，用它判重才正确。
+        _key = str(it.get("id") or "")
+        if not _key or _key in replied:
             continue
+        # 回复时：优先用这条通知自己的 id（能挂在你的新评论下面）；
+        # 不行（B站 12006「没有该评论」）再退回评论树根 source_id。
+        _rpid_try = [str(it.get("id") or ""), str(inner.get("source_id") or "")]
+        rp = _rpid_try[0]
         # **subject_id 才是视频 aid**；`business_id` 恒为 "1"（业务类型），拿它换 bvid 必然失败
         # （实测报"这条 @ 找不到对应视频（business_id=1）"）。
         bid = str(inner.get("subject_id") or "")
@@ -1166,14 +1175,18 @@ def scan_mentions(c=None):
             err = "这条 @ 找不到对应视频（business_id=%s）" % bid
             continue
         try:
-            out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(rp),
-                                                "text": "看到了，我在呢。", "force": True},
-                                 force=True))
+            out = ""
+            for _rp in [x for x in _rpid_try if x]:
+                out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(_rp),
+                                                    "text": "看到了，我在呢。", "force": True},
+                                     force=True))
+                if "12006" not in out and "没有该评论" not in out:
+                    break
         except Exception as e:      # noqa: BLE001
             err = str(e)[:80]
             continue
         if "ok" in out.lower() or "已发" in out or "成功" in out:
-            replied[rp] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            replied[_key] = time.strftime("%Y-%m-%dT%H:%M:%S")
             done += 1
         else:
             err = out[:100]
