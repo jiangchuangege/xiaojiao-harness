@@ -192,14 +192,33 @@ bili_duty/.venv/
 bili_duty/.hf-cache/
 bili_duty/duty.log
 
-# ── 运行态 / 第三方运行时（不进仓库）────────────────────────────
-# bili_duty 是 B站插件搬过来的运行时：含 .venv / .hf-cache 目录联接，
-# 以及 bili_credential.json（B站登录凭证）。体积大且跟账号绑定，不入库。
-bili_duty/
-# 用户自己的资料目录
+# ── bili_duty：代码入库，运行态不入库 ──────────────────────────
+# 只排除"跑起来才有/跟账号绑定"的东西；.py / .md / config.json 正常入库。
+# 登录凭证 bili_credential.json 单独排除（推送前会临时挪走再放回）。
+bili_duty/.venv/
+bili_duty/.hf-cache/
+bili_duty/.cache/
+bili_duty/tmp/
+bili_duty/out/
+bili_duty/reports/
+bili_duty/duty.log
+bili_duty/bili_credential.json
+bili_duty/digest/*.lock
+
+# ── 其他运行态 ────────────────────────────────────────────────
 项目文件夹/
-# forge / 群里自己造出来的插件产物（可随时重生）
 plugins/gen_*.py
 plugin_framework.py
-# 网页截图（web_shot 的取证图）
 logs/weblog/
+
+# DM 会话/配额这类纯运行态（每人不同，不该进仓库）
+bili_duty/dm-*.json
+bili_duty/dm-*.jsonl
+bili_duty/seen.md
+bili_duty/local-override.json
+# config.json 含本机绝对路径与 B站 uid，属个人状态，不入库（代码里有默认值）
+bili_duty/config.json
+# uid-cache 里有你朋友的昵称→uid 映射，属个人数据
+bili_duty/uid-cache.json
+bili_duty/state.json
+bili_duty/run-lock.json
