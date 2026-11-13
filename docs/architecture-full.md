@@ -9,66 +9,38 @@
 
 ## 一、全图
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ ⓪ 入口                                                                      │
-│   Web UI（Flask 路由 + 单页前端）        xiaojiao_app.py                      │
-│   语音 / 文件 / 截图 / 插件页 / 社交页 / 刷B站页                              │
-└───────────────────────────────┬─────────────────────────────────────────────┘
-                                │ 一句话进来
-                                ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ ① 调度与分流                                                                │
-│   xiaojiao_app.py 的意图识别 / 直通分支（漏洞、书目、抓取、B站历史…）          │
-│   task_runner.py（长任务） · tool_gate.py（本轮允许哪些工具）                  │
-└───────────────────────────────┬─────────────────────────────────────────────┘
-                                │
-        ┌───────────────────────┼───────────────────────┐
-        ▼                       ▼                       ▼
-┌───────────────┐     ┌──────────────────┐    ┌──────────────────────┐
-│ ② 脑           │     │ ③ 心              │    │ ④ 元认知（刹车）      │
-│ 推理与记忆      │     │ 立场与在乎        │    │ 对自己想法做二次检查   │
-│               │     │                  │    │                      │
-│ memory_deep   │     │ inner.py         │    │ self_audit.py        │
-│ retriever     │     │ self_model.py    │    │ consensus.py         │
-│ memory_vec    │     │ spirit_memory.py │    │ proof_panel.py       │
-│ memory_gate   │     │ heartbeat.py     │    │ self_evolve.py       │
-│ llm_chat(*)   │     │                  │    │ memory_upkeep.py     │
-└───────┬───────┘     └────────┬─────────┘    │ experience/narrative │
-        │                      │              └──────────┬───────────┘
-        └──────────────────────┼─────────────────────────┘
-                               ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ ⑤ 情绪与状态                                                                │
-│   interoceptive.py（内感受采样+偏差） · energy.py（精力，会困）                │
-│   feeling_memory.py（情绪记忆） · dual_thread.py（现实线/念头线）              │
-│   perspective.py（状态→硬改规则：降工具、改语气）                              │
-└───────────────────────────────┬─────────────────────────────────────────────┘
-                                │ 决定：说什么、怎么说、要不要说
-                                ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ ⑥ 表达（说人话的地方）                                                       │
-│   1对1：friends.py     群聊：ai_group.py     朋友圈：moments.py               │
-│   清洗三件套：剥 </think> · 去「回复某某：」· 禁旁白                          │
-└───────────────────────────────┬─────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ ⑦ 行动（真去干活）                                                           │
-│   插件路由：_TOOL2PLUGIN + run_tool()                                        │
-│   28 个插件：plugins/*.py（bili_duty · github_plugins · web_shot · forge …）   │
-│   B站：core/bili_duty_ui.py（刷视频/评论/@回复/私信/画廊/登录）                 │
-└───────────────────────────────┬─────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ ⑧ 外部世界                                                                  │
-│   B站（视频/评论/私信） · 网页（scrapling_bridge） · 本机文件/命令            │
-│   本地火种：llama-swap(:9292)  可换：deepseek / agnes …                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    W["🌍 外部世界<br/>B站 / 网页 / 本机 / 用户"]
+    UI["⓪ 入口<br/>xiaojiao_app.py<br/>Web UI · 语音 · 文件 · 插件页 · 社交页"]
+    DISPATCH["① 调度与分流<br/>意图识别 · 直通分支<br/>tool_gate.py（本轮允许哪些工具）"]
 
-(*) llm_chat 是"火种插入口"：系统不依赖任何具体模型，换模型不影响其余各层。
+    BRAIN["② 脑<br/>memory_deep · retriever · memory_vec<br/>memory_gate · llm_chat（火种，可换）"]
+    HEART["③ 心<br/>inner（可升降的量）· self_model（立场）<br/>spirit_memory（认知 basis/verified）· heartbeat"]
+    META["④ 元认知（刹车）<br/>self_audit（自审）· consensus（多火种对账）<br/>proof_panel（证据）· self_evolve · memory_upkeep"]
+    EMO["⑤ 情绪与状态<br/>interoceptive（内感受）· energy（会困）<br/>feeling_memory（情绪记忆）· dual_thread · perspective"]
+    EXPR["⑥ 表达<br/>friends（1对1）· ai_group（群聊）· moments（朋友圈）<br/>清洗：剥 think · 去前缀 · 禁旁白 · 去提示词回显"]
+    ACT["⑦ 行动<br/>run_tool + _TOOL2PLUGIN<br/>28 个插件 · bili_duty_ui（刷/评/@/私信）"]
+
+    W -->|"① 感知到东西"| UI
+    UI --> DISPATCH
+    DISPATCH --> BRAIN
+    BRAIN -->|"② 想明白这件事"| HEART
+    HEART -->|"③ 这件事对我意味着什么"| META
+    META -->|"④ 我这样说对不对"| EMO
+    EMO -->|"⑤ 现在想不想说、什么心情"| EXPR
+    EXPR --> ACT
+    ACT -->|"真去干活"| W
+
+    style BRAIN fill:#e8f0fe,stroke:#4a69bd
+    style HEART fill:#fde8ec,stroke:#c0392b
+    style META fill:#fff4e0,stroke:#e58e26
+    style EMO fill:#eafaf1,stroke:#27ae60
+    style EXPR fill:#f4ecf7,stroke:#8e44ad
+    style ACT fill:#eef5ff,stroke:#2980b9
 ```
+
+> 说明：`llm_chat` 是**火种插入口**——系统不依赖任何具体模型，换模型不影响其余各层。
 
 ---
 

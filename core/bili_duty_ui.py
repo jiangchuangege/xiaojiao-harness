@@ -1252,7 +1252,7 @@ def scan_mentions(c=None):
                 _txt2 = _txt2.strip('"“”「」')
             except Exception:      # noqa: silent-ok
                 pass
-            _txt2 = _clean_comment_text(_txt2) or "看到了，我在呢。"
+            _txt2 = _clean_comment_text(_txt2, _said) or "看到了，我在呢。"
             for _rp in [x for x in _rpid_try if x]:
                 out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(_rp),
                                                     "text": _txt2, "force": True},
@@ -1535,8 +1535,8 @@ def scan_dm(c=None):
         return {"ok": False, "why": "回私信失败：%s" % str(e)[:80]}
 
 
-def _clean_comment_text(t):
-    """把模型生成的"评论"洗成**能直接发出去的一句话**。
+def _clean_comment_text(t, said=""):
+    """把模型生成的"评论"洗成**能直接发出去的一句话**（`said` = 对方原话，用来去复读）。
 
     【实测的病】它会把推理过程当正文发：
         **B站评论区**。
@@ -1548,6 +1548,24 @@ def _clean_comment_text(t):
     清洗规则：去 markdown 标记 → 丢掉纯括号行 → 去掉行内括号 → 合并成一行 → 最多两句。
     """
     s = str(t or "")
+    # 【提示词回显】实测它会把自己看到的提示结构当正文发出来：
+    #   "小鱼以为换了新家…，视频里讲了什么：，他说：@xxx 早安，啊这，标题是这个？…"
+    #   这里把"从开头到最后一个脚手架标记"整段砍掉，只留它自己说的话。
+    for _mk in ("视频里讲了什么：", "视频里讲了什么:", "他说：", "他说:",
+                "这视频的标题：", "这视频的标题:", "这条视频的标题：", "标题："):
+        _i = s.rfind(_mk)
+        if _i >= 0:
+            s = s[_i + len(_mk):]
+    # 它有时把自己当成"回复某某"的主体
+    s = re.sub(r"^\s*回复\s*@?[^\s：:]{1,16}\s*[：:]\s*", "", s)
+    # 【复读对方原话】回复开头把他的原话抄一遍（"@爱思考的鲸鱼娘 早安，啊这…"）
+    _said2 = str(said or "").strip()
+    if _said2:
+        for _n in (len(_said2), 12, 8):
+            _head = _said2[:_n]
+            if _head and s.startswith(_head):
+                s = s[len(_head):].lstrip("，,。、 ")
+                break
     # 去 markdown 粗体/标题/列表符
     s = re.sub(r"\*{1,3}|#{1,6}\s*|^\s*[-·•]\s*", "", s)
     lines = []
@@ -1708,7 +1726,7 @@ def scan_others(c=None):
                                   % (_dig2, txt[:200])}])
                 _say = str(X._strip_think(str(_o or "")) or "").strip()
                 _say = re.sub(r"^\s*(?:回复\s*[^：:]{1,12}|你|我)\s*[：:]\s*", "", _say).strip()
-                _say = _clean_comment_text(_say)
+                _say = _clean_comment_text(_say, txt)
                 if not _say or "SKIP" in _say or len(_say) > 120:
                     continue
                 out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(rp),
