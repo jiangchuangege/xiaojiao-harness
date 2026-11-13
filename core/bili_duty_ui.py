@@ -334,13 +334,18 @@ def _cooldown_sec(c):
         return 0
 
 
-def _compose_comment(v, c):
+def _compose_comment(v, c, sub=None):
     """写一条要发出去的评论：`@某人 + 正文`。
+
+    【必须基于**真的看过内容**】用户原话："他是否真正把视频看完然后再去发信息，
+    要不他直接发都与视频无关了"。
+    实测（修前）：这里只把**标题**给了模型（`视频标题：%s`），字幕一个字没喂 ——
+    所以评论必然跟内容无关。
+    现在：有字幕就喂字幕（前 1200 字）并要求"必须提到视频里的具体内容"；
+    **没有字幕/字幕太短 → 返回空串，这一条不评论**（宁可不说，也不发无关的话）。
 
     为什么要自己拼 @：`bili_reply` 只负责发，不会替你 @ 人；
     而插件配置里 `mentionName` 就是"@ 谁"。所以发出去的正文必须自带 `@名字 `。
-    正文优先用**小焦自己的模型**按 `personaPrompt` 写（这才是"它说的人话"）；
-    模型不可用/写不出来才退回到一句短的——**宁可短，不要编**。
     """
     name = str(c.get("mentionName") or "").strip()
     prefix = ("@" + name + " ") if name else ""
@@ -351,18 +356,28 @@ def _compose_comment(v, c):
         X = _tools()
         persona = str(c.get("personaPrompt") or "").strip()[:1200]
         title = str(v.get("title") or "")[:80]
+        # 【没内容就不评论】视频没看完/没字幕 → 不发与内容无关的话
+        _sub = str(sub or "").strip()
+        if len(_sub) < 200:
+            LOG.info("写评论跳过：没有可用字幕（%d 字），不发与内容无关的评论", len(_sub))
+            return ""
         sys_p = (persona or "你是个说话口语、短句、带点小脾气的观众。")
         sys_p += ("\n\n现在给这条 B站 视频写一条评论。要求：%s；像人随口说的，"
-                  "不要 markdown、不要引号、不要解释你在做什么。只输出评论本身。" % want)
+                  "不要 markdown、不要引号、不要解释你在做什么。只输出评论本身。\n"
+                  "**必须落在视频讲的具体内容上**（提到他说的事/观点/例子），"
+                  "不许写成放之四海皆准的空话。" % want)
         out = X.llm_chat([{"role": "system", "content": sys_p},
-                          {"role": "user", "content": "视频标题：%s" % title}])
+                          {"role": "user", "content":
+                           "视频标题：%s\n\n视频里实际说了什么（字幕节选）：\n%s"
+                           % (title, _sub[:1200])}])
         body = str(out or "").strip().strip('"“”')
         body = body.split("\n")[0][:120]
-    except Exception as e:      # noqa: silent-ok — 模型不可用不耽误发评论，退回一句短的
-        import logging
-        logging.getLogger(__name__).info("[刷B站] 写评论失败，用短句兜底：%s", str(e)[:80])
+    except Exception as e:      # noqa: silent-ok — 模型不可用也不能编一句无关的话发出去
+        LOG.info("[刷B站] 写评论失败：%s", str(e)[:80])
     if not body:
-        body = "看完了，学到了。"
+        # 【不许兜底成空话】"看完了，学到了。" 这类跟内容无关的句子正是用户抱怨的
+        #   "直接发都与视频无关"。写不出来就**不发**，让 _run 那边记 skip。
+        return ""
     return (prefix + body).strip()
 
 
@@ -647,7 +662,11 @@ def run_round(allow_comment=None, budget=None, manual=True):
             learned_n += 1
         if allow_comment:
             # 只有**明确要求**时才写；force 闸仍在插件里守着（双闸）
-            text = _compose_comment(v, c)
+            text = _compose_comment(v, c, sub)
+            if not text:
+                # 没看过内容 → 不评论（用户要求：不许发与视频无关的话）
+                item["skipped_comment"] = "没有可用字幕，未评论"
+                continue
             r = str(X.run_tool("bili_reply", {"bvid": bv, "text": text, "force": True}, force=True))
             ok = ("rpid" in r) or ("成功" in r) or ("ok" in r.lower())
             item["commented"] = bool(ok)
