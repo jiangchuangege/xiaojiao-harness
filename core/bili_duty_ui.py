@@ -1243,6 +1243,68 @@ def dm_watch(c=None):
         return {"ok": False, "unread": chat, "why": "通知发送失败：%s" % str(e)[:80], "note": note}
 
 
+def _dm_text(raw):
+    """从 B站 私信的 `content`（**嵌套 JSON 字符串**）里取出真正的文字。
+
+    【为什么要递归找】实测记录里 `last_text` 只有一个「。」 —— 说明我对某类消息
+    （图片/分享卡片/撤回提示）死取 `content.content` 取到了空串，只剩标点。
+    不同消息类型的字段位置不一样（`content`/`text`/`msg`/`title`…），
+    所以改成**递归找第一个有实际文字的值**，并过滤纯链接/纯标点。
+    """
+    try:
+        d = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:      # noqa: silent-ok — 不是 JSON 就当普通文本
+        return str(raw or "")[:300]
+
+    # 【字符串里还套着 JSON】B站 私信常见两层：{"content":"{\"content\":\"你好\"}"}。
+    #   不解开第二层就会把整段 JSON 当正文（实测返回 '{"content": "你在干嘛"}'）。
+    for _ in range(3):
+        if isinstance(d, str):
+            _s = d.strip()
+            if _s[:1] in "{[":
+                try:
+                    d = json.loads(_s)
+                    continue
+                except Exception:
+                    break
+        break
+
+    def walk(o, depth=0):
+        if depth > 5:
+            return ""
+        if isinstance(o, str):
+            t = o.strip()
+            # 字符串里还套着 JSON（{"content":"{\"content\":\"你好\"}"}）→ 解开继续走
+            if t[:1] in "{[":
+                try:
+                    return walk(json.loads(t), depth + 1)
+                except Exception:
+                    return ""
+            if (t and not t.startswith("http")
+                    and re.search(r"[\w\u4e00-\u9fff]", t)):
+                return t
+            return ""
+        if isinstance(o, dict):
+            for k in ("content", "text", "msg", "message", "title", "desc", "summary"):
+                if k in o:
+                    t = walk(o[k], depth + 1)
+                    if t:
+                        return t
+            for v in o.values():
+                t = walk(v, depth + 1)
+                if t:
+                    return t
+            return ""
+        if isinstance(o, list):
+            for v in o:
+                t = walk(v, depth + 1)
+                if t:
+                    return t
+        return ""
+
+    return walk(d)[:300]
+
+
 def scan_dm(c=None):
     """**私信双向**：主人在 B站 私信里跟它说话 → 它回一句。
 
@@ -1305,11 +1367,7 @@ def scan_dm(c=None):
     if _ts <= _last_reply_ts:
         return {"ok": True, "why": "主人的消息已经回过了", "replied": 0}
     # 内容在 content 里（JSON 字符串，type=1 才是文本）
-    try:
-        _c = json.loads(_latest.get("content") or "{}")
-        _txt = str(_c.get("content") or "").strip()
-    except Exception:      # noqa: silent-ok
-        _txt = str(_latest.get("content") or "")[:200]
+    _txt = _dm_text(_latest.get("content") or "")
     if not _txt:
         return {"ok": True, "why": "这条不是文本消息，跳过", "replied": 0}
 
@@ -1326,11 +1384,7 @@ def scan_dm(c=None):
         _ctx_lines = []
         for _x in _msgs[-6:]:
             _who = "我" if int(_x.get("sender_uid") or 0) != owner else "他"
-            try:
-                _cc = json.loads(_x.get("content") or "{}")
-                _tt = str(_cc.get("content") or "")[:60]
-            except Exception:      # noqa: silent-ok
-                _tt = ""
+            _tt = _dm_text(_x.get("content") or "")[:60]
             if _tt:
                 _ctx_lines.append("%s：%s" % (_who, _tt))
         _ctx = "\n".join(_ctx_lines) or "（没有更多上下文）"
