@@ -1215,32 +1215,11 @@ def scan_mentions(c=None):
                 if not _dig and not _ttl:
                     why_not = "取不到视频内容，这条不回"
                     continue
-                _sys2 = (_persona +
-                         "\n\n**这是 B站 评论区，不是小说，也不是影评。**"
-                         "\n- 你已经看过这条视频（下面的内容只是**背景**，不是必须提的）。"
-                         "\n- **自己判断该说什么**：他在聊视频就接视频；他在开玩笑/找茬/随口一句，"
-                         "就跟着随口回，别硬扯视频内容 —— 每句都提『这视频』会显得很假、像傻子。"
-                         "\n- 一到两句，口语，像真人在评论区抬杠/搭话。"
-                         "\n- 不许扯到视频里和你俩对话里都没出现过的东西。"
-                         "\n- 禁止旁白：不许写动作、神态、心理描写。"
-                         "\n- 不许写『回复某某：』前缀，不许引号包住整句。"
-                         "\n- 实在没什么好接的，就只输出：SKIP")
-                _msgs2 = [{"role": "system", "content": _sys2},
-                          {"role": "user", "content":
-                           "这视频的标题：%s\n视频里讲了什么：%s\n他说：%s"
-                           % (_ttl, _dig or "（字幕没拿到，只能按标题推测）",
-                              _said or "（无文字）")}]
-                _txt2 = str(X.llm_chat(_msgs2) or "").strip()[:120]
-                # 【旁白检测】命中就重写一次（小模型很容易又写成小说）
-                _NARR = ("你随口", "说罢", "眼睛还", "手停了", "语气轻快", "像是在",
-                         "回了你一句", "盯着", "顿了顿", "你补充")
-                if any(k in _txt2 for k in _NARR):
-                    _txt2 = str(X.llm_chat(
-                        [{"role": "system", "content":
-                          "把下面这段话**改成一条能直接发在 B站 评论区的回复**："
-                          "只要一到两句人话，不要任何旁白、动作、神态描写。只输出那句话。"},
-                         {"role": "user", "content": _txt2}]) or "").strip()[:120]
-            except Exception:      # noqa: silent-ok — 模型不可用就用一句短的
+                _txt2, _sc, _why_bad = _gen_comment(X, _persona, _said, _dig, _ttl, tries=3)
+                if not _txt2:
+                    LOG.info("评论不合格，这条不发（最高分 %s：%s）", _sc, (_why_bad or [""])[0])
+                    continue
+            except Exception:      # noqa: silent-ok — 生成失败就用默认短句
                 _txt2 = ""
             # 去掉"回复某某："前缀和首尾引号，并剥掉思考标签（模型爱吐 </think>）
             try:
@@ -1607,6 +1586,81 @@ def _clean_comment_text(t, said=""):
     parts = re.findall(r"[^。！？!?]+[。！？!?]?", s)
     s = "".join(parts[:2]).strip()
     return s.strip('"“”「」')[:150]
+
+
+def _human_score(t):
+    """给一句"要发出去的评论"打**像不像人**的分（0-100）。
+
+    【为什么要它】同一类毛病已经修了四轮（旁白 → "你："前缀 → markdown+括号 →
+    提示词回显），每轮都是小模型换个花样犯。**逐个句式补规则永远补不完**，
+    所以加一层评分：不合格就让它重写，最多两次；两次都不行就不发。
+    """
+    s = str(t or "").strip()
+    if not s:
+        return 0, ["空"]
+    score, why = 100, []
+    # 硬伤：直接 0 分
+    if "SKIP" in s:
+        return 0, ["SKIP"]
+    for bad, w in (("视频里讲了什么", 60), ("他说：", 60), ("他说:", 60),
+                   ("回复 ", 50), ("标题：", 40), ("**", 45), ("##", 40),
+                   ("说罢", 40), ("你随口", 40), ("顿了顿", 35), ("眼睛还", 35)):
+        if bad in s:
+            score -= w
+            why.append("含「%s」" % bad)
+    if re.search(r"[（(][^）)]{2,}[）)]", s):
+        score -= 35
+        why.append("括号自我说明")
+    if s.count("\n") >= 2:
+        score -= 30
+        why.append("多行")
+    if len(s) > 90:
+        score -= 25
+        why.append("太长(%d字)" % len(s))
+    if len(s) < 6:
+        score -= 40
+        why.append("太短")
+    if s.count("。") + s.count("！") + s.count("？") > 3:
+        score -= 20
+        why.append("句子太多")
+    return max(0, score), why
+
+
+def _gen_comment(X, persona, said, digest="", title="", tries=3):
+    """生成一条"像人话"的评论：**生成 → 评分 → 不合格就重写**（最多 tries 次）。
+
+    返回 (文本, 分数, 说明)。全都不合格返回 ("", 最高分, 原因) → 调用方**不发**。
+    """
+    base = (persona or "你是个说话口语、短句、带点小脾气的人。")
+    rule = ("\n\n**这是 B站 评论区，不是小说，也不是影评。**"
+            "\n- 只输出你要发出去的那一句评论，**一到两句**，口语。"
+            "\n- **不许**出现：markdown 星号、括号里的解释、『视频里讲了什么』"
+            "『他说』『标题』这类提示词原文、旁白/动作/神态描写、『回复某某：』前缀。"
+            "\n- 视频内容只是**背景**，不必每次都提；他在开玩笑就跟着随口回。"
+            "\n- 实在没话可说，只输出 SKIP。")
+    best, best_score, best_why = "", -1, []
+    for i in range(max(1, tries)):
+        extra = "" if i == 0 else (
+            "\n\n**你上一次的回答不合格**（%s）。重写：只许一句干净的人话，"
+            "不要任何星号/括号/说明文字。" % "、".join(best_why[:2]))
+        user = ("视频标题：%s\n视频内容（背景，可提可不提）：%s\n他说：%s"
+                % (title or "", (digest or "（没拿到）")[:400], said or "（无文字）"))
+        try:
+            raw = str(X.llm_chat([{"role": "system", "content": base + rule + extra},
+                                  {"role": "user", "content": user}]) or "")
+        except Exception:      # noqa: silent-ok — 模型失败就当作没生成
+            continue
+        try:
+            raw = str(X._strip_think(raw) or "")
+        except Exception:      # noqa: silent-ok
+            pass
+        txt = _clean_comment_text(raw, said)
+        sc, why = _human_score(txt)
+        if sc > best_score:
+            best, best_score, best_why = txt, sc, why
+        if sc >= 70:
+            return best, best_score, []
+    return (best if best_score >= 50 else ""), best_score, best_why
 
 
 _SUB_CACHE = {}
