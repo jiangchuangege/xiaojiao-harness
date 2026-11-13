@@ -1233,7 +1233,8 @@ def dm_watch(c=None):
                 "note": note}
     try:
         X.run_tool("bili_send_message",
-                   {"uid": uid, "text": "有人给你发了 %d 条私信，去看一眼。" % chat, "force": True},
+                   {"receiver_uid": uid, "uid": uid,
+                    "text": "有人给你发了 %d 条私信，去看一眼。" % chat, "force": True},
                    force=True)
         _seen[str(chat)] = time.strftime("%Y-%m-%dT%H:%M:%S")
         os.makedirs(_ROOT_LOGS, exist_ok=True)
@@ -1362,12 +1363,20 @@ def scan_dm(c=None):
     _from_owner = [x for x in _msgs if int(x.get("sender_uid") or 0) == owner]
     if not _from_owner:
         return {"ok": True, "why": "主人最近没发消息", "replied": 0}
-    _latest = max(_from_owner, key=lambda x: int(x.get("timestamp") or 0))
+    # 【取"最近一条**有文字**的"，不是"最近一条"】
+    #   实测：主人最后发的是一个「。」→ 解析成空 → 被"跳过非文本"挡住，
+    #   于是**后面所有新消息都被这一条卡住**（这是真实的卡死，不是小瑕疵）。
+    _latest, _txt = None, ""
+    for _m2 in sorted(_from_owner, key=lambda x: int(x.get("timestamp") or 0), reverse=True):
+        _t2 = _dm_text(_m2.get("content") or "")
+        if _t2:
+            _latest, _txt = _m2, _t2
+            break
+    if not _latest:
+        return {"ok": True, "why": "主人最近没有文字私信", "replied": 0}
     _ts = int(_latest.get("timestamp") or 0)
     if _ts <= _last_reply_ts:
         return {"ok": True, "why": "主人的消息已经回过了", "replied": 0}
-    # 内容在 content 里（JSON 字符串，type=1 才是文本）
-    _txt = _dm_text(_latest.get("content") or "")
     if not _txt:
         return {"ok": True, "why": "这条不是文本消息，跳过", "replied": 0}
 
@@ -1400,7 +1409,14 @@ def scan_dm(c=None):
         _say = re.sub(r"^\s*我\s*[：:]\s*", "", _say).strip()
         if not _say or len(_say) > 300:
             _say = "收到。" if not _say else _say[:200]
-        X.run_tool("bili_send_message", {"uid": owner, "text": _say, "force": True}, force=True)
+        _res = str(X.run_tool("bili_send_message",
+                              {"receiver_uid": owner, "uid": owner, "text": _say, "force": True},
+                              force=True))
+        # 【必须看回执】实测：不检查返回值就记账 → 报"回了"，但 B站 那边一条没发出去。
+        _ok = ("success" in _res.lower()) or ("ok" in _res.lower()) or ("已发" in _res) \
+            or ("成功" in _res)
+        if not _ok:
+            return {"ok": False, "why": "发送没成功：%s" % _res[:120], "replied": 0}
         _st["replied_ts"] = _ts
         _st["last_text"] = _txt[:80]
         os.makedirs(_ROOT_LOGS, exist_ok=True)
