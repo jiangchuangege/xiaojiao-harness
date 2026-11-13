@@ -1,4 +1,5 @@
 import logging
+import re
 
 LOG = logging.getLogger(__name__)
 # -*- coding: utf-8 -*-
@@ -1312,10 +1313,39 @@ def scan_dm(c=None):
     if not _txt:
         return {"ok": True, "why": "这条不是文本消息，跳过", "replied": 0}
 
-    # ④ 回一句（用插件自己的发文接口，带 force）
+    # ④ 回一句 —— **让模型自己说**，不用模板
+    #    （用户原话："肯定模型生成回复啊"。之前那句"收到～+前20字"只是先跑通链路，
+    #      不是人话。这里改成：人设 + 最近几条上下文 → 模型写一两句。）
     try:
         X = _tools()
-        _say = "收到～" + _txt[:20] + ("…" if len(_txt) > 20 else "")
+        _persona = str(c.get("personaPrompt") or "").strip()[:1000]
+        _sys = (_persona or "你是个说话口语、短句、带点小脾气的人。")
+        _sys += ("\n\n有人（你主人）在 B站 私信跟你说话。用一两句直接回他：口语、自然、别客套，"
+                 "不要解释你在做什么，不要 markdown，只输出你要发的那句话。")
+        # 最近几条对话当上下文（双方都算）
+        _ctx_lines = []
+        for _x in _msgs[-6:]:
+            _who = "我" if int(_x.get("sender_uid") or 0) != owner else "他"
+            try:
+                _cc = json.loads(_x.get("content") or "{}")
+                _tt = str(_cc.get("content") or "")[:60]
+            except Exception:      # noqa: silent-ok
+                _tt = ""
+            if _tt:
+                _ctx_lines.append("%s：%s" % (_who, _tt))
+        _ctx = "\n".join(_ctx_lines) or "（没有更多上下文）"
+        _out = X.llm_chat([{"role": "system", "content": _sys},
+                           {"role": "user", "content": "最近的私信：\n%s\n\n他刚说：%s\n\n你回："
+                                                       % (_ctx, _txt[:300])}])
+        _say = str(_out or "").strip()
+        # 剥思考块 + 去掉可能带的"我："前缀
+        try:
+            _say = str(X._strip_think(_say)).strip()
+        except Exception:      # noqa: silent-ok
+            pass
+        _say = re.sub(r"^\s*我\s*[：:]\s*", "", _say).strip()
+        if not _say or len(_say) > 300:
+            _say = "收到。" if not _say else _say[:200]
         X.run_tool("bili_send_message", {"uid": owner, "text": _say, "force": True}, force=True)
         _st["replied_ts"] = _ts
         _st["last_text"] = _txt[:80]
