@@ -2695,8 +2695,19 @@ def _narrate_facts(question, facts, label=""):
         return "", False, []
     # 【关键数字】只从"可核查的短数值"里挑，且**只用来补原始要点，不再用来否决**。
     _cleanv = re.sub(r"[\w]*\d{5,}[\w]*", " ", f)
-    _all = re.findall(r"\d+(?:\.\d+)?", _cleanv)
-    _key = [n for n in _all if ("." in n or len(n) <= 5)][:6]
+    # 【别把日期当"要点"】实测用户问"最近 7 天高危漏洞"，原始要点补出来是
+    #   「2026、11、06、18」—— 那全是日期（年份/月/日/时间戳），对核对毫无用处的噪音。
+    #   规则：**带 CVE 编号就优先用编号**；否则剔掉年份/日期/时间，只留真正的量。
+    _cves = re.findall(r"CVE-\d{4}-\d{3,7}", f, re.I)
+    if _cves:
+        _key = list(dict.fromkeys(x.upper() for x in _cves))[:6]
+    else:
+        _nodate = re.sub(r"\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?", " ", _cleanv)
+        _nodate = re.sub(r"\b(?:19|20)\d{2}\b", " ", _nodate)       # 光年份
+        _nodate = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", " ", _nodate)  # 时间
+        _nodate = re.sub(r"\b\d{1,2}(?=[、，, /])", " ", _nodate)     # "11、06、18" 这种裸月日
+        _all = re.findall(r"\d+(?:\.\d+)?", _nodate)
+        _key = [n for n in _all if ("." in n or 2 <= len(n) <= 5)][:6]
     # 【单位数不补】实测补出来的「原始要点：5」是纯噪音 —— 那只是 4/5 步里的那个 5。
     #   只补真正的量：两位以上、或带小数点的数。
     # 【解说成了代码 = 没解说】实测：让它"把结果讲成人话"，它交了一段 import os / subprocess 的脚本。
