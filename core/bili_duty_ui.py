@@ -1185,6 +1185,63 @@ def scan_mentions(c=None):
             "why": ("回了 %d 条" % done) if done else (err or "没有新的 @")}
 
 
+def dm_watch(c=None):
+    """看**有没有人私信我**，有就通过 dmUid 通知你一声。
+
+    【边界要说清】B站 这套工具里**没有"读私信内容"的接口**
+    （只有 `bili_unread_messages` 给未读数、`bili_send_message` 发私信）。
+    所以这里能做到的是"有人发私信 → 通知你"，做不到"替他回私信"。
+    与其假装能回，不如把能做到的做扎实。
+    """
+    c = c or cfg()
+    X = _tools()
+    note = ""
+    # ① dmUid 是 0 就自动补上（用 uid-cache 里 mentionName 对应的 uid）
+    if int(c.get("dmUid") or c.get("dmOwnerUid") or 0) <= 0:
+        try:
+            _uc = json.load(open(os.path.join(_DIR, "uid-cache.json"), encoding="utf-8"))
+            _nm = str(c.get("mentionName") or "")
+            _uid = int(_uc.get(_nm) or 0)
+            if _uid:
+                save({"dmUid": _uid})
+                c = cfg()
+                note = "已自动把 dmUid 设成 %d（%s）" % (_uid, _nm)
+                LOG.info("刷B站：dmUid 原来是 0，已自动补成 %d", _uid)
+        except Exception:      # noqa: silent-ok — 补不上就留给用户手填
+            pass
+    # ② 看未读私信
+    try:
+        raw = str(X.run_tool("bili_unread_messages", {}, force=True))
+        d = json.loads(raw)
+        chat = int(d.get("chat") or 0)
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "why": "查未读私信失败：%s" % str(e)[:80], "note": note}
+    if chat <= 0:
+        return {"ok": True, "unread": 0, "why": "没有未读私信", "note": note}
+    # ③ 有未读 → 通过 dmUid 提醒你（同一数量只提醒一次，避免刷屏）
+    _sp = os.path.join(_ROOT_LOGS, "bili_dm_notified.json")
+    try:
+        _seen = json.load(open(_sp, encoding="utf-8"))
+    except Exception:      # noqa: silent-ok
+        _seen = {}
+    if str(chat) in _seen:
+        return {"ok": True, "unread": chat, "why": "已提醒过（%d 条未读）" % chat, "note": note}
+    uid = int(c.get("dmUid") or c.get("dmOwnerUid") or 0)
+    if uid <= 0:
+        return {"ok": False, "unread": chat, "why": "有 %d 条未读私信，但 dmUid 是 0，没法通知你" % chat,
+                "note": note}
+    try:
+        X.run_tool("bili_send_message",
+                   {"uid": uid, "text": "有人给你发了 %d 条私信，去看一眼。" % chat, "force": True},
+                   force=True)
+        _seen[str(chat)] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        os.makedirs(_ROOT_LOGS, exist_ok=True)
+        json.dump(_seen, open(_sp, "w", encoding="utf-8"), ensure_ascii=False)
+        return {"ok": True, "unread": chat, "why": "已通知你（%d 条未读）" % chat, "note": note}
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "unread": chat, "why": "通知发送失败：%s" % str(e)[:80], "note": note}
+
+
 def tick(now=None, force=False):
     """**自动轮的心跳**：每两分钟被调一次，判断"该不该自己刷一轮"。
 
@@ -1218,10 +1275,16 @@ def tick(now=None, force=False):
             if (time.time() - _last) >= _mins * 60:
                 _sr = scan_mentions(c)
                 _mention_note = str(_sr.get("why") or "")
+                # 同一次心跳里也看一眼私信（有未读就通知你）
+                _dr = dm_watch(c)
+                if _dr.get("why"):
+                    _mention_note += "｜私信：" + str(_dr.get("why"))
+                if _dr.get("note"):
+                    _mention_note += "｜" + str(_dr.get("note"))
                 os.makedirs(_ROOT_LOGS, exist_ok=True)
-                json.dump({"at": time.time(), "last": _sr},
+                json.dump({"at": time.time(), "last": _sr, "dm": _dr},
                           open(_sp, "w", encoding="utf-8"), ensure_ascii=False)
-                LOG.info("扫「@我的」：%s", _sr)
+                LOG.info("扫「@我的」：%s｜私信：%s", _sr, _dr)
     except Exception as _me:      # noqa: silent-ok — 扫 @ 失败不影响刷视频
         LOG.info("扫「@我的」失败：%s", str(_me)[:80])
     n = int(c.get("perDay") or 0)
