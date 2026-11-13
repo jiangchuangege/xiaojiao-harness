@@ -30,6 +30,7 @@ _STATE = os.path.join(_DIR, "state.json")
 _SEEN = os.path.join(_DIR, "seen.md")
 _COMMENTS = os.path.join(_DIR, "comments.md")
 _REPORTS = os.path.join(_DIR, "reports")
+_ROOT_LOGS = os.path.join(os.path.dirname(_DIR), "logs")
 _COVER_CACHE = os.path.join(_DIR, ".cache", "covers")
 
 # 允许从界面改的键（白名单）。**别的键一律不碰** —— 免得界面把 pythonPath 之类改坏。
@@ -1019,6 +1020,91 @@ def auto_state(now=None):
             return {"enabled": True, "reason": "%s 之后（%s）" % (when, win2),
                     "used": used, "limit": n, "next": t.strftime("%Y-%m-%d %H:%M")}
     return {"enabled": True, "reason": "等待谷时窗口", "used": used, "limit": n}
+
+
+def scan_mentions(c=None):
+    """扫最近看过的视频评论区，找**有人 @ 我**的评论并回复。
+
+    【为什么要单独一个循环】用户原话："我在评论区 @ 他他不回我"。
+    小焦的调度只做"爬→评→记账→学"，**没有扫 @ 这一步**（原版 DSH 插件的这段没搬）。
+    这里补上：只看最近 8 条看过的视频、每次最多回 3 条、回过的记在
+    `logs/bili_replied.json` 里不重复回。
+
+    ⚠️ 现实约束（实测）：`bili_comments` 现在经常返回 **HTTP 412（风控）**，
+       所以这个函数可能拿不到评论。拿不到就**如实返回原因**，不假装回过。
+    """
+    c = c or cfg()
+    name = str(c.get("mentionName") or "").strip()
+    if not name:
+        return {"ok": False, "why": "没配 mentionName（不知道该回谁）"}
+    seen_path = os.path.join(_ROOT_LOGS, "bili_replied.json")
+    try:
+        replied = json.load(open(seen_path, encoding="utf-8"))
+    except Exception:      # noqa: silent-ok — 第一次跑就是空的
+        replied = {}
+    bvs = []
+    try:
+        _sn = seen(limit=20) or []
+        # seen() 可能返回 list，也可能返回 {"items": [...]}：两种都接住
+        if isinstance(_sn, dict):
+            _rows = _sn.get("items") or _sn.get("rows") or []
+        else:
+            _rows = list(_sn)
+        for m in _rows:
+            bv = str((m or {}).get("bvid") or "")
+            if bv.startswith("BV"):
+                bvs.append(bv)
+    except Exception:      # noqa: silent-ok
+        bvs = []
+    if not bvs:
+        return {"ok": False, "why": "还没有看过的视频可扫"}
+    X = _tools()
+    done, tried = 0, 0
+    err = ""
+    for bv in bvs[:8]:
+        if done >= 3:
+            break
+        tried += 1
+        try:
+            raw = str(X.run_tool("bili_comments", {"bvid": bv, "num": 30}, force=True))
+        except Exception as e:      # noqa: BLE001
+            err = str(e)[:80]
+            continue
+        if "412" in raw or '"error"' in raw:
+            err = ("评论接口被风控（412）" if "412" in raw else raw[:80])
+            break
+        try:
+            data = json.loads(raw)
+        except Exception:      # noqa: silent-ok
+            continue
+        for cm in (data.get("comments") or []):
+            rp = str(cm.get("rpid") or cm.get("id") or "")
+            txt = str(cm.get("text") or cm.get("content") or "")
+            if not rp or rp in replied:
+                continue
+            if ("@" + name) not in txt and name not in txt:
+                continue
+            if done >= 3:
+                break
+            try:
+                out = str(X.run_tool("bili_reply", {
+                    "bvid": bv, "rpid": int(rp) if rp.isdigit() else rp,
+                    "text": "收到，我在呢。", "force": True}, force=True))
+            except Exception as e:      # noqa: BLE001
+                err = str(e)[:80]
+                continue
+            if "ok" in out.lower() or "已发" in out or "成功" in out:
+                replied[rp] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                done += 1
+            else:
+                err = out[:80]
+    try:
+        os.makedirs(_ROOT_LOGS, exist_ok=True)
+        json.dump(replied, open(seen_path, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:      # noqa: silent-ok
+        pass
+    return {"ok": done > 0, "replied": done, "scanned": tried,
+            "why": ("回了 %d 条" % done) if done else (err or "没找到 @ 我的评论")}
 
 
 def tick(now=None, force=False):
