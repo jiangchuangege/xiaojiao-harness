@@ -1242,6 +1242,90 @@ def dm_watch(c=None):
         return {"ok": False, "unread": chat, "why": "通知发送失败：%s" % str(e)[:80], "note": note}
 
 
+def scan_dm(c=None):
+    """**私信双向**：主人在 B站 私信里跟它说话 → 它回一句。
+
+    【为什么之前没做】我以为"没有读私信的接口"—— 错。原版 26 个 MCP 工具里确实没有
+    "读私信"，但 DSH 那边不是靠 MCP 工具，而是**进程内用凭证直调 B站 私信接口**。
+    这里照那个路子：读 `bili_credential.json` 的 sessdata，调
+    `session_svr/get_sessions` 找主人的会话 → `svr_sync/fetch_session_msgs` 取最新消息
+    → 只有**主人发来且没回过**的才回。
+
+    只认主人（`dmUid` / uid-cache 里的 mentionName），陌生人的私信不回（用户 UI 上就是这么写的）。
+    """
+    c = c or cfg()
+    owner = int(c.get("dmUid") or c.get("dmOwnerUid") or 0)
+    if owner <= 0:
+        return {"ok": False, "why": "dmUid 是 0，不知道该认谁当主人"}
+    try:
+        import requests as _rq3
+        cred = json.load(open(os.path.join(_DIR, "bili_credential.json"), encoding="utf-8"))
+        _ck = "SESSDATA=%s; bili_jct=%s; DedeUserID=%s; buvid3=%s" % (
+            cred.get("sessdata", ""), cred.get("bili_jct", ""),
+            cred.get("dedeuserid", ""), cred.get("buvid3", ""))
+        _h = {"Cookie": _ck, "User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"}
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "why": "读不到凭证：%s" % str(e)[:80]}
+
+    # ① 取会话列表，确认主人会话在不在（顺便拿到最新时间戳）
+    try:
+        _s = _rq3.get("https://api.vc.bilibili.com/session_svr/v1/session_svr/get_sessions",
+                      params={"session_type": 1, "group_fold": 1, "unfold_fold": 0,
+                              "sort_rule": 2, "build": 0, "mobi_app": "web"},
+                      headers=_h, timeout=15).json()
+        _sess = ((_s or {}).get("data") or {}).get("session_list") or []
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "why": "拉会话列表失败：%s" % str(e)[:80]}
+    _mine = [x for x in _sess if int(x.get("talker_id") or 0) == owner]
+    if not _mine:
+        return {"ok": True, "why": "主人还没有私信过", "replied": 0}
+
+    # ② 取这个会话的最新消息
+    try:
+        _m = _rq3.get("https://api.vc.bilibili.com/svr_sync/v1/svr_sync/fetch_session_msgs",
+                      params={"talker_id": owner, "session_type": 1, "size": 10},
+                      headers=_h, timeout=15).json()
+        _msgs = ((_m or {}).get("data") or {}).get("messages") or []
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "why": "拉私信内容失败：%s" % str(e)[:80]}
+
+    # ③ 找"主人发来的最后一条"，和我这边最后回的时间比
+    _st_path = os.path.join(_ROOT_LOGS, "bili_dm_last.json")
+    try:
+        _st = json.load(open(_st_path, encoding="utf-8"))
+    except Exception:      # noqa: silent-ok
+        _st = {}
+    _last_reply_ts = int(_st.get("replied_ts") or 0)
+    _from_owner = [x for x in _msgs if int(x.get("sender_uid") or 0) == owner]
+    if not _from_owner:
+        return {"ok": True, "why": "主人最近没发消息", "replied": 0}
+    _latest = max(_from_owner, key=lambda x: int(x.get("timestamp") or 0))
+    _ts = int(_latest.get("timestamp") or 0)
+    if _ts <= _last_reply_ts:
+        return {"ok": True, "why": "主人的消息已经回过了", "replied": 0}
+    # 内容在 content 里（JSON 字符串，type=1 才是文本）
+    try:
+        _c = json.loads(_latest.get("content") or "{}")
+        _txt = str(_c.get("content") or "").strip()
+    except Exception:      # noqa: silent-ok
+        _txt = str(_latest.get("content") or "")[:200]
+    if not _txt:
+        return {"ok": True, "why": "这条不是文本消息，跳过", "replied": 0}
+
+    # ④ 回一句（用插件自己的发文接口，带 force）
+    try:
+        X = _tools()
+        _say = "收到～" + _txt[:20] + ("…" if len(_txt) > 20 else "")
+        X.run_tool("bili_send_message", {"uid": owner, "text": _say, "force": True}, force=True)
+        _st["replied_ts"] = _ts
+        _st["last_text"] = _txt[:80]
+        os.makedirs(_ROOT_LOGS, exist_ok=True)
+        json.dump(_st, open(_st_path, "w", encoding="utf-8"), ensure_ascii=False)
+        return {"ok": True, "replied": 1, "why": "回了主人：%s" % _txt[:20]}
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "why": "回私信失败：%s" % str(e)[:80]}
+
+
 def tick(now=None, force=False):
     """**自动轮的心跳**：每两分钟被调一次，判断"该不该自己刷一轮"。
 
@@ -1277,6 +1361,14 @@ def tick(now=None, force=False):
                 _mention_note = str(_sr.get("why") or "")
                 # 同一次心跳里也看一眼私信（有未读就通知你）
                 _dr = dm_watch(c)
+                # **私信双向**：主人在 B站 私信里说话 → 回一句
+                _sd = {}
+                try:
+                    _sd = scan_dm(c)
+                    if _sd.get("replied"):
+                        _mention_note += "｜私信回了：%s" % str(_sd.get("why"))[:40]
+                except Exception as _sde:      # noqa: silent-ok
+                    LOG.info("私信双向失败：%s", str(_sde)[:80])
                 if _dr.get("why"):
                     _mention_note += "｜私信：" + str(_dr.get("why"))
                 if _dr.get("note"):
