@@ -1,3 +1,6 @@
+import logging
+
+LOG = logging.getLogger(__name__)
 # -*- coding: utf-8 -*-
 """刷B站 · 设置模块的**后端**（给小焦的「刷B站」设置页用）。
 
