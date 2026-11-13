@@ -1212,9 +1212,72 @@ def start_scheduler(interval=120):
     return True
 
 
+def login_start():
+    """生成 B站 扫码登录的二维码，返回可直接显示的 data URL。
+
+    【为什么要有】用户原话："你没把那个登录的生成二维码的搞过来啊"。
+    原版插件在 DSH 的设置页里能扫码，小焦这边只搬了工具、没搬这个界面 ——
+    于是用户在小焦里根本没法重新登录（而 412 风控最常见的解法就是重新登录）。
+    """
+    try:
+        X = _tools()
+        raw = str(X.run_tool("bili_login", {}, force=True))
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:120])}
+    # 工具返回里有 key 和一张 PNG 的落盘路径：找出路径 → 读成 base64
+    key = ""
+    try:
+        d = json.loads(raw)
+        key = str(d.get("key") or d.get("login_key") or "")
+    except Exception:      # noqa: silent-ok — 不是 JSON 就按文本找
+        import re as _re6
+        m = _re6.search(r'"?key"?\s*[:=]\s*"?([A-Za-z0-9_-]{6,})', raw)
+        key = m.group(1) if m else ""
+    import re as _re7
+    path = ""
+    for m in _re7.finditer(r"""([A-Za-z]:[\\/][^\s"']+?\.png)""", raw, _re7.I):
+        if os.path.exists(m.group(1)):
+            path = m.group(1)
+            break
+    if not path:
+        for m in _re7.finditer(r'([^\s"\']+\.png)', raw):
+            cand = os.path.join(_DIR, m.group(1))
+            if os.path.exists(cand):
+                path = cand
+                break
+    if not path:
+        return {"ok": False, "key": key, "error": "没拿到二维码图片：%s" % raw[:160]}
+    try:
+        import base64
+        b64 = base64.b64encode(open(path, "rb").read()).decode()
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "error": "读二维码失败：%s" % str(e)[:80]}
+    return {"ok": True, "key": key, "img": "data:image/png;base64," + b64,
+            "tip": "手机 B站 → 我的 → 扫一扫。约 180 秒有效。"}
+
+
+def login_poll(key):
+    """查扫码结果：waiting / scanned / ok / expired。"""
+    try:
+        X = _tools()
+        raw = str(X.run_tool("bili_login_check", {"key": key}, force=True))
+        return {"ok": True, "raw": raw[:400]}
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:120])}
+
+
 def register(app):
     """把接口挂到 Flask 上。**只挂路由，不碰别的**。"""
     from flask import jsonify, request
+
+    @app.route("/api/bili_duty/login_start", methods=["POST"])
+    def api_bili_login_start():
+        return jsonify(login_start())
+
+    @app.route("/api/bili_duty/login_poll", methods=["POST"])
+    def api_bili_login_poll():
+        d = request.get_json(silent=True) or {}
+        return jsonify(login_poll(str(d.get("key") or "")))
 
     @app.route("/api/bili_duty", methods=["GET", "POST"])
     def api_bili_duty():

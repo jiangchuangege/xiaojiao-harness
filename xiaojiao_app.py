@@ -21670,6 +21670,13 @@ try{ if(localStorage.getItem('xj_social')==='1'){
           <div class="brow"><div><div class="bl">每天最多搞几条</div>
             <div class="bh">填 0 = 不自动刷（仍然能手动跑）</div></div>
             <input type="number" id="b_perDay" min="0" max="200" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">B站 登录</div>
+            <div class="bh">扫码登录（凭证过期/被风控 412 时先来这儿重登）。约 180 秒有效，点完立刻扫。</div></div>
+            <button class="btn-sec" onclick="biliLogin()" style="flex:0 0 auto">📷 生成二维码</button></div>
+          <div id="biliLoginBox" style="display:none;margin:8px 0">
+            <img id="biliLoginImg" style="width:180px;height:180px;border-radius:8px;background:#fff"/>
+            <div class="bh" id="biliLoginTip" style="margin-top:6px"></div>
+          </div>
           <div class="brow"><div><div class="bl">自动轮自检</div>
             <div class="bh">点一下立刻判断"现在该不该自己跑"，并把判断理由显示出来（不会白等一晚上）</div></div>
             <button class="btn-sec" onclick="biliTick()" style="flex:0 0 auto">🩺 自检一次</button>
@@ -22687,6 +22694,37 @@ const BILI_LIST=['keywords','excludeWords'];
 function biliMsg(t,ok){const m=document.getElementById('biliMsg');if(!m)return;
   m.textContent=t||'';m.style.color=ok===false?'#f87171':(ok===true?'#4ade80':'#9aa4b2');}
 function biliMark(){biliMsg('有未保存的修改',null);}
+// 【扫码登录】点「生成二维码」→ 后端出图（base64 data URL）→ 显示 → 每 3 秒查一次结果
+async function biliLogin(){
+  const box=document.getElementById('biliLoginBox'),img=document.getElementById('biliLoginImg'),
+        tip=document.getElementById('biliLoginTip');
+  if(tip)tip.textContent='正在生成…';
+  if(box)box.style.display='block';
+  try{
+    const d=await (await fetch('/api/bili_duty/login_start',{method:'POST'})).json();
+    if(!d.ok){ if(tip)tip.textContent='❌ '+(d.error||'生成失败'); if(img)img.removeAttribute('src'); return; }
+    if(img)img.src=d.img;
+    if(tip)tip.textContent=(d.tip||'用手机 B站扫一扫')+'  当前：等待扫码…';
+    const key=d.key||'';
+    let n=0;
+    const t=setInterval(async function(){
+      n++;
+      if(n>60){clearInterval(t);if(tip)tip.textContent='二维码可能过期了，重新点一次';return;}
+      try{
+        const r=await (await fetch('/api/bili_duty/login_poll',{method:'POST',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key})})).json();
+        const raw=String((r&&r.raw)||'');
+        if(raw.indexOf('ok')>=0&&raw.indexOf('already_logged_in')<0&&raw.indexOf('scanned')<0){
+          clearInterval(t); if(tip)tip.textContent='✅ 登录成功，可以关掉这个框了';
+        }else if(raw.indexOf('scanned')>=0){
+          if(tip)tip.textContent='已扫码，请在手机上点确认…';
+        }else if(raw.indexOf('expired')>=0){
+          clearInterval(t); if(tip)tip.textContent='⏰ 二维码过期了，重新点一次';
+        }
+      }catch(e){}
+    },3000);
+  }catch(e){ if(tip)tip.textContent='❌ 请求失败：'+e; }
+}
 function biliTab(el,name){
   document.querySelectorAll('#sec-bili .btab').forEach(x=>x.classList.toggle('on',x===el));
   document.querySelectorAll('#sec-bili .bpane').forEach(p=>p.style.display=(p.id==='bpane-'+name)?'':'none');
