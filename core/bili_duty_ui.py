@@ -1131,6 +1131,25 @@ def scan_mentions(c=None):
     except Exception as e:      # noqa: BLE001
         return {"ok": False, "why": "@ 我的接口没取到：%s" % str(e)[:80]}
     items = ((data.get("at") or {}).get("items")) or []
+    # 【**回复**也要扫】实测用户："我在他评论下回他，他就不回了"。
+    #   B站 把"@我"和"回复我"分成两个接口：at 走 `bili_received_at_and_likes`，
+    #   回复走 `bili_received_replies`。只扫 at 就会漏掉"直接回它的评论"这种情况。
+    #   回复类字段：id=通知id、item.subject_id=视频aid、item.source_id=要回的 rpid、
+    #              item.source_content=他说的话。
+    try:
+        _rp = json.loads(str(X.run_tool("bili_received_replies", {}, force=True)))
+        for _it in (_rp.get("items") or [])[:20]:
+            _in = _it.get("item") or {}
+            if not _in.get("source_id"):
+                continue
+            items.append({"id": "r:" + str(_it.get("id") or ""),
+                          "user": _it.get("user") or {},
+                          "item": {"subject_id": _in.get("subject_id"),
+                                   "source_id": _in.get("source_id"),
+                                   "source_content": _in.get("source_content") or "",
+                                   "title": _in.get("title") or ""}})
+    except Exception as _re:      # noqa: silent-ok — 回复类拉不到就只处理 @
+        LOG.info("扫回复失败（忽略）：%s", str(_re)[:80])
     seen_path = os.path.join(_ROOT_LOGS, "bili_replied.json")
     try:
         replied = json.load(open(seen_path, encoding="utf-8"))
@@ -1152,7 +1171,13 @@ def scan_mentions(c=None):
             continue
         # 回复时：优先用这条通知自己的 id（能挂在你的新评论下面）；
         # 不行（B站 12006「没有该评论」）再退回评论树根 source_id。
-        _rpid_try = [str(it.get("id") or ""), str(inner.get("source_id") or "")]
+        # 回复时：优先用这条通知自己的 id（能挂在你的新评论下面）；
+        # 不行（B站 12006「没有该评论」）再退回评论树根 source_id。
+        # 注意：回复类的通知 id 我加了 "r:" 前缀（用来区分来源），**不能转 int** → 过滤掉。
+        _rpid_try = [x for x in (str(it.get("id") or ""), str(inner.get("source_id") or ""))
+                     if x.isdigit()]
+        if not _rpid_try:
+            continue
         rp = _rpid_try[0]
         # **subject_id 才是视频 aid**；`business_id` 恒为 "1"（业务类型），拿它换 bvid 必然失败
         # （实测报"这条 @ 找不到对应视频（business_id=1）"）。
@@ -1176,9 +1201,24 @@ def scan_mentions(c=None):
             continue
         try:
             out = ""
+            _who = str((it.get("user") or {}).get("nickname") or "")
+            _said = str(inner.get("source_content") or inner.get("title") or "")[:80]
+            # 用模型按人设回一句（模板太机械，用户明确要"模型生成"）
+            _txt2 = ""
+            try:
+                _persona = str(c.get("personaPrompt") or "").strip()[:800] \
+                    or "你是个说话口语、短句、带点小脾气的人。"
+                _o = X.llm_chat([{"role": "system", "content":
+                                  _persona + "\n\n有人在 B站 评论下回你。用一两句口语回他，"
+                                             "别客套、别解释、只输出你要发的那句话。"},
+                                 {"role": "user", "content": "他说：%s" % (_said or "（无文字）")}])
+                _txt2 = str(_o or "").strip()[:120]
+            except Exception:      # noqa: silent-ok — 模型不可用就用一句短的
+                _txt2 = ""
+            _txt2 = _txt2 or "看到了，我在呢。"
             for _rp in [x for x in _rpid_try if x]:
                 out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(_rp),
-                                                    "text": "看到了，我在呢。", "force": True},
+                                                    "text": _txt2, "force": True},
                                      force=True))
                 if "12006" not in out and "没有该评论" not in out:
                     break
