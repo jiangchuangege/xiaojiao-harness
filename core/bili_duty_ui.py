@@ -1208,13 +1208,37 @@ def scan_mentions(c=None):
             try:
                 _persona = str(c.get("personaPrompt") or "").strip()[:800] \
                     or "你是个说话口语、短句、带点小脾气的人。"
-                _o = X.llm_chat([{"role": "system", "content":
-                                  _persona + "\n\n有人在 B站 评论下回你。用一两句口语回他，"
-                                             "别客套、别解释、只输出你要发的那句话。"},
-                                 {"role": "user", "content": "他说：%s" % (_said or "（无文字）")}])
-                _txt2 = str(_o or "").strip()[:120]
+                _sys2 = (_persona +
+                         "\n\n**这是 B站 评论区，不是小说。**"
+                         "\n- 只写你要发出去的那条评论本身，一到两句，口语。"
+                         "\n- **禁止旁白**：不许写动作、神态、心理描写，"
+                         "不许出现『你随口回了一句』『说罢』『眼睛还盯着』这类叙述。"
+                         "\n- 不许写『回复某某：』前缀，不许引号包住整句。"
+                         "\n- 直接对着他说，别描述你在怎么说。")
+                _msgs2 = [{"role": "system", "content": _sys2},
+                          {"role": "user", "content": "他说：%s" % (_said or "（无文字）")}]
+                _txt2 = str(X.llm_chat(_msgs2) or "").strip()[:120]
+                # 【旁白检测】命中就重写一次（小模型很容易又写成小说）
+                _NARR = ("你随口", "说罢", "眼睛还", "手停了", "语气轻快", "像是在",
+                         "回了你一句", "盯着", "顿了顿", "你补充")
+                if any(k in _txt2 for k in _NARR):
+                    _txt2 = str(X.llm_chat(
+                        [{"role": "system", "content":
+                          "把下面这段话**改成一条能直接发在 B站 评论区的回复**："
+                          "只要一到两句人话，不要任何旁白、动作、神态描写。只输出那句话。"},
+                         {"role": "user", "content": _txt2}]) or "").strip()[:120]
             except Exception:      # noqa: silent-ok — 模型不可用就用一句短的
                 _txt2 = ""
+            # 去掉"回复某某："前缀和首尾引号，并剥掉思考标签（模型爱吐 </think>）
+            try:
+                _txt2 = str(X._strip_think(_txt2) or "").strip()
+                # 去掉各种"说话人前缀"：回复某某： / 你： / 我： / 鲸鱼娘： …
+                _txt2 = re.sub(r"^\s*回复\s*[^：:]{1,12}\s*[：:]\s*", "", _txt2).strip()
+                _txt2 = re.sub(r"^\s*(?:你|我|他|她)\s*[：:]\s*", "", _txt2).strip()
+                _txt2 = re.sub(r"^\s*[\u4e00-\u9fffA-Za-z]{2,6}\s*[：:]\s*(?=\S)", "", _txt2).strip()
+                _txt2 = _txt2.strip('"“”「」')
+            except Exception:      # noqa: silent-ok
+                pass
             _txt2 = _txt2 or "看到了，我在呢。"
             for _rp in [x for x in _rpid_try if x]:
                 out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(_rp),
