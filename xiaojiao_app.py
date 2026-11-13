@@ -15966,6 +15966,26 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
                 LOG.warning("模型调用失败（%s），转入载体的代码层兜底", e.__class__.__name__)
                 answer = None
 
+    # 【漏洞表直出】用户实测：它调了 collect_vulnerabilities 拿到 5 行真数据，
+    #   却把表格**复述成一段解释**（"最容易错的地方是时间范围…"），表格被埋在下面对话轨迹里。
+    #   用户要的是数据本身。所以：**本轮真取到了 CVE 表格，就直接把表格当答案**，
+    #   不让模型再解释一遍（解释可以有，但不能替代数据）。
+    try:
+        if answer and tool_trace:
+            _vt = ""
+            for _te in tool_trace:
+                _res = str((_te or {}).get("result") or "")
+                if ("| CVE" in _res) or ("CVE-20" in _res and "|" in _res and "评分" in _res):
+                    _vt = _res
+                    break
+            if _vt and ("| CVE" not in str(answer)):
+                LOG.info("漏洞表直出：答案里没有表格，用载体取到的表格替换模型的复述")
+                answer = ("**漏洞清单（载体实取，NVD 结构化数据）**\n\n"
+                          + _vt[:4000]
+                          + "\n\n（以上是接口原样返回；需要我按软件/版本筛一遍就说。）")
+    except Exception as _vte:      # noqa: silent-ok — 这段出错就用模型原答案
+        LOG.debug("漏洞表直出失败（忽略）：%s", _vte)
+
     # ② 兜底：抓取类意图直通（模型没自己调工具时走这条）
     #     判据是"没有抓到东西"，不只是 tool_trace 为空 —— 见下面 ②c 的说明。
     #     【2026-10-17 加一条】③0 已经用电子书工具答过了就别再抓一遍：实测「把书目整理成清单」
