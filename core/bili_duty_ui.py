@@ -706,6 +706,15 @@ def run_round(allow_comment=None, budget=None, manual=True):
     else:
         note = "只读（没发评论）：设置里「自动发评论」是关的"
     note += "；学了 %d 条" % learned_n
+    # 【看完要给你报告】用户原话："他看完视频也不私信向我报告"。
+    #   实测：小焦这边**从来没有**发私信的代码（原版 DSH 插件的值班循环没搬过来），
+    #   而且 dmUid 是 0 —— 没人可发。这里补上：配了 dmUid 就发一条汇总私信。
+    try:
+        _dm = _dm_report(comments, c)
+        if _dm:
+            note += "；" + _dm
+    except Exception as _de:      # noqa: silent-ok — 私信失败不影响这一轮
+        LOG.info("[刷B站] 私信报告失败：%s", str(_de)[:80])
     return {"ok": True, "picked": len(picked), "commented": posted, "learned": learned_n,
             "items": comments,
             "filtered": _dropped_ex, "note": note
@@ -861,6 +870,34 @@ def save(patch):
     except Exception as e:      # noqa: BLE001 — 存不下去要说清，不能假报成功
         return False, "保存失败：%s" % str(e)[:120]
     return True, "已保存：" + "、".join(changed)
+
+
+def _dm_report(items, c):
+    """看完这一轮 → 给**你**发一条私信汇总。没配 uid 就如实说没发。
+
+    【为什么单独写】`bili_send_message` 工具一直有，但**没有任何地方调它** ——
+    用户看到的"看完不报告"不是它懒得发，是**这条路径根本不存在**。
+    """
+    mode = str(c.get("dmMode") or "off")
+    uid = int(c.get("dmUid") or c.get("dmOwnerUid") or 0)
+    if mode == "off":
+        return ""
+    if uid <= 0:
+        return "私信报告没发：dmUid 是 0（在设置里填你的 B站 uid）"
+    if not items:
+        return "私信报告没发：这一轮没看到新视频"
+    lines = ["这一轮看了 %d 条：" % len(items)]
+    for it in items[:8]:
+        lines.append("· %s" % str(it.get("title") or it.get("bvid") or "")[:40])
+    try:
+        X = _tools()
+        r = str(X.run_tool("bili_send_message",
+                           {"uid": uid, "text": "\n".join(lines)[:900], "force": True},
+                           force=True))
+        ok = ("已发" in r) or ("ok" in r.lower())
+        return "私信报告已发（uid %s）" % uid if ok else ("私信没发成：%s" % r[:60])
+    except Exception as e:      # noqa: BLE001
+        return "私信发送出错：%s" % str(e)[:60]
 
 
 def _in_window(now, c):
