@@ -1215,7 +1215,7 @@ def scan_mentions(c=None):
                 if not _dig and not _ttl:
                     why_not = "取不到视频内容，这条不回"
                     continue
-                _txt2, _sc, _why_bad = _gen_comment(X, _persona, _said, _dig, _ttl, tries=3)
+                _txt2, _sc, _why_bad = _gen_comment(X, _persona, _said, _dig, _ttl, tries=6)
                 if not _txt2:
                     LOG.info("评论不合格，这条不发（最高分 %s：%s）", _sc, (_why_bad or [""])[0])
                     continue
@@ -1626,7 +1626,7 @@ def _human_score(t):
     return max(0, score), why
 
 
-def _gen_comment(X, persona, said, digest="", title="", tries=3):
+def _gen_comment(X, persona, said, digest="", title="", tries=6):
     """生成一条"像人话"的评论：**生成 → 评分 → 不合格就重写**（最多 tries 次）。
 
     返回 (文本, 分数, 说明)。全都不合格返回 ("", 最高分, 原因) → 调用方**不发**。
