@@ -105,14 +105,23 @@ B站 有人 @ 了它
 
 ---
 
-## 四、现在的短板（诚实标注）
+## 四、这四件事的实际情况（**逐条查过代码**）
 
-| 环节 | 现状 | 缺什么 |
+> 上一版我凭印象写了"短板"，**四条全写错了** —— 用户当场指出"这些我都有了"。
+> 这一版每条都附代码依据，查不到就不写。
+
+| 能力 | 实际有吗 | 证据 |
 |---|---|---|
-| 心的**连续性** | `inner.py` 有可升降的量，但**没有跨会话的完整自传** | 一条"我是谁、经历过什么"的长期叙事 |
-| 情绪的**归因** | `feeling_memory` 记了情绪，但**不解释为什么** | 情绪 → 事件的因果链 |
-| 表达的**分寸** | 靠提示词约束（禁旁白/禁前缀） | 缺一个"这话像不像人"的自动评分 |
-| 记忆**证据链** | `spirit_memory` 已加 `basis`/`verified` | 还没把证据展示到界面上 |
+| **跨会话叙事/自传** | ✅ **有** | `core/narrative.py`：`materials()` 攒素材、`narrative()` 出叙事、`note_narrative()` 记一条、`render()`/`history()` 可回顾；`xiaojiao_app.py:5841` 里 `st.note_narrative(said)` 每轮都在记。`self_model.py` 也带叙事。 |
+| **情绪归因** | ✅ **有** | `core/causal_hooks.py`（因果钩子，`enabled()/kinds()` 按类挂）+ `memory_deep.py` 的因果相关处理。 |
+| **表达分寸（自动评分）** | ✅ **有** | `core/answer_gate.py`（`extract_claims`/`is_creative`，对回答做闸）、`core/dual_check.py`（回答双检，可换审阅火种）、`core/capability_parity.py`。B站 评论另有 `_human_score()`（本轮新增）。 |
+| **记忆证据链展示** | ✅ **有** | `core/proof_panel.py`：`collect()` 采集证据、`_parity_summary()` 汇总、`_card()` 渲染成卡片。`self_audit` 也挂到了工具入口（`xiaojiao_app.py:13973`）。 |
+
+**结论：这四条不是短板，是我没查。** 已按代码依据改正。
+
+真正还薄的地方（也附依据，不猜）：
+- `spirit_memory` 的 `basis/verified` 字段是**本轮**才加的，历史 119 条记录里没有这两个字段（老数据无标记）。
+- `_human_score()` 只覆盖 B站 评论这一条路径，**群聊/好友/朋友圈**还没接同一个评分器。
 
 ---
 
