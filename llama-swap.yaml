@@ -30,14 +30,19 @@ models:
     cmd: "C:/llama/llama-server.exe --port ${PORT} --model G:/moxing__xiaojiao/推理模型/DeepSeek-V4-Pro-Qwen3.5-4B-MTP-Q8_0.gguf -c 20000 -ngl 99 --reasoning off"
     ttl: 0
     useModelName: deepseek-v4
-  qwopus3.5-4b-coder-mtp-q5_k_m.gguf:
-    # 【2026-09-19 修：路径里有空格必须加引号】用户接的这个模型放在 `C:/xiaojiao/xiaojiao harness/` ——
-    #   **目录名里有个空格**，而上面那条路径没加引号 → 命令行被拆成两截：
-    #   llama-server 收到 `harness\Qwopus3.5-4B-Coder-MTP-Q5_K_M.gguf` 这种残片 → 报
-    #   `error: invalid argument` → **进程立刻退出** → llama-swap 只报
-    #   「unsupported error: upstream command exited prematurely」→ 页面显示 HTTP 500。
-    #   实测复现：直接起一次 llama-server 拿到同一行 `invalid argument`，所以根因不是模型坏了、也不是显存。
-    #   （`${PORT}` 是 llama-swap 的占位符，在**双引号**里才会被替换，所以外层用单引号、内层用双引号。）
-    cmd: 'C:/llama/llama-server.exe --port ${PORT} --model "C:/xiaojiao/xiaojiao harness/Qwopus3.5-4B-Coder-MTP-Q5_K_M.gguf" -c 20000 -ngl 99 --reasoning off'
-    ttl: 0
-    useModelName: qwopus3.5-4b-coder-mtp-q5_k_m.gguf
+  # 【2026-11-13 停用：这个路由的模型文件已经不在机器上了】
+  #   它指向 `C:/xiaojiao/xiaojiao harness/Qwopus3.5-4B-Coder-MTP-Q5_K_M.gguf`，
+  #   而仓库已经搬到 `G:\xiaojiao\xiaojiao harness`；全盘也搜不到这个 .gguf 了。
+  #   留着它的后果和上面 coder 那条一样且更坏：**不报错，只会一直等**。
+  #   等模型文件回来了，把下面三行取消注释即可（cmd 的引号写法是对的，别删）。
+  # qwopus3.5-4b-coder-mtp-q5_k_m.gguf:
+  #   cmd: 'C:/llama/llama-server.exe --port ${PORT} --model "C:/xiaojiao/xiaojiao harness/Qwopus3.5-4B-Coder-MTP-Q5_K_M.gguf" -c 20000 -ngl 99 --reasoning off'
+  #   ttl: 0
+  #   useModelName: qwopus3.5-4b-coder-mtp-q5_k_m.gguf
+  #
+  #   （当年那条老注释，留作教训：目录名里有个空格而路径没加引号 → 命令行被拆成两截 →
+  #    llama-server 收到 `harness\Qwopus3.5-4B-Coder-MTP-Q5_K_M.gguf` 这种残片 → 报
+  #    `error: invalid argument` → 进程立刻退出 → llama-swap 只报
+  #    「unsupported error: upstream command exited prematurely」→ 页面显示 HTTP 500。
+  #    所以将来恢复时**外单内双**的引号写法不能改。）
+

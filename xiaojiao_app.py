@@ -1727,19 +1727,55 @@ def _answer_sane(a):
 
 
 def _strip_think(text):
-    """剥掉模型输出的思维块标签（`<think>…</think>` / `<thinking>` / 残留的半个标签）。
+    """剥掉模型输出的思维块标签（`<think>` / `<thinking>` / **`<思考>`** / 残留的半个标签）。
 
-    真实缺陷：模型偶尔把空的 `<think></think>` 一起吐到正文里，聊天窗就显示成
-    两行莫名其妙的标签。这里按"整块删掉 + 残留标签删掉 + 顺带清空多余空行"处理。
+    【为什么必须算上中文 `<思考>`】这是本项目**自己要求模型用的标签**（见回答格式指令），
+    而这里原来只认英文 `think/thinking/reasoning` —— 于是 `_strip_think` 对
+    `<思考>…</思考>` **完全无效**，那块推理就一路灌进了：
+      感知层（"意味着「<思考> 我需要先理解…」"）、心、记忆、社交消息（气泡里带着标签）、
+      以及最终回答。
+    实测后果（用户截图）：好友消息里是「<思考> … </思考> 你好，我是小焦…」两段粘在一起；
+    流水里"感知到的事"变成了它自己的推理原文。**一个标签没认全，脏进了五个地方。**
     """
     s = str(text or "")
     # 注意：这里必须连**单独的闭标签**也算命中（`</think>` 里并没有 "<think" 这个子串）——
     # 早期版本就是因为这个判断写窄了，"</think>" 残留在正文里。
-    if not re.search(r"</?(?:think|thinking|reasoning)>", s, re.I):
+    if not re.search(r"</?(?:think|thinking|reasoning|思考|推理)>", s, re.I) and "【" not in s:
         return s
-    s = re.sub(r"(?is)<(think|thinking|reasoning)>.*?</\1>", "", s)      # 成对：整块删
-    s = re.sub(r"(?is)</?(think|thinking|reasoning)>", "", s)            # 未闭合/残留：只删标签
+    s = re.sub(r"(?is)<(think|thinking|reasoning|思考|推理)>.*?</\1>", "", s)   # 成对：整块删
+    s = re.sub(r"(?is)</?(think|thinking|reasoning|思考|推理)>", "", s)        # 未闭合/残留
+    # 【全角方括号那套也要认】实测模型会换写法：`【思考】…【回答】`。
+    # 只认尖括号的话，整段（含推理）就原样留在回答里（用户截图：思考和回答挤在一条消息）。
+    if "【" in s:
+        # 有【回答】就只要它后面的；没有就只删掉【思考】那段
+        m = re.search(r"【回答】", s)
+        if m:
+            s = s[m.end():]
+        s = re.sub(r"(?is)【思考】.*?(?=【回答】|$)", "", s)
+        s = re.sub(r"(?is)【(思考|推理|回答)】", "", s)
     return re.sub(r"\n{3,}", "\n\n", s).strip()
+
+
+def _looks_like_critique(text):
+    """这段输出是"挑错/审阅"的**过程**，而不是给用户的答案吗？
+
+    【为什么要这道闸】深度模式第 3 遍的提示词是「换一个角度审一遍：先挑出最容易错的地方，
+    再给答案」。实测模型只写了前半句（"先说最容易错的地方：1. 不直接回答…"），
+    而择优器把这段**评论**当成了候选答案并选中 → 用户问「你能做什么」，收到的却是
+    "我经常绕圈子"这种自我检讨。**审阅产物不能当答案交付。**
+    """
+    t = str(text or "").strip()
+    if not t:
+        return False
+    head = t[:40]
+    pats = ("先说最容易错", "最容易错的地方", "第一步：找出", "先挑出", "我审一遍",
+            "让我审一遍", "审阅如下", "问题在于", "评分：", "自评：")
+    if any(head.startswith(p) or p in head for p in pats):
+        return True
+    # 通篇没有一句"给对方的话"（全是自指/复盘），也算审阅
+    if len(t) < 120 and any(w in t for w in ("我经常", "我会绕", "我的问题", "我需要改正")):
+        return True
+    return False
 
 
 def resolve_search_query(text):
@@ -3192,7 +3228,11 @@ def _group_act(member, messages):
                     _hint = str(_msg.get("content") or "")
             _hint = " ".join(_hint.split())[:600]
             if _hint:
-                _CTX["user_input"] = "群聊·%s：%s" % (member.get("name") or "", _hint)
+                # 【别把"群"字喂给检索】原来拼成「群聊·小焦：<话题>」→ 检索层把"群"当关键词，
+                #   搜回来的是**抽象代数里的群论**（非空集合 G、封闭性、逆元…），
+                #   于是群里聊"怎么超越大模型"，它一本正经讲起了数学群。实测截图就是这个。
+                #   改成不含"群"的中性说法，名字也不放进去（名字不是检索词）。
+                _CTX["user_input"] = "话题：%s" % _hint
         except Exception as _he:      # noqa: silent-ok
             LOG.debug("群组动手·上下文提示失败：%s", _he)
         _CTX["intent"] = "chat"
@@ -3200,7 +3240,10 @@ def _group_act(member, messages):
         #   （事件账里 act_try 中了 5 次，tools 全是空）。干活常用的是这几个。
         _work_tools = ["write_file", "edit_file", "read_file", "list_files", "run_command",
                        "web_search", "get", "fetch", "now", "net_ip", "get_weather",
-                       "skill_list", "forge_plugin"]
+                       "skill_list", "forge_plugin",
+                       # 【找现成的】用户要求"去 GitHub 找、别自己写" —— 这三件必须摆在手边，
+                       # 否则它们只有"自己写"一条路（提示词压不住 4B，得给真出路）。
+                       "plugin_spec", "github_find_plugin", "github_install_plugin"]
         _names = []
         try:
             _all = _build_tools() or []
@@ -3209,6 +3252,25 @@ def _group_act(member, messages):
         except Exception as e:      # noqa: silent-ok — 建表失败就退化成"没有本轮上下文"
             LOG.debug("群组动手·建工具表失败：%s", e)
         _subset = [x for x in _work_tools if (not _names or x in _names)]
+        # 【用户指令落到工具表】用户说过"不要自己写、去下载" → 干脆**不把 forge/write 摆给它**。
+        #   实测：只在提示词里写，4B 照样调 forge_plugin 自己造（用户原话"他们就是不听"）。
+        #   不给选项，比劝它别选可靠得多。
+        try:
+            from core import ai_group as _AG2
+            # 【读原始存储，不要用 list_groups()】实测：`list_groups()` 只投影部分字段
+            #   （id/name/topic/members…），**不含 `directive`** —— 于是"用户指令"永远读成空，
+            #   过滤整条失效，forge_plugin 照样被调用（用户看到"还在自己瞎写"）。
+            _raw = _AG2._load() or {}
+            _dir_txt = " ".join(
+                str(((_g or {}).get("directive") or {}).get("text") or "")
+                for _g in (_raw.get("groups") or []))
+            if _dir_txt.strip():
+                _drop = [x for x in _subset if _AG2._order_forbids(_dir_txt, x)]
+                if _drop:
+                    LOG.info("群组：按用户指令（%s）撤掉工具 %s", _dir_txt[:40], _drop)
+                    _subset = [x for x in _subset if x not in _drop]
+        except Exception as _de:      # noqa: silent-ok — 读不到指令就照原样给工具
+            LOG.debug("群组·用户指令过滤失败：%s", _de)
         if _names:
             try:
                 from core import tool_gate as _TG
@@ -4549,6 +4611,9 @@ _THINK_TH = threading.local()    # 当前线程正在为哪个 sid 记账（日�
 _THINK_CUR = {"q": None, "sid": ""}
 
 
+_THINK_SUB_PREFIX = ("群组", "朋友圈", "好友", "私聊", "闭环流量", "固化队列", "社交", "群聊")
+
+
 class _ThinkLogHandler(logging.Handler):
     """把本轮日志按会话收进去。只收 INFO 及以上，且只在"这一轮"期间生效。"""
 
@@ -4562,8 +4627,17 @@ class _ThinkLogHandler(logging.Handler):
             msg = record.getMessage()
             if not msg:
                 return
+            # 【标出"别的子系统"的行】群聊/朋友圈/好友这些是**后台子系统**在跑，
+            # 跟"这一问的答案是怎么来的"无关。混在思考流水里，用户看到的就是一堆垃圾
+            # （实测：问一句"你能做什么"，流水里冒出 8 条"互相交友"群消息）。
+            # 这里打上 sub 标记，前端默认折叠，需要时才展开。
+            _sub = any(str(msg).startswith(p) for p in _THINK_SUB_PREFIX)
+            # 【别把细节截掉】用户要的是"具体思考内容和所有细节"，原来一刀 400 字，
+            # 长句（比如"最后一条：<完整提示词>"）从中途断掉，看着就像卡了。
+            # 现在放到 2000 字，**超了也明确标出来**（"…[已截断]"），不让人以为是原话。
+            _m = msg if len(msg) <= 2000 else (msg[:2000] + " …[已截断 %d 字]" % (len(msg) - 2000))
             dq.append({"t": time.strftime("%H:%M:%S"), "sec": round(record.created % 1, 2),
-                       "lvl": record.levelname, "msg": msg[:400]})
+                       "lvl": record.levelname, "msg": _m, "sub": bool(_sub)})
         except Exception:      # noqa: silent-ok — 记账坏了不能影响生成
             pass
 
@@ -6264,7 +6338,11 @@ def llm_chat(messages, temperature=None):
     # 【思考流水：让用户看见"模型真的开始想了"】
     try:
         _nmsg = len(messages or [])
-        _last = str(((messages or [{}])[-1] or {}).get("content") or "")[:60].replace("\n", " ")
+        # 【别在源头把提示词切碎】原来这里是 `[:60]`，于是流水里"最后一条"永远停在
+        # 半句话上（用户看到的就是「…· 世」这种莫名中断，以为是界面截断）。
+        # 现在放到 600 字，真的超了也**明确标出来**，不让人猜。
+        _raw_last = str(((messages or [{}])[-1] or {}).get("content") or "").replace("\n", " ")
+        _last = _raw_last[:600] + (" …[提示词共 %d 字]" % len(_raw_last) if len(_raw_last) > 600 else "")
         _note("调用火种 %s（喂进去 %d 条消息）｜最后一条：%s" %
               (str((_CTX.get("route") or {}).get("model") or MODEL_NAME or "?"), _nmsg, _last))
     except Exception:      # noqa: silent-ok
@@ -6771,6 +6849,70 @@ def _note(msg):
         dq.append({"t": time.strftime("%H:%M:%S"), "lvl": "NOTE", "msg": _txt[:400]})
     except Exception:      # noqa: silent-ok
         pass
+
+
+def _asks_my_bili_history(text):
+    """用户在问"**小焦自己**今天/最近看了哪些 B站 视频"吗？
+
+    判据（三条同时满足，宁可漏也别误伤）：
+      ① 提到 B站/视频；② 提到"我"或"你"（问的是**自己**的观看史，不是泛泛问 B站 有什么）；
+      ③ 有"看/刷/瞧"这类动词，并且带 今天/最近/哪些/什么 之一。
+    为什么不用模型判：这条必须**零幻觉** —— 判错了它就会编一份观看记录，
+    那比不回答更糟。规则判 + 直答，是这里唯一能保证"说的就是盘上记的"的做法。
+    """
+    t = str(text or "")
+    if not t:
+        return None
+    low = t.lower()
+    if not any(w in low for w in ("b站", "bilibili", "哔哩", "视频")):
+        return None
+    # ② 问的是"自己的观看史"：要么明说"我/你"，要么用的是"看了/刷了"这种**已发生**的说法
+    #    （用户实测原话是「今天看了b站的哪些视频呀」—— **没有主语**，
+    #     严格要求"我/你"就会漏判，于是又掉回闲聊让模型编。所以这里放宽。）
+    _self_ref = any(w in t for w in ("我", "你", "小焦", "咱"))
+    _past_verb = any(w in t for w in ("看了", "刷了", "看过", "刷过", "瞧过", "逛过"))
+    if not (_self_ref or _past_verb):
+        return None
+    if not any(w in t for w in ("看", "刷", "瞧", "逛")):
+        return None
+    if any(w in t for w in ("今天", "今日")):
+        return "today"
+    if any(w in t for w in ("最近", "这两天", "这几天")):
+        return "recent"
+    if any(w in t for w in ("哪些", "什么", "多少")):
+        return "recent"
+    return None
+
+
+def _my_bili_history_answer(scope):
+    """从**真实记录**里取它看过的视频，拼成一段人话。取不到就如实说取不到。"""
+    try:
+        from core import bili_duty_ui as _BDU
+        cards = _BDU.gallery("", 400)
+    except Exception as e:      # noqa: silent-ok — 插件没装就如实说
+        return "我这边没接上 B站 的记录（%s），所以给不出「今天看了什么」。" % str(e)[:60]
+
+    today = time.strftime("%Y-%m-%d")
+    if scope == "today":
+        rows = [c for c in cards if (c.get("date") or "") == today]
+        head = "今天看了 %d 条 B站 视频" % len(rows)
+    else:
+        rows = cards[:10]
+        head = "最近看过 %d 条" % len(cards)
+
+    if not rows:
+        return ("%s。我查了自己的记录（`bili_duty/seen.md`），今天确实还没有看过的视频 ——"
+                "如果刚刷过，可能是那一轮还没落盘。" % head)
+
+    lines = []
+    for i, c in enumerate(rows[:10], 1):
+        v = c.get("verdict") or ""
+        extra = ("（%s）" % v) if v else ""
+        up = ("｜%s" % c["up"]) if c.get("up") else ""
+        lines.append("%d. %s%s%s" % (i, (c.get("title") or c.get("bvid") or "")[:48], up, extra))
+    more = ("\n…还有 %d 条" % (len(rows) - 10)) if len(rows) > 10 else ""
+    return ("%s：\n%s%s\n\n（这些来自我自己的观看记录 `seen.md`，不是临时想的。"
+            "要看带封面的完整列表，去 设置 → 刷B站 → 日常。）" % (head, "\n".join(lines), more))
 
 
 def run_tool(name, args, force=False):
@@ -11743,11 +11885,41 @@ def _spirit_recall(query):
     模型很容易把它当结论复述出来 —— 那就成了拿旧话敷衍。所以注入文本里显式写死这条。
 
     【失败一律返回空串】精神记忆取不到只是少一份参考，**绝不能因此答不了**。
+
+    【只在高相关时注入（实测改）】原来 top-3 **无条件**塞进 system。实测 5 题：
+    1 好 3 平 **1 差** —— 对模型本来就会的常识题（标题封面有什么用、下班先做什么），
+    注入的记忆反而把答案带偏（它去复述记忆里的另一件事）。
+    所以现在加两道门槛：
+      ① 相似度必须够高（默认 0.62），够不着就**一个字都不注**；
+      ② 最多 2 条，且只留相似度最高的那几条。
+    宁可少注一次，也不要用不相关的记忆污染它本来对的答案。
     """
     try:
         from core import spirit_memory as _sm
-        hits = _sm.recall(query, k=3)
+        hits = _sm.recall(query, k=3) or []
+        # 【为什么不能只看 sim】实测这份嵌入对**任何**两句话都给 0.62~0.82，
+        #   拿它当门槛等于没门槛（"下班回家先做什么" 召回了 "用户住在菏泽。"）。
+        #   真正的判据是**有没有共同的实词**：问题与认知至少共享 2 个 ≥2 字的词，
+        #   才算"这条讲的就是这件事"。够不上就一条都不注。
+        import re as _re2
+
+        def _terms(t):
+            t = str(t or "")
+            out = set()
+            for w in _re2.findall(r"[\u4e00-\u9fff]{2,4}|[A-Za-z]{3,}", t):
+                out.add(w.lower())
+            return out
+
+        _qt = _terms(query)
+        keep = []
+        for h in hits:
+            _shared = _qt & _terms(h.get("text") or "")
+            # 两条路都算"讲的就是这件事"：①共享 ≥2 个实词；②相似度**极高**（≥0.78）
+            if len(_shared) >= 2 or float(h.get("sim") or 0) >= 0.78:
+                keep.append(h)
+        hits = keep[:2]
         if not hits:
+            LOG.info("精神记忆召回：没有实词重合的（不注，避免把无关记忆塞进上下文）")
             return ""
         _KIND_CN = {"knowledge": "知识", "method": "方法", "diagnosis": "诊断经验"}
         lines = ["【以前想明白的（**素材，不是答案**）】",
@@ -13634,6 +13806,12 @@ def _heart_back_for_messages():
         if _n == _HEART_BACK["n"]:
             return None                      # 还是上一次那颗心（本轮没起新的）→ 不重复接
         _HEART_BACK["n"] = _n
+        # `_ht[:80]` 原来会把 `<思考>…` 的**开头 80 字**直接接回给模型当"心里在想"，
+        # 于是模型接着它的推理往下写（用户看到的就是"（我心里在想：<思考> 我需要先理解…）"）。
+        # 先剥标签再截断，顺序不能反：先截会把闭标签切掉，剥不干净。
+        _ht = _strip_think(_ht)
+        if not _ht:
+            return None                  # 剥完什么都不剩 → 这一轮不接（不许塞空壳）
         return {"role": "assistant", "content": "（我心里在想：%s）" % _ht[:80]}
     except Exception:      # noqa: silent-ok — 接不上也不许影响回答
         return None
@@ -14157,6 +14335,13 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
                     LOG.debug("并发起飞失败（退回串行自评）：%s", e)
                     _sr_box = None
             _per = _perceive_event(user_input_ctx)
+        # 【把模型自己的 `<思考>` 从感知结果里剥掉】实测：感知层把模型原话（含 `<思考>…</思考>`）
+        # 当成了"感知到的事"，于是流水里出现「意味着「<思考> 我需要先理解用户提供的信息…」」，
+        # 而这段推理又会被拿去检索、写进记忆。**推理不是感知，不能当事实用。**
+        if isinstance(_per, dict):
+            for _pk in ("meaning", "event_what", "what", "detail"):
+                if _per.get(_pk):
+                    _per[_pk] = _strip_think(_per.get(_pk))
         LOG.info("感知层：说「%s」→ 意味着「%s」", str(user_input_ctx)[:40],
                  str(_per.get("meaning") or "（没感知出来）")[:60])
         # 「事」也记一行 —— 2026-09-18 起检索用它（`thinking_loop` 的 query），
@@ -15047,6 +15232,16 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
                     LOG.info("电子书路由 %s 没成（%s）→ 交给后面的流程", _ebt, str(_ebres)[:60])
             except Exception as _eb_e:      # noqa: silent-ok — 这条路挂了不能拖垮整轮
                 LOG.debug("电子书路由失败（忽略）：%s", _eb_e)
+
+    # ③0 问"我（小焦）今天/最近看了哪些 B站 视频" → **直接读自己的观看记录**
+    # 【为什么必须走直答】实测用户问「今天看了b站的哪些视频呀」，它被当成闲聊：
+    #   路由 kind=chat → 不联网 → 模型只能编（"B站上有很多视频，比如科技测评…"），
+    #   而它自己的 seen.md 里明明记着今天看的每一条。问"我干了什么"是**事实查询**，
+    #   事实就在盘上，没有理由让模型猜。
+    if answer is None:
+        _bh = _asks_my_bili_history(user_input)
+        if _bh:
+            answer = _my_bili_history_answer(_bh)
 
     # ③a 句子里直接甩了网址 → 锁定抓取类：规则直连 get（失败自动 fetch → stealthy_fetch）
     if answer is None and CAP.get("run_tools", True) and _looks_like_url(user_input) \
@@ -16753,7 +16948,7 @@ def api_friends():
         return jsonify({"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:160])}), 500
 
 
-@app.route("/api/friends/<name>")
+@app.route("/api/friends/<path:name>")
 def api_friend(name):
     """好友详情：资料 + 最近聊天 + 他自己的朋友圈。"""
     try:
@@ -16766,7 +16961,7 @@ def api_friend(name):
         return jsonify({"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:160])}), 500
 
 
-@app.route("/api/friends/<name>/say", methods=["POST"])
+@app.route("/api/friends/<path:name>/say", methods=["POST"])
 def api_friend_say(name):
     data = request.get_json(force=True, silent=True) or {}
     try:
@@ -16776,7 +16971,7 @@ def api_friend_say(name):
         return jsonify({"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:160])}), 500
 
 
-@app.route("/api/friends/<name>/read", methods=["POST"])
+@app.route("/api/friends/<path:name>/read", methods=["POST"])
 def api_friend_read(name):
     try:
         FR = _friends()
@@ -16785,7 +16980,7 @@ def api_friend_read(name):
         return jsonify({"ok": False, "error": str(e)[:160]}), 500
 
 
-@app.route("/api/friends/<name>/proactive", methods=["POST"])
+@app.route("/api/friends/<path:name>/proactive", methods=["POST"])
 def api_friend_proactive(name):
     """让他现在就想一句发给你（force，调试/演示用；平时由调度自己决定）。"""
     try:
@@ -16865,6 +17060,20 @@ def aigroup_avatar(gid):
     if not hits:
         return jsonify({"ok": False, "error": "这个群还没头像"}), 404
     return send_file(hits[0])
+
+
+@app.route("/api/aigroups/<gid>/script", methods=["POST"])
+def api_aigroup_script(gid):
+    """粘贴一整段设定（主题/语言风格/互动规则/角色人设）→ 灌进这个群。
+
+    用户原话："这种都要设计我填写" —— 剧本由他贴，不由模型编。
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        _M, G = _social()
+        return jsonify(G.set_script(gid, str(data.get("text") or "")))
+    except Exception as e:      # noqa: silent-ok
+        return jsonify({"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:160])}), 500
 
 
 @app.route("/api/aigroups/<gid>/setting", methods=["POST"])
@@ -17463,6 +17672,44 @@ def api_cost():
                     "local_tokens": day.get("local_tokens", 0), "cloud_tokens": day.get("cloud_tokens", 0),
                     "cost": round(day.get("cost", 0.0), 4), "saved": round(max(saved, 0.0), 4),
                     "days": d})
+
+
+@app.route("/weblog/<path:fn>")
+def weblog_file(fn):
+    """把 `web_shot` 截下来的图发给前端（用户要"能真的看到它在看什么"）。"""
+    from flask import send_from_directory
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "weblog")
+    return send_from_directory(d, fn, max_age=3600)
+
+
+@app.route("/api/plugin_call", methods=["POST"])
+def api_plugin_call():
+    """在**插件自己的模块页**里点「执行」→ 直接调这个插件的某个工具。
+
+    为什么要有它（用户要求）：插件多到滑不完，而且"让 AI 自己挑工具"不如
+    "用户在插件页里点一下"来得准。这里给所有插件一个统一的调用入口，
+    前端按工具的参数 schema 自动出输入框，不用为每个插件手写一套界面。
+    """
+    data = request.get_json(silent=True) or {}
+    pname = str(data.get("plugin") or "").strip()
+    tool = str(data.get("tool") or "").strip()
+    args = data.get("args") or {}
+    if not isinstance(args, dict):
+        args = {}
+    p = PLUGINS.get(pname)
+    if not p:
+        return jsonify({"ok": False, "error": "没有这个插件：%s" % pname}), 404
+    if not p.get("on"):
+        return jsonify({"ok": False, "error": "这个插件现在是关着的（先在上面打开）"})
+    inst = p.get("instance")
+    if inst is None:
+        return jsonify({"ok": False, "error": "这个插件不是可调用的类型（%s）" % p.get("type")})
+    try:
+        # 走插件的 execute（参数校验/红线都在插件自己那边）
+        out = inst.execute(tool, args)
+        return jsonify({"ok": True, "text": _tool_result_str(out)[:4000]})
+    except Exception as e:      # noqa: BLE001 — 插件抛错要如实回，别让页面白屏
+        return jsonify({"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:200])})
 
 
 @app.route("/api/plugin/generate", methods=["POST"])
@@ -18730,7 +18977,6 @@ def api_chat_stream():
 
             def _work():
                 try:
-                    # ================== 深度模式：同题多跑 + 载体择优 ==================
                     # 用户要求「必须超过现在」。单颗 4B 一次前向的天花板不是换句话能抬的；
                     # 能做的是：同一道题换几个角度各答一遍，再由载体按**可核判据**挑一个。
                     # （README 能力对照表里那条「同题跑 N 次 + 投票择一」一直标着未落地，现在落地。）
@@ -18769,6 +19015,10 @@ def api_chat_stream():
                                     {"role": "user", "content":
                                      user_input + "\n\n（这次换个答法：" + _hn + "）"}]
                                 _t2 = str(llm_chat(_msg2, temperature=0.8) or "").strip()
+                                if _t2 and _looks_like_critique(_t2):
+                                    # 这一遍只交了"挑错"，不是答案 → 不进候选池
+                                    _note("第 %d 遍是审阅而非答案（不参与择优）" % (_i + 1))
+                                    continue
                                 if _t2:
                                     _cands.append(_t2)
                                     _note("第 %d 遍答完（%d 字）" % (_i + 1, len(_t2)))
@@ -18776,6 +19026,11 @@ def api_chat_stream():
                                 _note("第 %d 遍失败：%s" % (_i + 1, str(_ee)[:80]))
                         if _cands:
                             _best, _meta = _ENS.pick(_cands, user_input)
+                            # 双保险：择优器万一还是挑到"审阅体"，就退回第 1 遍（完整流水那条）。
+                            # 宁可要一个普通答案，也不要把自我检讨当答案交给用户。
+                            if _looks_like_critique(_best) and _cands[0]:
+                                _note("择优挑到了审阅体 → 退回第 1 遍的答案")
+                                _best = _cands[0]
                             _note("择优：" + str(_meta.get("why") or "")[:160])
                             _tail = list(_last[1:]) if _last else [True, {}, False, []]
                             # 若选中的不是第 1 遍（完整流水那条），就把它作为最终回答
@@ -20952,6 +21207,14 @@ HTML = r"""<!DOCTYPE html>
   button:hover{background:#6366f1}
   .think{color:#7a8290;font-size:13px;padding:6px 2px}
   .think{display:flex;align-items:center;gap:8px}
+  /* 【思考流水必须整段能读】`.think` 改成 flex 之后，里面的 `.tlog`（真实流水）会变成一个
+     被挤压的 flex 子项：长句不换行、右边被切掉，看起来像"思考被截断"（用户实测就是这个）。
+     这里把它按块级处理：占满一行、正常折行、长英文/URL 也强制断。 */
+  .think:has(.tlog){display:block}
+  .think .tlog{width:100%;min-width:0;white-space:pre-wrap;word-break:break-word;
+               overflow-wrap:anywhere;margin-top:6px}
+  .think .tlog>div{padding:1px 0}
+  .think .stag{display:inline-block;vertical-align:middle}
   /* 说明/诊断这类"整段文字"必须用块级排版（2026-10-16 修）：
      `.think` 是 flex 容器，一旦里面有多段文字 + <code> + <br>，
      它们会变成**多个 flex 子项**并被各自压到最小宽度 —— 结果就是"一个字一列"的竖排长条。
@@ -21022,6 +21285,11 @@ HTML = r"""<!DOCTYPE html>
   .padd{border:1px dashed #262b3a;border-radius:12px;padding:14px;text-align:center;color:#a78bfa;cursor:pointer;font-size:14px}
   .padd:hover{border-color:#405a99}
   .setnav-item{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;font-size:14px;color:#cbd0dc;cursor:pointer}
+  /* 【导航项不许换行】插件名很长（gen_cap_20261027_173718），一换行就把图标挤成怪符号、
+     还把侧栏撑高（用户实测：每个插件图标都不一样、滑不完）。统一省略号截断。 */
+  .setnav-item{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .setnav-item .ic{flex:0 0 auto;width:18px;text-align:center}
+  .setnav-item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
   .setnav-item:hover{background:#1e2430}
   .setnav-item.active{background:#2a3140;color:#fff}
   .setbody{background:#141822;border:1px solid #262b3a;border-radius:14px;padding:22px}
@@ -21258,6 +21526,7 @@ try{ if(localStorage.getItem('xj_social')==='1'){
       <div class="setnav-item" data-sec="model" onclick="setSec(this,'model')">🎛️ 模型</div>
       <div class="setnav-item" data-sec="plugins" onclick="setSec(this,'plugins')">🧩 插件</div>
       <div class="setnav-item" data-sec="presets" onclick="setSec(this,'presets')">🎭 Agent 预设</div>
+      <div class="setnav-item" data-sec="bili" onclick="setSec(this,'bili')">📺 刷B站</div>
       <div class="setnav-item" onclick="closeSettings();openSocial('friends')">💬 好友</div>
       <div class="setnav-item" onclick="closeSettings();openSocial('groups')">👥 模型群组</div>
     </div>
@@ -21334,6 +21603,163 @@ try{ if(localStorage.getItem('xj_social')==='1'){
       </div>
       <div class="sec" id="sec-plugins">
         <div class="field"><label>插件（可开关）</label><div id="s_plugins"></div></div>
+      </div>
+      <!-- ============ 刷B站（bili_duty 插件自己的设置页）============
+           对齐 DSH 插件那一页：四个页签（日常/偏好/互动/高级）+ 视频画廊（带封面）。
+           数据全部来自插件的真实文件：config.json / state.json / reports/*.md / seen.md，
+           所以在这里改，DSH 那边同步生效（两边共用同一份配置）。 -->
+      <style>
+        /* 这一页专用的紧凑行：DSH 那边"标签在左、开关在右"，一行一个 —— 
+           用 .switch 通栏大块会换行、显得很散（用户实测反馈"莫名其妙换行"）。 */
+        #sec-bili .btabs{display:flex;gap:6px;margin:6px 0 14px;border-bottom:1px solid #242a35}
+        #sec-bili .btab{padding:7px 16px;border-radius:8px 8px 0 0;cursor:pointer;color:#9aa4b2;font-size:13px}
+        #sec-bili .btab.on{background:#1c2430;color:#e6edf3;font-weight:600}
+        #sec-bili .brow{display:flex;align-items:center;justify-content:space-between;
+                        gap:12px;padding:9px 4px;border-bottom:1px solid #1b2129}
+        #sec-bili .brow .bl{font-size:13px;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        #sec-bili .brow .bh{font-size:11px;color:#7a8290;margin-top:2px}
+        #sec-bili .brow .bl{flex:1;min-width:0}
+        #sec-bili .brow input[type=text],#sec-bili .brow input[type=number]{width:150px;flex:0 0 auto}
+        #sec-bili .brow textarea{width:100%;min-height:64px;flex:1}
+        #sec-bili .brow textarea+*{flex:0 0 auto}
+        #sec-bili .bwide{display:block;padding:9px 4px;border-bottom:1px solid #1b2129}
+        #sec-bili .bgal{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-top:10px}
+        #sec-bili .bcard{background:#161b23;border:1px solid #232a35;border-radius:10px;overflow:hidden;cursor:pointer}
+        #sec-bili .bcard:hover{border-color:#3b82f6}
+        #sec-bili .bcard img{width:100%;height:106px;object-fit:cover;display:block;background:#0d1117}
+        #sec-bili .bcard .bt{font-size:12px;padding:7px 8px 2px;color:#e6edf3;line-height:1.35;
+                              display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+        #sec-bili .bcard .bm{font-size:11px;color:#7a8290;padding:2px 8px 8px}
+        #sec-bili .bcard .bv{font-size:11px;padding:0 8px 8px}
+        #sec-bili .bchip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;margin-right:4px}
+        #sec-bili .bsec-h{font-size:13px;color:#7a8290;margin:16px 0 4px;font-weight:600}
+      </style>
+      <div class="sec" id="sec-bili">
+        <h3 style="margin-bottom:2px">📺 刷B站</h3>
+        <p style="color:#7a8290;font-size:12px;margin:2px 0 10px">
+          插件 <b>bili_duty</b> · 小焦这边「跑一轮」默认只做 搜 → 挑 → 拉评论 → 记账（<b>不发评论</b>）。
+        </p>
+        <div id="biliChips" style="margin-bottom:8px;font-size:12px"></div>
+        <div class="btabs">
+          <div class="btab on" data-bt="daily" onclick="biliTab(this,'daily')">日常</div>
+          <div class="btab" data-bt="pref" onclick="biliTab(this,'pref')">偏好</div>
+          <div class="btab" data-bt="inter" onclick="biliTab(this,'inter')">互动</div>
+          <div class="btab" data-bt="adv" onclick="biliTab(this,'adv')">高级</div>
+        </div>
+
+        <!-- 日常 -->
+        <div class="bpane" id="bpane-daily">
+          <div class="brow"><div><div class="bl">峰谷时段自动刷</div>
+            <div class="bh">只在谷时跑（工作日 12:00-14:00 与 18:00 之后）；关了就只能手动跑</div></div>
+            <input type="checkbox" id="b_peakValley" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">中午谷时 12:00-14:00</div></div>
+            <input type="checkbox" id="b_noon" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">晚上 / 夜间谷时 18:00-09:00</div></div>
+            <input type="checkbox" id="b_night" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">每天最多搞几条</div>
+            <div class="bh">填 0 = 不自动刷（仍然能手动跑）</div></div>
+            <input type="number" id="b_perDay" min="0" max="200" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">自动轮自检</div>
+            <div class="bh">点一下立刻判断"现在该不该自己跑"，并把判断理由显示出来（不会白等一晚上）</div></div>
+            <button class="btn-sec" onclick="biliTick()" style="flex:0 0 auto">🩺 自检一次</button>
+            <button class="btn-sec" onclick="biliTick(true)" style="flex:0 0 auto">▶ 立刻让自动轮跑（测试）</button></div>
+          <div class="bsec-h">它刷过的视频 <span id="biliGalCount" style="color:#4b5563"></span></div>
+          <div id="biliFilters" style="margin:6px 0"></div>
+          <div id="biliGallery" class="bgal"></div>
+        </div>
+
+        <!-- 偏好 -->
+        <div class="bpane" id="bpane-pref" style="display:none">
+          <div class="brow"><div><div class="bl">工作区</div>
+            <div class="bh">不限定 = 会话留在插件家，不归任何工作区</div></div>
+            <input type="text" id="b_workspace" placeholder="不限定" onchange="biliMark()"/></div>
+          <div class="bwide"><div class="bl">关注什么（一行一个；留空 = 刷首页推荐流）</div>
+            <textarea id="b_keywords" placeholder="一行一个关键词" onchange="biliMark()"></textarea></div>
+          <div class="bwide"><div class="bl">排除词（一行一个；标题/UP/简介里出现就整条跳过）</div>
+            <textarea id="b_excludeWords" placeholder="一行一个；留空 = 不过滤" onchange="biliMark()"></textarea></div>
+          <div class="brow"><div><div class="bl">填了关键词时怎么排序</div></div>
+            <select id="b_searchSort" onchange="biliMark()" style="width:150px">
+              <option value="totalrank">综合</option><option value="click">播放</option>
+              <option value="pubdate">最新</option><option value="dm">弹幕</option></select></div>
+          <div class="bwide"><div class="bl">它该说什么话（人设提示词；留空也能用：默认口语、短句、带细节）</div>
+            <textarea id="b_personaPrompt" style="min-height:120px" onchange="biliMark()"></textarea></div>
+        </div>
+
+        <!-- 互动 -->
+        <div class="bpane" id="bpane-inter" style="display:none">
+          <div class="brow"><div><div class="bl">自动发评论</div>
+            <div class="bh">DSH 侧调度是否自动发；小焦手动跑仍默认不发</div></div>
+            <input type="checkbox" id="b_autoComment" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">回复别人（楼中楼）</div></div>
+            <input type="checkbox" id="b_replyToComments" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">每轮回几条</div></div>
+            <input type="number" id="b_commentPerRound" min="1" max="50" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">每轮回复几条</div></div>
+            <input type="number" id="b_replyPerRound" min="0" max="50" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">@ 谁（mentionName）</div></div>
+            <input type="text" id="b_mentionName" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">评论长度</div></div>
+            <select id="b_commentLength" onchange="biliMark()" style="width:150px">
+              <option value="short">短</option><option value="medium">中</option><option value="long">长</option></select></div>
+          <div class="brow"><div><div class="bl">私信</div><div class="bh">dmWatch：盯不盯私信</div></div>
+            <input type="checkbox" id="b_dmWatch" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">私信模式</div></div>
+            <select id="b_dmMode" onchange="biliMark()" style="width:150px">
+              <option value="off">不看</option><option value="only">只看</option><option value="both">看并回</option></select></div>
+          <div class="brow"><div><div class="bl">私信回谁（uid，0=不限定）</div></div>
+            <input type="number" id="b_dmUid" min="0" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">每天最多回几条私信</div></div>
+            <input type="number" id="b_dmReplyPerDay" min="0" onchange="biliMark()"/></div>
+        </div>
+
+        <!-- 高级 -->
+        <div class="bpane" id="bpane-adv" style="display:none">
+          <div class="brow"><div><div class="bl">每轮抓几个视频</div></div>
+            <input type="number" id="b_fetchPerRound" min="1" max="50" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">搜索翻几页</div></div>
+            <input type="number" id="b_searchPages" min="1" max="10" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">手动跑每轮上限</div></div>
+            <input type="number" id="b_manualMax" min="1" max="50" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">手动跑冷却（分钟）</div>
+            <div class="bh">DSH 侧读这个；填 0 = 没冷却</div></div>
+            <input type="number" id="b_manualCooldownMin" min="0" max="120" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">手动跑冷却（秒）</div>
+            <div class="bh">小焦这边优先用秒（调界面/测试用，10 秒也行）；设了它就不看上面那个分钟</div></div>
+            <input type="number" id="b_manualCooldownSec" min="0" max="600" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">一轮超时（分钟）</div></div>
+            <input type="number" id="b_runTimeoutMinutes" min="1" max="120" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">报告详细度</div></div>
+            <select id="b_reportLevel" onchange="biliMark()" style="width:150px">
+              <option value="full">完整</option><option value="brief">精简</option></select></div>
+          <div class="brow"><div><div class="bl">本地转写（字幕缺失时）</div></div>
+            <input type="checkbox" id="b_transcribe" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">转写模型</div>
+            <div class="bh">字幕缺失时本地转写用；whisper 的档位</div></div>
+            <select id="b_asrModel" onchange="biliMark()" style="width:150px">
+              <option value="tiny">tiny（最快，最不准）</option>
+              <option value="base">base</option>
+              <option value="small">small（默认）</option>
+              <option value="medium">medium</option>
+              <option value="large-v3">large-v3（最准，最慢）</option></select></div>
+          <div class="brow"><div><div class="bl">这轮用哪个模型</div>
+            <div class="bh">空 = 跟随小焦当前火种；选项来自 设置→模型 里的真实列表</div></div>
+            <select id="b_modelProvider" onchange="biliPickProvider()" style="width:230px">
+              <option value="">（跟随小焦当前火种）</option></select></div>
+          <div class="brow"><div><div class="bl">模型</div>
+            <div class="bh">选了上面那一项会自动带出；也可以在这里单改</div></div>
+            <select id="b_modelName" onchange="biliMark()" style="width:230px">
+              <option value="">（跟随）</option></select></div>
+          <div class="brow"><div><div class="bl">强制发评论（仅这一次）</div>
+            <div class="bh">即使上面「自动发评论」是关的，勾上这一次也会发；不勾就按设置走</div></div>
+            <input type="checkbox" id="b_allowComment"/></div>
+        </div>
+
+        <div class="actions" style="margin-top:14px">
+          <button class="btn-sec" onclick="biliSave()">💾 保存</button>
+          <button class="btn-sec" onclick="biliRun()">▶️ 现在跑一轮</button>
+          <button class="btn-sec" onclick="biliGallery(true)">🔄 刷新画廊</button>
+        </div>
+        <div class="think" id="biliMsg"></div>
       </div>
       <div id="plugSecs"></div>
     </div>
@@ -21831,8 +22257,12 @@ async function send(){const t=inp.value.trim();if(!t)return;inp.value='';
      if(d&&d.lines&&d.lines.length){
        thinkN=d.n||(thinkN+d.lines.length);
        d.lines.forEach(function(x){
+         // 子系统（群聊/朋友圈/好友）的行默认不显示 —— 它们不是"这一问答案怎么来的"，
+         // 混进来只会把真正的步骤淹掉（实测：问一句"你能做什么"，流水里 8 条群聊）。
+         if(x.sub && !window._showSub)return;
          const line=document.createElement('div');
          line.textContent='· '+(x.msg||'');
+         if(x.sub)line.style.opacity='0.55';
          tlog.appendChild(line);
        });
        tlog.scrollTop=tlog.scrollHeight;
@@ -21937,7 +22367,13 @@ async function send(){const t=inp.value.trim();if(!t)return;inp.value='';
    buf=rest;if(body)body.textContent=buf;
    feed.scrollTop=feed.scrollHeight;
  };
- const appendText=(s)=>{rawAll+=s;feedStream();};
+ // 【全角方括号也认】模型有时用 `【思考】…【回答】` 而不是 `<思考>…</思考>`。
+ //   这里在**收流的第一道**就统一尖括号形式，后面所有拆分逻辑原样复用 —— 不动拆分流。
+ //   不统一的话，思考和回答会一起显示在气泡里（用户实测）。
+ const _normThink=(s)=>String(s||'')
+   .replace(/【思考】/g,'<思考>').replace(/【推理】/g,'<思考>')
+   .replace(/【回答】/g,'</思考>');
+ const appendText=(s)=>{rawAll+=_normThink(s);feedStream();};
  feed.appendChild(stopBtn);feed.scrollTop=feed.scrollHeight;
  try{
   const r=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -22226,19 +22662,276 @@ async function checkVideoApi(){const t=document.getElementById('s_m_vapi');const
 async function delModel(name){const r=await fetch('/api/model/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name})});const d=await r.json();if(d.ok){loadModelList();loadModels();}}
 function closeSettings(){S.classList.remove('show');}
 function setSec(el,name){document.querySelectorAll('.sec').forEach(s=>s.classList.toggle('show',s.id==='sec-'+name));
-  document.querySelectorAll('.setnav-item').forEach(n=>n.classList.toggle('active',n.getAttribute('data-sec')===name));}
-// 按已安装插件动态生成设置模块：只有"有可调配置"的插件才出现
+  document.querySelectorAll('.setnav-item').forEach(n=>n.classList.toggle('active',n.getAttribute('data-sec')===name));
+  if(name==='bili')biliLoad();}
+// ==================== 刷B站 ====================
+// 这一页不打桩：所有数字都来自 /api/bili_duty（后端读的是插件的
+// config.json / state.json / reports/*.md 真文件）。画廊的封面走 /api/bili_duty/cover/<bv>。
+const BILI_FIELDS=['peakValley','noon','night','perDay','workspace','keywords','excludeWords',
+  'searchSort','personaPrompt','autoComment','replyToComments','commentPerRound','replyPerRound',
+  'mentionName','commentLength','dmWatch','dmMode','dmUid','dmReplyPerDay','fetchPerRound',
+  'searchPages','manualMax','manualCooldownMin','runTimeoutMinutes','reportLevel','transcribe',
+  'asrModel','modelProvider','modelName'];
+const BILI_LIST=['keywords','excludeWords'];
+function biliMsg(t,ok){const m=document.getElementById('biliMsg');if(!m)return;
+  m.textContent=t||'';m.style.color=ok===false?'#f87171':(ok===true?'#4ade80':'#9aa4b2');}
+function biliMark(){biliMsg('有未保存的修改',null);}
+function biliTab(el,name){
+  document.querySelectorAll('#sec-bili .btab').forEach(x=>x.classList.toggle('on',x===el));
+  document.querySelectorAll('#sec-bili .bpane').forEach(p=>p.style.display=(p.id==='bpane-'+name)?'':'none');
+}
+async function biliLoad(){
+  try{
+    const d=await (await fetch('/api/bili_duty')).json();
+    if(!d||!d.ok){biliMsg('读不到插件配置：'+(d&&d.msg||'未知原因'),false);return;}
+    const q=d.quota||{},lg=d.login||{};
+    document.getElementById('biliChips').innerHTML=
+      '<span class="bchip" style="background:'+(lg.ok?'#052e16':'#450a0a')+';color:'+(lg.ok?'#4ade80':'#f87171')+'">'+(lg.ok?'B站已登录':'B站未登录')+'</span>'+
+      '<span class="bchip" style="background:#1c2430;color:#c9d1d9">今天已跑 '+q.used+' / '+(q.limit||0)+' 条</span>'+
+      '<span class="bchip" style="background:#1c2430;color:#c9d1d9">手动 '+(q.manual||0)+' 条</span>'+
+      (d.auto?('<span class="bchip" style="background:'+(d.auto.enabled?'#052e16':'#3f1d1d')+';color:'+(d.auto.enabled?'#4ade80':'#fca5a5')+'">自动轮：'+(d.auto.enabled?'会自己跑':'不会跑')+' · '+esc(d.auto.reason)+'</span>'):'')+
+      (d.last_run?'<span class="bchip" style="background:#1c2430;color:#9aa4b2">上次：'+esc(d.last_run.replace('T',' ').replace('Z',''))+'</span>':'')+
+      (d.duty_running?'<span class="bchip" style="background:#172554;color:#60a5fa">正在跑</span>':'');
+    const c=d.cfg||{};
+    // 先把下拉的选项按**真实清单**铺好，再填值（否则赋值会被 select 丢掉）
+    biliFillChoices(d.choices||{});
+    BILI_FIELDS.forEach(k=>{const e=document.getElementById('b_'+k);if(!e)return;
+      if(e.type==='checkbox')e.checked=!!c[k];
+      else if(BILI_LIST.includes(k))e.value=(c[k]||[]).join('\n');
+      else e.value=(c[k]===undefined||c[k]===null)?'':c[k];});
+    biliMsg('');
+    biliGallery(false);
+  }catch(e){biliMsg('读取失败：'+e,false);}
+}
+// 把「大脑 / 模型 / 转写档位」这些原本要手打的字段铺成下拉。
+// 选项全部来自后端给的真实清单（xiaojiao_control.json 的 models[]），
+// 所以"能选的"就是"真有的"——不会出现选了一个不存在的模型。
+function biliFillChoices(ch){
+  const prov=document.getElementById('b_modelProvider');
+  const mod=document.getElementById('b_modelName');
+  if(prov){
+    const cur=prov.value;
+    const seen=new Set();
+    let html='<option value="">（跟随小焦当前火种）</option>';
+    (ch.providers||[]).forEach(p=>{
+      const id=p.name||p.id; if(!id||seen.has(id))return; seen.add(id);
+      const eng=p.engine?(' · '+p.engine):'';
+      html+='<option value="'+esc(id)+'">'+esc(id+eng)+'</option>';
+    });
+    prov.innerHTML=html; prov.value=cur||'';
+  }
+  if(mod){
+    const cur=mod.value;
+    let html='<option value="">（跟随）</option>';
+    (ch.models||[]).forEach(m=>{
+      html+='<option value="'+esc(m.id)+'">'+esc(m.id+(m.name&&m.name!==m.id?('（'+m.name+'）'):''))+'</option>';
+    });
+    mod.innerHTML=html; mod.value=cur||'';
+  }
+}
+// 选了"这轮用哪个模型"就把它对应的 model id 带出来（省得再手挑一次）
+function biliPickProvider(){
+  const id=document.getElementById('b_modelProvider').value;
+  const mod=document.getElementById('b_modelName');
+  if(!id){if(mod)mod.value='';biliMark();return;}
+  // 这里没有 provider→model 的映射表，直接按同名/包含关系找一次；找不到就留给用户自己挑
+  const opt=[...mod.options].find(o=>o.value===id||o.text.indexOf(id)>=0);
+  if(opt)mod.value=opt.value;
+  biliMark();
+}
+async function biliSave(){
+  const body={};
+  BILI_FIELDS.forEach(k=>{const e=document.getElementById('b_'+k);if(!e)return;
+    if(e.type==='checkbox'){body[k]=e.checked;return;}
+    let v=e.value;
+    if(BILI_LIST.includes(k)){body[k]=v.split('\n').map(s=>s.trim()).filter(Boolean);return;}
+    if(e.type==='number'){body[k]=parseInt(v,10)||0;return;}
+    body[k]=v;});
+  try{
+    const d=await (await fetch('/api/bili_duty',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    biliMsg(d.msg||(d.saved?'已保存':'保存失败'),!!d.saved);
+    await biliLoad();
+  }catch(e){biliMsg('保存失败：'+e,false);}
+}
+async function biliRun(){
+  const force=document.getElementById('b_allowComment').checked;
+  const auto=document.getElementById('b_autoComment').checked;
+  const willPost=force||auto;
+  biliMsg(willPost?'跑一轮（会发评论并 @ 人）…':'跑一轮（只读，不发评论）…',null);
+  try{
+    // 勾了"强制"才传 true；否则传 null → 后端按「自动发评论」设置决定
+    const body={allow_comment:force?true:null};
+    const r=await (await fetch('/api/bili_duty/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    if(!r.ok){biliMsg('没跑成：'+(r.error||'未知原因'),false);return;}
+    biliMsg('这一轮挑了 '+r.picked+' 个视频。'+r.note,true);
+    await biliLoad();
+  }catch(e){biliMsg('跑一轮失败：'+e,false);}
+}
+const BILI_VERDICT_COLOR={'值得看':'#14532d','可以看':'#1e3a5f','不值得':'#450a0a','未判定':'#1c2430'};
+let BILI_FILTER='全部';
+async function biliGallery(force){
+  try{
+    const d=await (await fetch('/api/bili_duty/gallery'+(force?'?t='+Date.now():''))).json();
+    const cards=d.cards||[],cnt=d.counts||{};
+    document.getElementById('biliGalCount').textContent='（共 '+(cnt['全部']||0)+' 条）';
+    const filters=['全部','挑了','值得看','可以看','不值得','发给你了'];
+    document.getElementById('biliFilters').innerHTML=filters.map(f=>{
+      const n=(f==='全部')?(cnt['全部']||0):(cnt[f]||0);
+      const on=(f===BILI_FILTER);
+      return '<span class="bchip" style="cursor:pointer;background:'+(on?'#1d4ed8':'#1c2430')+';color:'+(on?'#fff':'#9aa4b2')+'" onclick="biliFilter(\''+f+'\')">'+f+' '+n+'</span>';
+    }).join('');
+    document.getElementById('biliGallery').innerHTML=cards.length?cards.map(c=>{
+      const v=c.verdict||'未判定';
+      return '<div class="bcard" onclick="window.open(\'https://www.bilibili.com/video/'+c.bvid+'\',\'_blank\')">'+
+        '<img loading="lazy" src="/api/bili_duty/cover/'+c.bvid+'" onerror="this.style.display=\'none\'"/>'+
+        '<div class="bt">'+esc(c.title||c.bvid)+'</div>'+
+        '<div class="bm">'+esc(c.up||'')+(c.date?' · '+esc(c.date):'')+'</div>'+
+        '<div class="bv"><span class="bchip" style="background:'+(BILI_VERDICT_COLOR[v]||'#1c2430')+';color:#d1d5db">'+esc(v)+'</span>'+
+        (c.commented?'<span class="bchip" style="background:#312e81;color:#c7d2fe">发给你了</span>':'')+'</div>'+
+        '</div>';
+    }).join(''):'<div style="color:#7a8290;font-size:13px">这一档还没有记录。</div>';
+  }catch(e){biliMsg('载入画廊失败：'+e,false);}
+}
+function biliFilter(f){BILI_FILTER=f;biliGallery(true);}
+// 自检：把"该不该自己跑"的判断结果直接摊给用户看。
+// 没有这个按钮，用户只能干等 —— 而"等一晚上才发现它根本不会跑"是最糟的体验。
+async function biliTick(force){
+  biliMsg(force?'正在让自动轮立刻跑一轮…':'正在判断…',null);
+  try{
+    const r=await (await fetch('/api/bili_duty/tick',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:!!force})})).json();
+    const ran=r.ran;
+    biliMsg((ran?'✅ 它刚自己跑了一轮：':'⏸ 这次没跑：')+(r.why||'')+(r.window?('（窗口 '+r.window+'）'):''),ran?true:null);
+    if(ran)await biliLoad();
+  }catch(e){biliMsg('自检失败：'+e,false);}
+}
+async function biliSeen(){await biliGallery(true);}
+// 给插件起**能看懂的名字 + 不同的图标**（用户要求：
+//   "gen_cap_20261027_173718 根本看不懂是干啥的"、"图标不要都是一个匕首，要花里胡哨的"）。
+// 名字/图标都从**工具说明**里自动推断 —— 所以以后新造的插件也自动有可读名字，不用它自己起。
+// 【简单能力不配模块页】用户口径："这些让 AI 给答案就行了，这种简单的就不用这么设计了"。
+// 判断依据是**工具本身够不够"重"**：查时间/天气/IP、单位换算、编码解码、随机数这类，
+// 模型自己能答（或一次调用就够），给它单独一个页面纯属占地方。
+// 它们**仍然在「插件」页里、仍然能调**，只是不再出独立模块。
+const TRIVIAL_RE=/时间|日期|天气|气温|预报|当前|现在|today|time|weather|\bip\b|计算|换算|转换|转成|编码|解码|加密|哈希|随机|uuid|base64|进制/i;
+function pluginIsTrivial(p){
+  const tools=(p.desc||[]);
+  if(!tools.length)return true;
+  // 两个条件**同时**满足才算"简单"，缺一不可：
+  //   ① 工具名/说明命中简单能力（时间/天气/换算/编码…）
+  //   ② 参数 ≤1 个（真要填一堆参数的，那就不该让 AI 硬猜，得给表单）
+  // 这样"扫全网/分析仓库"这种虽然名字不带简单词、但参数多的，仍然会出页面。
+  return tools.every(function(d){
+    d=d||{};
+    const t=String(d.name||'')+' '+String(d.description||'');
+    const req=((d.parameters||{}).required)||[];
+    const props=((d.parameters||{}).properties)||{};
+    const nParams=(req.length||Object.keys(props).length);
+    return TRIVIAL_RE.test(t) && nParams<=1;
+  });
+}
+const BILI_ICON_RULES=[
+  [/视频|哔哩|b站|bilibili|播放|弹幕/i,'📺'],[/数字|计算|算|统计|汇率|单位/i,'🔢'],
+  [/图片|图像|封面|截图|像素/i,'🖼️'],[/音频|语音|播客|转写|识别|tiktok|音乐/i,'🎙️'],
+  [/网页|抓取|爬|网络|请求|http|url|下载/i,'🌐'],[/文件|目录|读|写|编辑|路径/i,'📁'],
+  [/代码|插件|脚本|程序|编译|重构/i,'🧩'],[/翻译|语言|文本|写作|摘要|润色/i,'📝'],
+  [/数据库|sql|查询|表/i,'🗄️'],[/时间|日期|日历|提醒/i,'⏰'],
+  [/天气|气温|预报/i,'🌤️'],[/邮件|消息|通知|私信/i,'📬'],
+  [/加密|安全|密码|密钥|权限/i,'🔐'],[/地图|定位|经纬|ip/i,'📍'],
+];
+function pluginMeta(p){
+  const tools=(p.desc||[]);
+  const txt=((tools[0]||{}).description||'')+' '+((tools[0]||{}).name||'');
+  let icon='🔧';
+  for(const [re,ic] of BILI_ICON_RULES){ if(re.test(txt)){ icon=ic; break; } }
+  // 名字：说明里"什么时候用"之前那段，取前 8~10 字；实在没有就退回落插件名
+  let raw=String((tools[0]||{}).description||'').split('什么时候用')[0]
+    .replace(/[（(].*$/,'')          // 去掉括号里的举例（"把中文数字（一百零五…" → "把中文数字"）
+    .replace(/^把/,'')               // "把X转成Y" → "中文数字…" 更像标题
+    .replace(/[。；;：:.,，].*$/,'').trim();
+  if(!raw) raw=String(p.title||p.name||'');
+  const name=raw.length>10?raw.slice(0,10):raw;
+  return {icon:icon, name:(name||p.name), full:String(p.name||'')};
+}
+//   · **老插件放回去** —— 只有自己声明了 settings 的才出页签，别把所有插件都塞进导航
+//     （26 个页签反而滑不完，这是实测教训）；
+//   · **以后新造的插件**（forge 生成的 `gen_*`）→ 自动给一个独立模块页，
+//     按参数的 schema 自动出输入框，点着用，不用等 AI 自己挑工具。）
 function buildPluginModules(plist){
   const nav=document.querySelector('.setnav');const holder=document.getElementById('plugSecs');
   holder.innerHTML='';
-  (plist||[]).filter(p=>p.type!=='skin' && p.settings && p.settings.length).forEach(p=>{
+  (plist||[]).filter(p=>p.type!=='skin' && p.type!=='builtin').forEach(p=>{
+    const isNew=/^gen_/i.test(String(p.name||''));          // forge 造的新插件
+    const hasSettings=!!(p.settings && p.settings.length);
+    if(!isNew && !hasSettings)return;                       // 老插件：没配置项就不出页签
+    // 新造的插件里，**简单能力**也不出页签（用户：这些让 AI 直接答就行）
+    if(isNew && pluginIsTrivial(p) && !hasSettings)return;
+    const tools=(p.desc||[]);
+    const hasCallable=tools.length>0;
     const key='sec-plug-'+p.name;
-    nav.insertAdjacentHTML('beforeend','<div class="setnav-item" data-sec="'+p.name+'" onclick="setSec(this,\''+p.name+'\')">🔧 '+p.name+'</div>');
-    const fields=(p.settings||[]).map(s=>'<div class="field"><label>'+esc(s.label||s.key)+'</label><input id="set-'+p.name+'-'+s.key+'" data-p="'+p.name+'" data-k="'+s.key+'" data-t="'+s.type+'" data-def="'+esc(String(s.default??''))+'" placeholder="默认: '+esc(String(s.default??''))+'"/></div>').join('');
-    const tools=(p.desc||[]).map(d=>'<div class="switch"><div><div class="n">'+esc(d.name)+'</div><div class="d">'+esc(d.description||'')+'</div></div></div>').join('');
-    holder.insertAdjacentHTML('beforeend','<div class="sec" id="'+key+'"><h3>🔧 '+esc(p.name)+'</h3>'+fields+'<div class="actions"><button class="btn-sec" onclick="savePluginSettings(\''+p.name+'\')">💾 保存插件设置</button></div><div class="think" id="msg-'+p.name+'"></div><h4 style="margin-top:16px">可用工具</h4>'+tools+'</div>');
+    // 注意：`setSec` 是按 `id === 'sec-' + data-sec` 找区块的，
+    // 而区块 id 是 `sec-plug-<name>` —— 所以 nav 的 data-sec 必须写成 `plug-<name>`。
+    // 原来写成 `<name>`，点了页签**内容区是空的**（老插件的设置页也一直是空的，这里一并修）。
+    const secName='plug-'+p.name;
+    const meta=pluginMeta(p);
+    nav.insertAdjacentHTML('beforeend',
+      '<div class="setnav-item" data-sec="'+esc(secName)+'" title="'+esc(meta.full)+'" '+
+      'onclick="setSec(this,\''+esc(secName)+'\')">'+
+      '<span class="ic">'+meta.icon+'</span><span class="nm">'+esc(meta.name)+'</span></div>');
+    // 手写 settings（插件自己声明的可调项）仍然保留在最上面
+    const fields=(p.settings||[]).map(s=>'<div class="field"><label>'+esc(s.label||s.key)+'</label>'+
+      '<input id="set-'+p.name+'-'+s.key+'" data-p="'+p.name+'" data-k="'+s.key+'" data-t="'+s.type+'" '+
+      'placeholder="默认: '+esc(String(s.default??''))+'"/></div>').join('');
+    // 工具区：每个工具一块「参数 + 执行 + 结果」
+    const toolHtml=tools.map(function(d,i){
+      const nm=String(d.name||'');
+      const props=((d.parameters||{}).properties)||{};
+      const req=((d.parameters||{}).required)||Object.keys(props);
+      const inputs=Object.keys(props).map(function(k){
+        const t=String((props[k]||{}).type||'string');
+        const must=req.indexOf(k)>=0;
+        const ph=esc(String((props[k]||{}).description||''));
+        const id='pi-'+p.name+'-'+i+'-'+k;
+        if(t==='boolean')return '<label style="margin-right:12px;font-size:12px"><input type="checkbox" id="'+id+'" data-k="'+esc(k)+'" data-t="bool"/> '+esc(k)+'</label>';
+        return '<div class="field" style="margin:6px 0"><label>'+esc(k)+(must?' *':'')+'</label>'+
+               '<input id="'+id+'" data-k="'+esc(k)+'" data-t="'+esc(t)+'" placeholder="'+ph+'"/></div>';
+      }).join('');
+      return '<div style="border:1px solid #232a35;border-radius:10px;padding:10px;margin:8px 0">'+
+        '<div style="font-size:13px;color:#e6edf3;margin-bottom:4px">🛠 '+esc(nm)+'</div>'+
+        '<div style="font-size:12px;color:#7a8290;margin-bottom:8px">'+esc(d.description||'')+'</div>'+
+        inputs+
+        '<button class="btn-sec" onclick="callPlugin(\''+p.name+'\',\''+nm+'\','+i+')">▶ 执行</button>'+
+        '<div class="think" id="po-'+p.name+'-'+i+'" style="margin-top:8px;white-space:pre-wrap"></div></div>';
+    }).join('');
+    holder.insertAdjacentHTML('beforeend',
+      '<div class="sec" id="'+key+'"><h3>'+meta.icon+' '+esc(meta.name)+'</h3>'+
+      '<p style="color:#7a8290;font-size:12px;margin:2px 0 10px">'+
+      '插件 <code>'+esc(meta.full)+'</code> ｜ '+(hasCallable?tools.length:0)+' 个工具。'+
+      '**填好参数点「执行」**，载体会直接跑它——不用等 AI 自己挑。</p>'+
+      (fields?fields+'<div class="actions"><button class="btn-sec" onclick="savePluginSettings(\''+p.name+'\')">💾 保存插件设置</button></div>':'')+
+      (hasCallable?toolHtml:'<div class="think">这个插件没有可调用工具。</div>')+
+      '</div>');
   });
   try{Object.keys(localStorage).filter(k=>k.startsWith('xjset-')).forEach(k=>{const el=document.getElementById('set-'+k.slice(6));if(el){el.value=localStorage.getItem(k)||'';}});}catch(e){}
+}
+// 在插件模块页点「执行」→ 真调这个插件的工具
+async function callPlugin(pname, tool, idx){
+  const out=document.getElementById('po-'+pname+'-'+idx);
+  const args={};
+  document.querySelectorAll('[id^="pi-'+pname+'-'+idx+'-"]').forEach(function(el){
+    const k=el.getAttribute('data-k');const t=el.getAttribute('data-t');
+    if(!k)return;
+    if(t==='bool'){args[k]=!!el.checked;return;}
+    const v=(el.value||'').trim();
+    if(v==='')return;                       // 空的就不传（插件自己判必填）
+    if(t==='integer'||t==='number'){args[k]=Number(v);return;}
+    args[k]=v;
+  });
+  if(out){out.textContent='执行中…';}
+  try{
+    const d=await (await fetch('/api/plugin_call',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({plugin:pname,tool:tool,args:args})})).json();
+    if(out)out.textContent=d.ok?('✅ '+(d.text||'（空结果）')):('❌ '+(d.error||'失败'));
+  }catch(e){if(out)out.textContent='❌ 调用失败：'+e;}
 }
 function savePluginSettings(name){
   try{
@@ -22382,3 +23075,19 @@ try:
     start_friends_scheduler()
 except Exception as _fe:      # noqa: silent-ok — 起不来也照常服务
     LOG.debug("好友调度启动失败（忽略）：%s", _fe)
+
+# ---- 刷B站：把插件的设置页所需接口挂上（读配置 / 存配置 / 跑一轮 / 看刷过什么）----
+# 为什么单独放一个模块（`core/bili_duty_ui.py`）而不是堆在这里：
+#   B站 插件是**可选**的（有人不装）。挂接口失败不应该影响小焦启动，
+#   所以单独成模块、单独 try，装不上就是"没有这一页"，而不是整个服务起不来。
+try:
+    from core import bili_duty_ui as _BDU
+    _BDU.register(app)
+    # **自动轮**：光有设置页不够 —— 用户实测"他没有自己去刷视频"，
+    # 就是因为小焦这边没有任何定时触发。这里起一个守护线程按峰谷时段自己跑。
+    _BDU.start_scheduler()
+    # 后台转写线程：没字幕的视频排进队列，慢慢转、转完再学（不阻塞任何一轮）
+    _BDU.start_transcribe_worker()
+    LOG.info("刷B站接口已挂载 + 自动轮已启动：/api/bili_duty、/run、/gallery、/cover/<bv>")
+except Exception as _bd_e:      # noqa: silent-ok — 插件没装/写坏了也照常服务
+    LOG.warning("刷B站接口挂载失败（该页将不可用）：%s", _bd_e)

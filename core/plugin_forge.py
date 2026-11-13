@@ -354,17 +354,62 @@ if bad:
     print(json.dumps({"ok": False, "why": "；".join(bad[:4])}, ensure_ascii=False))
     raise SystemExit(0)
 name = str(descs[0].get("name"))
-try:
-    out = plug.execute(name, {})
+
+
+def _sample_candidates(desc):
+    """同一份 schema，给**几组**候选值（不同工具吃的输入不一样）。
+
+    「十二万」适合"中文→数字"，但对"数字→中文"是非法的；
+    「120000」反之。只拿一组去试会把好插件误杀（实测就这么误杀过）。
+    所以给 3 组，**任一组能跑通就算能用**。
+    """
+    props = ((desc.get("parameters") or {}).get("properties") or {})
+    req = ((desc.get("parameters") or {}).get("required") or list(props))
+    outs = []
+    for sample in ("十二万", "120000", "测试"):
+        args = {}
+        for k in req:
+            t = str((props.get(k) or {}).get("type") or "string")
+            if t in ("integer", "number"):
+                args[k] = 120000
+            elif t == "boolean":
+                args[k] = True
+            elif t == "array":
+                args[k] = [sample]
+            else:
+                args[k] = sample
+        outs.append(args)
+    return outs
+
+
+_bad_words = ("没给", "请给", "缺", "失败", "错误", "无法", "不支持", "参数不对")
+_ok_sample = None
+_tried = []
+for args in _sample_candidates(descs[0]):
+    try:
+        out = plug.execute(name, args)
+    except Exception as e:
+        _tried.append("%s→异常 %s" % (list(args.values()), str(e)[:40]))
+        continue
     if not isinstance(out, str):
-        print(json.dumps({"ok": False, "why": "execute 没返回字符串（返回类型 %s）"
-                          % type(out).__name__}, ensure_ascii=False)); raise SystemExit(0)
-except Exception as e:
-    print(json.dumps({"ok": False, "why": "execute 抛异常：%s: %s" % (type(e).__name__, e)},
-                     ensure_ascii=False)); raise SystemExit(0)
-note = "调用成功" if out.strip() else "空参数返回空串（可接受：缺参数时本来就该这样）"
+        _tried.append("%s→返回类型 %s" % (list(args.values()), type(out).__name__))
+        continue
+    if not out.strip():
+        _tried.append("%s→空串" % list(args.values()))
+        continue
+    if [w for w in _bad_words if w in out]:
+        _tried.append("%s→%s" % (list(args.values()), out[:40]))
+        continue
+    _ok_sample = (args, out)
+    break
+
+if _ok_sample is None:
+    print(json.dumps({"ok": False,
+                      "why": "三组样例参数都跑不通（schema 和代码对不上，或内部逻辑有问题）：%s"
+                             % "；".join(_tried[:3])}, ensure_ascii=False))
+    raise SystemExit(0)
 print(json.dumps({"ok": True, "tools": [d.get("name") for d in descs],
-                  "sample": (out[:120] or note)}, ensure_ascii=False))
+                  "sample": _ok_sample[1][:120], "args": _ok_sample[0]}, ensure_ascii=False))
 '''
 
 

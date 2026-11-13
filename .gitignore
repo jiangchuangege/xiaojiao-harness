@@ -186,3 +186,20 @@ xiaojiao_profiles*.json
 
 # 体检脚本的临时目录（每次跑完自己清，别入库）
 _health_tmp/
+
+# Bվ����Դ����л�����Ŀ¼���ӣ�ָ���ⲿ�� venv/ģ�ͻ��棻����⣩
+bili_duty/.venv/
+bili_duty/.hf-cache/
+bili_duty/duty.log
+
+# ── 运行态 / 第三方运行时（不进仓库）────────────────────────────
+# bili_duty 是 B站插件搬过来的运行时：含 .venv / .hf-cache 目录联接，
+# 以及 bili_credential.json（B站登录凭证）。体积大且跟账号绑定，不入库。
+bili_duty/
+# 用户自己的资料目录
+项目文件夹/
+# forge / 群里自己造出来的插件产物（可随时重生）
+plugins/gen_*.py
+plugin_framework.py
+# 网页截图（web_shot 的取证图）
+logs/weblog/

@@ -130,7 +130,15 @@ def run(res: Results, mod=None) -> Results:
     suspects = []
     _self = os.path.abspath(__file__)          # 本文件自身含这些关键词（就是用来扫描的），需排除
     for root, dirs, files in os.walk(REPO_ROOT):
-        dirs[:] = [d for d in dirs if d not in {".git", "__pycache__", "~", "logs", "node_modules"}]
+        # 【跳过第三方目录，别把别人的依赖当成"我们的代码"】
+        # 这条扫描问的是"**小焦自己**有没有遥测/上报埋点"；而 `.venv` / `site-packages`
+        # 里是 pip / h11 / requests 这些第三方包，它们里面有 "analytics" 之类的词
+        # 再正常不过（比如 h11 的注释、pip 的元数据）。
+        # 实测来源：B站插件接进来时它自带 `.venv`（目录联接，就落在仓库里），
+        # 一跑就把 h11/pip 判成了"遥测埋点" —— 那显然是误报，而且会随依赖更新反复出现。
+        dirs[:] = [d for d in dirs if d not in {
+            ".git", "__pycache__", "~", "logs", "node_modules",
+            ".venv", "venv", "site-packages", ".hf-cache", "uv-cache", "uv-python"}]
         for fn in files:
             if fn.endswith(".py"):
                 p = os.path.join(root, fn)

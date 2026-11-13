@@ -200,11 +200,37 @@ def mark_read(name):
     return {"ok": True, "n": d["last_read_n"]}
 
 
+def _strip_think_local(text):
+    """剥掉模型吐的思维块标签（`<think>` / `<思考>` 等）。
+
+    【为什么这里也要有一份】好友消息是**模型直接生成、直接落盘**的出口，
+    不经过聊天那条 `_strip_think` 流水线。实测用户看到好友气泡里是
+    「<思考> 我需要先理解… </思考> 你好，我是小焦…」—— 推理和正文粘成一段。
+    好友/群聊这些"社交出口"都必须自己剥一次；放在 `_append` 这个**唯一落盘点**最省事。
+    """
+    import re as _re
+    s = str(text or "")
+    # 尖括号那套 + **全角方括号那套**（`【思考】…【回答】`）都要认。
+    #   实测：只认 `<思考>` 时，模型换成 `【思考】` 写，整段推理就被当成消息发出来了
+    #   （用户截图：好友回的全是"我意识到刚才那串解释有点抽象…"）。
+    if _re.search(r"</?(?:think|thinking|reasoning|思考|推理)>", s, _re.I):
+        s = _re.sub(r"(?is)<(think|thinking|reasoning|思考|推理)>.*?</\1>", "", s)
+        s = _re.sub(r"(?is)</?(think|thinking|reasoning|思考|推理)>", "", s)
+    if "【" in s:
+        m = _re.search(r"【回答】", s)
+        if m:
+            s = s[m.end():]
+        s = _re.sub(r"(?is)【思考】.*?(?=【回答】|$)", "", s)
+        s = _re.sub(r"(?is)【(思考|推理|回答)】", "", s)
+    return _re.sub(r"\n{3,}", "\n\n", s).strip()
+
+
 def _append(name, from_, text, by="", why=""):
     d = _load(name)
     msg = {"id": "%d%03d" % (int(time.time() * 1000), random.randint(0, 999)),
            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "from": from_,
-           "text": str(text or "")[:1500], "by": by, "why": why}
+           # **落盘前先剥标签**：这里是好友消息唯一的写入口，挡住就没别的口子漏
+           "text": _strip_think_local(text)[:1500], "by": by, "why": why}
     d.setdefault("messages", []).append(msg)
     d["messages"] = d["messages"][-int(_cfg_num("max_msgs", 300)):]
     if from_ == "friend":
@@ -230,6 +256,81 @@ def _ctx_msgs(name, limit=10):
     return head, "\n".join(lines)
 
 
+_SPEAKER_RE = None
+
+
+def _clean_reply(txt, last_user=""):
+    """把模型吐出来的东西整理成"一句能发出去的话"，并挡住几种明显的胡说。
+
+    实测三种坏输出（用户截图里的原样）：
+      ① **抄对话记录**：「你：嗯。你那边也没啥事，就睡琢磨，琢磨啥呢？说说。」——
+         模型把「最近的对话」当剧本往下写，而不是回话；
+      ② **带说话人前缀**：「你：」「他：」直接被当成消息发出去；
+      ③ **复述对方原话**：把"嗯"再回一遍（等于没回）。
+    这里：剥前缀 → 拦复述 → 拦空话。拦下来就返回 ""，由上层**如实说"这次没应答"**，
+    绝不把垃圾当成"它说的话"落盘。
+    """
+    global _SPEAKER_RE
+    if _SPEAKER_RE is None:
+        import re as _re
+        _SPEAKER_RE = _re.compile(r"^\s*(?:你|他|她|我|对方|用户|小焦|[^\s：:]{1,8})\s*[：:]\s*")
+    s = str(txt or "").strip()
+    s = s.strip('"“”')
+    # 只剥**开头**那一层前缀（"你：xxx" → "xxx"），剥完可能还有一层（"你：他：xxx"）
+    for _ in range(2):
+        s2 = _SPEAKER_RE.sub("", s, count=1)
+        if s2 == s:
+            break
+        s = s2.strip()
+    s = s.split("\n")[0].strip()          # 只要第一句（模型爱往下续写）
+    if not s:
+        return ""
+    lu = str(last_user or "").strip()
+    if lu and (s == lu or lu in s and len(s) <= len(lu) + 6):
+        return ""                          # 复述对方原话 → 当没回
+    # 【"拿对方那句开头、然后接着往下写"= 在续写剧本，不是在回话】
+    # 实测原样：「你：嗯。你那边也没啥事，就睡琢磨，琢磨啥呢？说说。」
+    # 区分关键在**标点**：`嗯。你那边…` 是把"嗯"当台词引用完又续写；
+    # 而 `嗯，我也刚下班…` 是自然接话（后接逗号）。只拦前者。
+    # 【复述问题 ≠ 回答】实测它会把用户那句原样抄到开头再往下编：
+    #   「在干嘛呢（把手机搁腿上，抬眼看你两下，叹气）问了六次了…」
+    # 原来只拦"抄完紧跟句号"的情况；这里放开给 ≥3 字的整句复述一律拦。
+    # （1~2 字的语气词如"嗯"仍允许后面用逗号自然接话。）
+    if lu and len(lu) >= 3 and s.startswith(lu):
+        return ""
+    if (lu and s.startswith(lu) and len(s) > len(lu) + 8
+            and s[len(lu)] in "。！？!?…：:\n"):
+        return ""
+    # 句子里还带着"某某："这种说话人标记 → 那是对话记录，不是一句话
+    if "：" in s[1:] or ":" in s[1:]:
+        return ""
+    # 整句只是语气词（"嗯""好""哦"）→ 也不算回话（用户实测："嗯。"这种回了等于没回）
+    if len(s) <= 2 and s in ("嗯", "哦", "好", "啊", "哈", "对", "是", "行"):
+        return ""
+    return s[:200]
+
+
+def _recent_friend_texts(name, k=3):
+    """最近 k 条**它自己**说过的话（用来判"是不是又说了同一句"）。"""
+    d = _load(name)
+    out = [str(m.get("text") or "") for m in (d.get("messages") or [])
+           if m.get("from") == "friend"][-k:]
+    return out
+
+
+def _too_similar(a, b):
+    """两句是不是基本一样（判"复读"）。用字符集重叠，够用且不引第三方库。"""
+    a, b = str(a or ""), str(b or "")
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    sa, sb = set(a), set(b)
+    if not sa or not sb:
+        return False
+    return len(sa & sb) / float(len(sa | sb)) >= 0.8
+
+
 def say(name, text):
     """用户对某个好友说一句 → 他回（走快速一对一，不折腾工具）。"""
     text = str(text or "").strip()
@@ -240,15 +341,56 @@ def say(name, text):
     _append(name, "user", text)
     _event("user_say", friend=name, chars=len(text))
     head, ctx = _ctx_msgs(name)
+    # 【察觉"你在重复问"】用户连发同一句时，模型每轮都当新问题答，
+    #   于是它对同一个问题给出越来越飘的答案（实测：刷手机→等你回话→刷视频→打游戏→追你）。
+    #   把"已经问过几次"直接告诉模型，它才知道该点破，而不是继续编。
+    _recent_user = [str(m.get("text") or "") for m in (_load(name).get("messages") or [])
+                    if m.get("from") == "user"][-6:-1]
+    _repeat = sum(1 for x in _recent_user if x.strip() == text)
+    _rep_hint = ""
+    if _repeat >= 1:
+        _rep_hint = ("\n\n【重要】他这句话已经问过 %d 次了。**别再当新问题回答，"
+                     "也别装作刚听到**：直接点出来（比如「你刚问过了」），然后说点别的。"
+                     % (_repeat + 1))
     sys_p = (head + " 你们在微信一样的一对一聊天。**对方的名字你并不知道，就叫他「你」；"
              "绝对不要叫他「小焦」（那是助手自己的名字）**。像真人那样回他：短、口语、有情绪，"
-             "可以反问一句。不要复述他说的话，不要客套。只输出你要说的话，40 字以内。")
+             "可以反问一句。不要复述他说的话，不要客套。只输出你要说的话，40 字以内。"
+             # 【必须明说】模型会把上面的「最近的对话」当成剧本往下续写，
+             # 于是输出「你：…」这种**说话人前缀**；这两句就是堵它的。
+             "**只写你说出口的那句话本身，不要写「你：」「他：」这类前缀，"
+             "不要接着抄前面的对话。**"
+             # 模型会编"你这消息怎么回得这么慢"这种**它无从知道的事**（它看不见时间/网络），
+             # 这类"评论对方发消息的速度/系统/网络"的话一律不许说。
+             "**不要评论对方回消息快慢、不要提网络/延迟/系统，你不知道这些。**")
     txt, by = _ask([{"role": "system", "content": sys_p},
-                    {"role": "user", "content": "最近的对话：\n%s\n\n他刚说：%s" % (
-                        ctx[-600:], text)}])
+                    {"role": "user", "content": "最近的对话：\n%s\n\n他刚说：%s%s" % (
+                        ctx[-600:], text, _rep_hint)}])
+    txt = _clean_reply(txt, text)
+    # 【察觉"它在重复答"】同一句话说第二遍时，用户会以为它卡住了（实测截图）。
+    #   先要求换一个说法重来一次；还是重复就**不落盘**，如实说"这句刚说过"。
+    _prev = _recent_friend_texts(name, 3)
+    if txt and any(_too_similar(txt, p) for p in _prev):
+        txt2, by2 = _ask([{"role": "system", "content":
+                           head + " 你刚才说过「%s」。现在**换一个完全不同的说法**，"
+                                  "说点新的具体内容（别说同一件事），一到两句，只输出这句话。"
+                                  % (_prev[-1][:40])},
+                          {"role": "user", "content": text}])
+        txt = _clean_reply(txt2, text)
+        by = by2 or by
+        if txt and any(_too_similar(txt, p) for p in _prev):
+            _event("reply_skip", friend=name, why="和刚才那句一样（不重复发）")
+            return {"ok": True, "reply": None, "why": "这句话刚说过，我让它换个说法也没换出来"}
     if not txt:
-        _event("reply_skip", friend=name, why="模型没应答（不编一句假的）")
-        return {"ok": True, "reply": None, "why": "模型这次没应答"}
+        # 一次重试：换更硬的约束（模型小，第一次容易顺着剧本写）
+        txt2, by2 = _ask([{"role": "system", "content":
+                           head + " 现在只回一句话：对他刚说的那句，说一到两句具体的话，"
+                                  "不要复述他的话，不要以「你：」开头。只输出这句话。"},
+                          {"role": "user", "content": text}])
+        txt = _clean_reply(txt2, text)
+        by = by2 or by
+    if not txt:
+        _event("reply_skip", friend=name, why="模型没给出可用的话（不编一句假的）")
+        return {"ok": True, "reply": None, "why": "模型这次没给出能发的话"}
     msg = _append(name, "friend", txt, by=by, why="回你")
     _event("reply", friend=name, chars=len(txt), by=by)
     return {"ok": True, "reply": msg}

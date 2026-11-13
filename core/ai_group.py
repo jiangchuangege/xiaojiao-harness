@@ -24,6 +24,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -403,11 +404,48 @@ def _load():
 
 
 def _save(d):
+    """写盘（原子替换）+ **保存前备份**。
+
+    【为什么加备份】实测事故：两处线程同时 `_load → 改 → _save`，
+    一个读到旧（空）副本的线程把 `{"groups": []}` 覆盖上去，**整个群和聊天记录全没了**。
+    这个文件没有备份，丢了就是丢了。
+    现在每次保存前把旧文件拷成 `.bak.N`（保留最近 5 份），
+    并且**空数据不许覆盖非空数据** —— 空的写入直接拒掉。
+    """
     _ensure()
-    tmp = _PATH + ".tmp"
-    with io.open(tmp, "w", encoding="utf-8", newline="") as f:
-        f.write(json.dumps(d, ensure_ascii=False, indent=1))
-    os.replace(tmp, _PATH)
+    try:
+        old = None
+        if os.path.exists(_PATH):
+            try:
+                with io.open(_PATH, encoding="utf-8") as f:
+                    old = json.load(f)
+            except Exception:      # noqa: silent-ok
+                old = None
+        _old_n = len((old or {}).get("groups") or [])
+        _new_n = len((d or {}).get("groups") or [])
+        # **拒绝"用空覆盖有"**（真实事故的形态）
+        if _old_n > 0 and _new_n == 0:
+            LOG.error("群组：拒绝用空数据覆盖 %d 个群（疑似并发读到旧副本）", _old_n)
+            return False
+        # 备份旧文件（保留 5 份）
+        if _old_n > 0:
+            try:
+                for i in range(4, 0, -1):
+                    src = "%s.bak.%d" % (_PATH, i)
+                    dst = "%s.bak.%d" % (_PATH, i + 1)
+                    if os.path.exists(src):
+                        os.replace(src, dst)
+                shutil.copyfile(_PATH, _PATH + ".bak.1")
+            except Exception as e:      # noqa: silent-ok — 备份失败不阻塞保存
+                LOG.debug("群组：备份失败 %s", e)
+        tmp = _PATH + ".tmp"
+        with io.open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(json.dumps(d, ensure_ascii=False, indent=1))
+        os.replace(tmp, _PATH)
+        return True
+    except Exception as e:      # noqa: BLE001
+        LOG.error("群组：保存失败 %s", e)
+        return False
 
 
 def _event(kind, **kw):
@@ -834,12 +872,239 @@ def _persona_of(m, g=None):
 
 
 def _transcript(msgs, who_filter=None):
+    """把消息拼成对话记录。
+
+    【**用户的话永远不能被过滤掉**】实测 bug：用户说「我说话他们跟看不见一样」。
+    根因就在这里 —— `who_filter` 是"这一轮谁在说"的成员名单，而过滤是按**每条消息的
+    发言人**做的，于是 `你`（用户）不在名单里就被整条丢掉：AI 只能看到彼此的话，
+    用户在群里说什么它们全不知道，当然像没听见。
+    聊天记录里"谁说的"不该被"谁该发言"影响 —— 用户的话是**上下文**，不是发言者。
+    """
     out = []
     for m in msgs:
-        if who_filter and m.get("who") not in who_filter:
+        who = str(m.get("who") or "")
+        is_user = who in ("你", "user", "我")
+        if who_filter and not is_user and who not in who_filter:
             continue
-        out.append("%s：%s" % (m.get("who"), str(m.get("text") or "")[:300]))
+        out.append("%s：%s" % (who, str(m.get("text") or "")[:300]))
     return "\n".join(out)
+
+
+def _clean_group_text(txt):
+    """群聊里发出去的那句话：剥掉模型吐的思维块标签和说话人前缀。
+
+    【为什么群聊要单独剥】聊天主链路有自己的 `_strip_think`，而群成员的话是
+    另一条生成路径（`_group_act`/`_ask`）直接落盘的 —— 于是 `</think>`、`<思考>…`
+    就原样出现在气泡里（用户实测截图：一条消息只有 `</think>`）。
+    这里在**唯一的落盘点**上兜一下，比在每个调用处各修一次可靠。
+    """
+    s = str(txt or "")
+    if re.search(r"</?(?:think|thinking|reasoning|思考|推理)>", s, re.I):
+        s = re.sub(r"(?is)<(think|thinking|reasoning|思考|推理)>.*?</\1>", "", s)
+        s = re.sub(r"(?is)</?(think|thinking|reasoning|思考|推理)>", "", s)
+    # 【全角方括号那套】`【思考】…【回答】` —— 和好友聊天同一个坑，一起认。
+    if "【" in s:
+        m = re.search(r"【回答】", s)
+        if m:
+            s = s[m.end():]
+        s = re.sub(r"(?is)【思考】.*?(?=【回答】|$)", "", s)
+        s = re.sub(r"(?is)【(思考|推理|回答)】", "", s)
+    s = s.strip()
+    # 「某某：」这种正文开头的说话人前缀也去掉（它自己就是发言人，不需要自报）
+    m = re.match(r"^\s*(?:小?焦|载体|[^\s：:]{1,6})\s*[：:]\s*(?=.)", s)
+    if m and len(m.group(0)) <= 12:
+        s = s[m.end():].strip()
+    s = re.sub(r"\n{3,}", "\n\n", s).strip()
+    # 【把提示词回显出来 → 丢弃】实测模型会把**指令原文**当发言吐出来：
+    #   「【这条最重要】**不要重复前文已经说过的意思**：要么补一个具体的新细节…」
+    #   「【必须围绕的主题】…」「【用户刚在群里说】…」
+    # 这些不是它说的话，是它把我们的提示词抄了一遍 —— 发出去就是垃圾。
+    _prompt_marks = ("【这条最重要】", "不要重复前文", "不要重复别人说过的",
+                     "【必须围绕的主题】", "【用户刚在群里说】", "【本群唯一的主题】",
+                     "只许围绕这个主题", "要么补一个具体的新细节",
+                     # 用户指令那段提示词（每轮都注入，模型会把它当发言抄出来）
+                     "【用户指令·最高优先", "违反这条指令", "【找插件的硬规定】",
+                     # 这两句也是提示词原文（"重说一遍"那条），实测被当发言吐出来
+                     "说的太像了", "换一个角度，说点", "别重复。")
+    if any(k in s for k in _prompt_marks):
+        return ""
+    return s
+
+
+def _topic_drift(text, topic):
+    """这句话是不是**跑题**了（和群主题没有实词重合）。
+
+    用户要求："跑题的发言不落盘"（比事后重问彻底）。
+    判据用**实词重合**而不是相似度：实测这份嵌入给任何两句都 0.6~0.8，拿它判跑题等于不判。
+      ① 没设主题 → 永远不算跑题；
+      ② 用户说的 → 永远不算（用户有权改话题）；
+      ③ 与主题共享 ≥1 个 ≥2 字的实词 → 不算跑题；否则算。
+    """
+    import re as _re3
+    t = str(topic or "").strip()
+    if not t:
+        return False
+
+    def _terms(x):
+        """切成**双字滑窗**（不是贪心 2~4 字）。
+
+        为什么：`[\u4e00-\u9fff]{2,4}` 是贪心的，"这个插件热加载" 会被切成
+        "这个插件"/"热加载…"，于是共有的"插件"根本不出现在词表里，判定就错了。
+        双字滑窗保证任何共享的二字词都能撞上。
+        """
+        s = str(x or "")
+        out = {s[i:i + 2].lower() for i in range(len(s) - 1) if _re3.match(r"[\u4e00-\u9fff]{2}", s[i:i + 2])}
+        out |= {w.lower() for w in _re3.findall(r"[A-Za-z]{3,}", s)}
+        return out
+
+    return not (_terms(text) & _terms(t))
+
+
+def _is_order(text):
+    """用户这句话是不是**在给指令**（而不是闲聊）？
+
+    判据：出现"去/必须/不要/别再/给我/帮我/应该/不准/以后"这类祈使/约束词。
+    目的：把用户的话升级成 `directive`（最高优先），成员每轮都被要求遵守。
+    """
+    t = str(text or "")
+    return any(w in t for w in ("去", "必须", "不要", "别再", "不准", "以后", "给我",
+                                "帮我", "应该", "禁止", "只能", "不许", "别再写"))
+
+
+def _order_forbids(text, tool_name):
+    """用户指令是否**明确禁止**这个动作。返回理由串（空串=不禁止）。
+
+    【为什么落在工具层】实测：只在提示词里写"别自己写插件、去 GitHub 下"，4B 照样调
+    `forge_plugin` 自己造 —— 提示词压不住。所以判断放在**执行前**：
+    用户说过"不要自己写/去下载" → 再调 forge 就直接拒绝并说明。
+    """
+    t = str(text or "")
+    if tool_name in ("forge_plugin", "write_file") and any(
+            w in t for w in ("不要自己写", "别自己写", "别再写", "不要写", "去下", "去 GitHub",
+                             "去github", "下载", "找现成")):
+        return ("用户已经明确要求：**不要自己写插件，去找现成的下载**。"
+                "所以这次不许调 %s。" % tool_name)
+    return ""
+
+
+_CLAIM_RES = [
+    # (正则, 说明) —— 这些说法**必须有本轮工具结果做凭证**，否则就是演戏
+    (r"(已|刚|成功)(经)?(安装|下载|装好|部署|完成|执行|写入|创建)", "声称做了某个动作"),
+    (r"(插件名|插件名称|作者|版本|评分|star|stars|★|收藏)\s*[:：]?\s*\S+", "声称了一个仓库的具体信息"),
+    (r"(星|评分|下载量)\s*[:：]?\s*\d+(\.\d+)?", "声称了数字指标"),
+    (r"https?://", "给了链接"),
+    (r"(找到|搜到|发现)了.{0,12}(插件|仓库|项目)", "声称找到了东西"),
+]
+
+
+_FAKE_CARD_RE = re.compile(
+    r"【\s*(插件名称|插件描述|插件链接|插件文件|插件作者|插件评分|插件\s*star|插件语言|插件文件数|插件文件链接)",
+    re.I)
+
+
+def _strip_fake_cards(txt):
+    """把"伪造插件卡片"那几行**删掉**，留下人话。
+
+    【为什么不整条丢】实测：卡片一律判死后，一轮下来 **0 条消息** —— 群里直接哑了。
+    用户的诉求是"别编"，不是"别说话"。所以改成：编造的那几行删掉，
+    剩下的正常句子照发；删完什么都不剩才丢。
+    """
+    lines = str(txt or "").split("\n")
+    keep = [ln for ln in lines if not _FAKE_CARD_RE.search(ln)]
+    out = "\n".join(keep).strip()
+    # 卡片常带"【插件搜索结果】"这种小标题，一起清掉
+    out = re.sub(r"【\s*插件(搜索结果|安装结果|功能描述)\s*】", "", out).strip()
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out
+
+
+def _ground_violations(txt, had_tools):
+    """这一句话有没有**无凭证的断言**。
+
+    【为什么这么严】用户原话："必须是真实，不能有一句话是演戏。"
+    实测：它们会编出仓库名、★320、评分 4.8、作者、文件链接、连"已安装成功"都编，
+    而那个仓库 404。只靠提示词压不住。
+
+    【为什么不能把"调过工具"当凭证】实测它们调了 `github_find_plugin`（还搜了两次），
+    然后**照样编** —— 工具返回的东西和它们写的毫无关系，甚至工具报错了它们也照样说成功。
+    所以"伪造插件卡片"这一条**与有没有调工具无关，一律判死**。
+
+    规则：
+      ① 出现「【插件名称】/【插件评分】/【插件 star】…」这种卡片格式 → **永远违规**
+         （真结果由载体原样展示，不需要模型复述）；
+      ② 其余断言（已安装/链接/数字/找到了）→ 本轮没真调过工具就违规。
+    """
+    t = str(txt or "")
+    if not t.strip():
+        return []
+    if _FAKE_CARD_RE.search(t):
+        return ["伪造插件卡片（工具结果由载体展示，不许模型复述）"]
+    hits = []
+    for rx, why in _CLAIM_RES:
+        if re.search(rx, t, re.I):
+            hits.append(why)
+    if hits and not had_tools:
+        return sorted(set(hits))
+    return []
+
+
+class _RP_SKIP(Exception):
+    """剧本群跳过防编造闸用的内部信号（不是错误）。"""
+
+
+_LINK_CHECK_CACHE = {}
+
+
+def _verify_links(txt):
+    """把消息里的 GitHub 链接**真访问一次**；404 就当场标成"不存在"。
+
+    【为什么必须有这条】实测群里会整段编造：仓库名、★320、评分 4.8、作者、
+    文件链接、连"已安装成功"都编出来了 —— 而那个仓库根本不存在（用户点开是 404）。
+    只靠提示词"不要编链接"压不住 4B。**发给用户之前真查一次**，是唯一可靠的办法。
+    查不到（超时/网络问题）**不判死**，只标"没核对上"，避免误伤。
+    """
+    import re as _re4
+
+    urls = _re4.findall(r"https?://(?:github\.com|raw\.githubusercontent\.com)/[^\s)\]\"'，。]+", txt)
+    if not urls:
+        return txt, []
+    bad = []
+    for u in set(urls):
+        u2 = u.rstrip(".,;:）)")
+        if u2 in _LINK_CHECK_CACHE:
+            st = _LINK_CHECK_CACHE[u2]
+        else:
+            try:
+                import requests
+                r = requests.get(u2, timeout=6, allow_redirects=True,
+                                 headers={"User-Agent": "xiaojiao-linkcheck"})
+                st = int(r.status_code)
+            except Exception:      # noqa: BLE001 — 查不动就"未核对"，不当假
+                st = 0
+            _LINK_CHECK_CACHE[u2] = st
+        if st == 404:
+            bad.append(u2)
+    for u2 in bad:
+        txt = txt.replace(u2, "〔%s —— 这个链接 404，仓库不存在，是编的〕" % u2)
+    return txt, bad
+
+
+_MODERN_MAP = [("手机屏幕", "茶盏"), ("手机", "帕子"), ("屏幕", "桌案"), ("语音", "轻声道"),
+               ("打字", "捻帕"), ("表情包", "眼色"), ("网络", "耳目"), ("发消息", "传话"),
+               ("回复", "回话"), ("打字中", "垂眸")]
+
+
+def _de_modern(txt):
+    """剧本群的后处理：把现代词换成当时的说法。
+
+    【为什么用后处理而不是提示词】实测：提示词里写三条铁律 → 4B 直接返回空（哑了）；
+    删掉只留一句 → 它照样写"（把手机在眼前推了推，指节在屏幕上轻轻一压）"。
+    既然压不住，就在**落盘前换词** —— 句子还在，戏还能演下去。
+    """
+    s = str(txt or "")
+    for a, b in _MODERN_MAP:
+        s = s.replace(a, b)
+    return s
 
 
 def run_round(gid, rounds=1, speakers=None, allow_act=True, focus=""):
@@ -847,6 +1112,10 @@ def run_round(gid, rounds=1, speakers=None, allow_act=True, focus=""):
     g = get(gid)
     if not g:
         return {"ok": False, "error": "没有这个群"}
+    # **剧本群不给工具**：实测会冒出「text_stats】」、forge_plugin 这种，
+    #   把"念着香料名"写成"这个目录下倒是有几个文件是关于香料的"。演剧本不需要工具。
+    if str(g.get("mode") or "") == "roleplay":
+        allow_act = False
     # 排队：别的群正在说就等一会儿（否则多个群一起抢模型，谁都慢到超时）
     _got = _ROUND_LOCK.acquire(timeout=180)
     if not _got:
@@ -978,10 +1247,21 @@ def _run_round_locked(gid, rounds=1, speakers=None, allow_act=True, focus=""):
             # 【能动手就写进提示词】只有允许动手的成员才提工具，免得它想动又动不了。
             _can_act = bool(m.get("allow_tools", True)) and (_ACT is not None) and bool(allow_act)
             if _can_act:
-                sys_p += ("\n你有工具可以用：查资料、读写文件、跑命令、画图，必要时用 forge_plugin 造新插件。"
-                          "该动手就动手，别只在嘴上说；做完用一两句话说清你做了什么、结果如何。")
+                sys_p += ("\n【真实作业规则·照这个做，不照做会被丢弃】\n"
+                          "1) 要查资料/找插件就**真去调工具**（plugin_spec → github_find_plugin → "
+                          "github_install_plugin），别凭印象说；\n"
+                          "2) 工具结果由**载体原样展示**：你**不要复述**名称、星数、评分、链接、"
+                          "文件路径——一复述就按编造丢掉；\n"
+                          "3) 你只说**一句判断**：行不行、为什么、下一步做什么；\n"
+                          "4) 工具报错就**照实说报错**，不许说成功；找不到就说「没找到」，不要编一个。\n")
             if g.get("style"):
-                sys_p += "\n群规矩：" + str(g.get("style"))[:300]
+                sys_p += ("\n【语言风格·必须照这个说话】" + str(g.get("style"))[:300])
+            # 【剧本群这三条规矩会把它噎死】实测加完之后整轮 0 条输出（提示词太长，
+            #   4B 直接返回空）。所以只在 style 里轻提一句，不单独加长段。
+            if str(g.get("mode") or "") == "roleplay":
+                sys_p += "\n（古代宫廷，别出现手机/屏幕/语音这类现代东西；别复读对方的话。）"
+            if g.get("rules"):
+                sys_p += ("\n【互动规则·必须照这个来】" + str(g.get("rules"))[:400])
             # 这一轮这个人的角度（轮转，避免同一个人一直是"提问者"）
             _angle = ANGLES[(_idx + _rr + r) % len(ANGLES)]
             sys_p += "\n【这一轮你的角色】" + _angle + "。不要重复别人说过的内容。"
@@ -1039,6 +1319,25 @@ def _run_round_locked(gid, rounds=1, speakers=None, allow_act=True, focus=""):
             #   （用户例子：规定主题是绑架，它们聊起了雪地徒步；破案群串成两个案子）。
             #   所以主题既进 system，也放在 user 消息最前面，并且明确"跑题就是错"。
             _topic_txt = str(g.get("topic") or "").strip()
+            # 【用户指令 = 最高优先】只要用户在群里给过指令，就压到 system 最前面，
+            #   并且逐轮重申（实测只提一次会被后面的十几条约束冲掉）。
+            _dir = g.get("directive") or {}
+            if _dir.get("text"):
+                _dt = str(_dir["text"])
+                sys_p = ("【用户指令·最高优先，必须遵守】%s\n"
+                         "违反这条指令的任何做法都算错，比「聊得热闹」重要得多。\n" % _dt[:200])
+                # 指令里提到"去 GitHub 找/下载/别自己写" → 连**选品标准**一起给死，
+                # 免得它们随便抓一个不兼容的仓库当宝贝。
+                if any(w in _dt for w in ("github", "GitHub", "下载", "现成", "别自己写", "不要自己写")):
+                    sys_p += ("【找插件的硬规定】\n"
+                              "· 先用 plugin_spec 读规定，再用 github_find_plugin 搜；\n"
+                              "· 只装**单文件 .py**（raw.githubusercontent.com 直链），用 github_install_plugin 装；\n"
+                              "· 只 import 纯功能库；禁 subprocess/eval/exec/os.system；\n"
+                              "· 必须有 get_tool_descriptions() 与 execute()，返回中文；\n"
+                              "· **不支持**：需要 API Key/登录、依赖 GUI/浏览器、要开端口/长驻、"
+                              "多文件包/要 pip 装依赖、会删改用户文件。\n"
+                              "· 找不到合格的，就如实说「没找到符合规定的」，不要退回去自己写。\n\n")
+                sys_p += "\n\n"
             if _topic_txt:
                 sys_p += ("\n【本群唯一的主题】%s\n"
                           "只许围绕这个主题说话。禁止引入和它无关的话题（换话题就是跑题）。"
@@ -1049,13 +1348,18 @@ def _run_round_locked(gid, rounds=1, speakers=None, allow_act=True, focus=""):
                 _transcript(recent) or "（还没有人说话，你起个头）",
                 m.get("name"))
             if focus:
-                # 【你说话必须被听见】实测：把用户的话追加在长上下文后面，4B 直接忽略，
-                #   还在聊上上句的技术细节。所以把用户原话**放到最前面**，上下文压到 4 条。
-                usr = ("【用户刚在群里说】%s\n\n"
-                       "你必须**回应他这句话**（一到两句，直接答，别继续聊别的话题、别绕开）。\n\n"
-                       "（下面只是最近几句背景，仅供参考）\n%s"
-                       % (str(focus)[:160],
-                          _transcript((recent or [])[-4:]) or "（无）"))
+                # 【你说话必须被听见】实测：把用户的话只放在 user 消息里，4B 会**完全忽略**，
+                #   继续聊 n 轮之前的插件话题（用户原话："根本不理我"）。
+                #   现在把它压到 **system 最前面**（system 的权重比 user 后面那段高得多），
+                #   并且把背景压到 3 条，避免长上下文把它冲掉。
+                sys_p = ("【现在最重要的事】用户在群里刚说：「%s」\n"
+                         "你必须**先直接回应这句话**（一到两句，正面回答/表态/接住），"
+                         "然后才能补充别的。**不要继续聊之前的技术话题**，除非你就是为回应他而提。\n\n"
+                         % str(focus)[:200]) + sys_p
+                usr = ("用户刚说的原话：%s\n\n"
+                       "（下面只是最近几句背景，仅供参考，不要接着它们往下聊）\n%s\n\n"
+                       "现在直接回应用户那句：" % (str(focus)[:200],
+                                                _transcript((recent or [])[-3:]) or "（无）"))
             elif not allow_act:
                 usr += "\n（刚才有人说话，直接接话，一到两句，别东拉西扯。）"
             _t_say = time.time()
@@ -1193,6 +1497,86 @@ def _run_round_locked(gid, rounds=1, speakers=None, allow_act=True, focus=""):
                             continue
                 except Exception as _e:      # noqa: silent-ok
                     LOG.debug("群组·重说一遍失败：%s", _e)
+            # **落盘前统一清洗**（剥 `</think>`、剥说话人前缀）—— 群聊唯一的写入口
+            txt = _clean_group_text(txt)
+            if not txt:
+                # 洗完什么都不剩（比如整条就是 `</think>`）→ 这句不发，别让空壳进群
+                LOG.info("群组：%s 这句洗完是空的（疑似只有思维标签），跳过", m.get("name"))
+                continue
+            # **复读用户原话就丢弃**：实测两个成员会把用户那句一字不改地当自己的发言
+            #   （用户截图：他说"我们互相讨论…需要如何加插件"，两个人原样复读一遍）。
+            #   那不是发言，是把上下文抄出来了。
+            _last_user = ""
+            _users_recent = []
+            for _mu in (g.get("messages") or [])[-30:]:
+                if str(_mu.get("who")) in ("你", "user", "我"):
+                    _t = str(_mu.get("text") or "").strip()
+                    if _t:
+                        _users_recent.append(_t)
+            _last_user = _users_recent[-1] if _users_recent else ""
+            # 【比**最近 10 条**用户消息，不是只比最后一条】
+            #   实测：它复读的是更早那句（"我们互相讨论让xiaojiao成为…"），只比最后一条就漏了。
+            _echo = None
+            for _u in _users_recent[-10:]:
+                if txt.strip() == _u or (len(_u) >= 8 and _u in txt and len(txt) <= len(_u) + 12):
+                    _echo = _u
+                    break
+            if _echo:
+                LOG.info("群组：%s 这句是复读用户原话，丢弃｜%s", m.get("name"), txt[:30])
+                continue
+            # 【只动手不动嘴 → 补一句】实测：模型光调工具、正文返回空，
+            #   于是这一轮 0 条消息（群里看着像死了）。这时由载体补一句人话，
+            #   并把真实工具回执留在上面 —— 用户既能看见它干了什么，也有人说话。
+            if not str(txt or "").strip():
+                try:
+                    _has_act = bool(_actions)
+                except NameError:
+                    _has_act = False
+                if _has_act:
+                    txt = "（我查了一下，工具回执在上面；这一步先到这儿。）"
+                else:
+                    continue
+            try:
+                # 【剧本群放行：编就是内容】用户："编造就是编造，我要让他们演到极致"。
+                #   防编造那几道闸只对**技术群**有意义；演后宫戏时"编"正是要的东西。
+                _is_rp = (str(g.get("mode") or "") == "roleplay")
+                try:
+                    _had_tools = bool(_actions)      # 本成员这轮真调过的工具
+                except NameError:
+                    _had_tools = False
+                if _is_rp:
+                    raise _RP_SKIP()
+                # 先把编造的卡片**删掉**（不是整条丢），留下人话
+                if _FAKE_CARD_RE.search(txt):
+                    _stripped = _strip_fake_cards(txt)
+                    LOG.info("群组：%s 这条含伪造插件卡片，已删掉卡片部分（剩 %d 字）",
+                             m.get("name"), len(_stripped))
+                    txt = _stripped
+                    if not txt:
+                        continue
+                _viol = _ground_violations(txt, _had_tools)
+                if _viol:
+                    LOG.info("群组：%s 这条无凭证（%s），拦下｜%s",
+                             m.get("name"), "、".join(_viol), txt[:40])
+                    continue
+            except _RP_SKIP:      # 剧本群：以上防编造全部跳过
+                # 但现代词要换掉（手机/屏幕/语音 → 当时的说法），否则戏就出戏了
+                txt = _de_modern(txt)
+            except Exception as _ge:      # noqa: silent-ok — 判据出错就放行，不影响发言
+                LOG.debug("群组·凭证判定失败：%s", _ge)
+            # **链接要真存在**：编造的仓库当场标 404（用户实测"404啊 他们在演戏吗"）
+            try:
+                if not _is_rp:
+                    txt, _bad_links = _verify_links(txt)
+                    if _bad_links:
+                        LOG.info("群组：%s 这条里有 %d 个编造的链接，已标出", m.get("name"), len(_bad_links))
+            except Exception as _le:      # noqa: silent-ok — 查链接失败不影响发言
+                LOG.debug("群组·链接核对失败：%s", _le)
+            # **跑题的发言不落盘**（技术群才管；剧本群跑题也算戏，放行）
+            if not _is_rp and _topic_drift(txt, g.get("topic")):
+                LOG.info("群组：%s 这句跑题了（主题「%s」），不落盘｜%s",
+                         m.get("name"), str(g.get("topic"))[:30], txt[:40])
+                continue
             msg = {"id": uuid.uuid4().hex[:8], "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                    "who": m.get("name"), "text": txt, "by": who, "sec": _sec,
                    "round": r + 1, "actions": (_actions or [])[:6]}
@@ -1234,9 +1618,12 @@ def _run_round_locked(gid, rounds=1, speakers=None, allow_act=True, focus=""):
                             if _rtxt:
                                 _rm = {"id": uuid.uuid4().hex[:8],
                                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                                       "who": "载体", "text": "〔已执行 %s〕%s" % (
+                                       # 【工具输出进代码围栏】原来直接把结果拼在〔已执行 …〕后面，
+                                       # 表格/命令行输出会被当成普通文字折行，显示成一坨（用户实测）。
+                                       # 包进 ``` 围栏，前端才按等宽块渲染。
+                                       "who": "载体", "text": "〔已执行 %s〕\n```\n%s\n```" % (
                                            "、".join(a.get("tool") for a in (_racts or [])[:3]) or "提议",
-                                           str(_rtxt)[:300]),
+                                           str(_rtxt)[:300].replace("```", "'''")),
                                        "by": _rwho or "", "sec": 0, "round": r + 1,
                                        "actions": (_racts or [])[:6]}
                                 with _LOCK:
@@ -1336,6 +1723,188 @@ def _strip_name_prefix(text, name):
     return t
 
 
+def _reply_to_user(gid, text, speakers=2):
+    """用户在群里说话 → 让 1-2 个成员**直接回他**（不走群聊那条复杂流水）。
+
+    【为什么必须绕开】实测：群聊的 prompt 里有十几条互相竞争的约束（主题、节奏、角色角度、
+    "不要重复别人"、"提出议"…），4B 会挑最容易的那条执行 —— 结果就是**完全无视用户**，
+    继续聊 n 轮前的技术话题（用户原话："根本不理我"）。把用户的话塞进 system 最前面
+    也压不住。
+    这里改成"单任务"：只给它一句话、一个要求（回这个人），上下文只留 2 条，
+    和一对一好友回复同一条路子 —— 小模型在"单任务"下才可靠。
+    """
+    g = get(gid) or {}
+    members = [m for m in (g.get("members") or []) if m.get("name")][:max(1, speakers)]
+    if not members:
+        return []
+    recent = (g.get("messages") or [])[-3:]
+    bg = _transcript(recent)
+    out = []
+    for m in members:
+        nm = str(m.get("name"))
+        who = str(m.get("model") or "")
+        sys_p = ("你是群里的「%s」。现在有人在群里说话，你**只用一到两句**回他，"
+                 "口语、具体、别客套。不要复述他的话，不要写指令、不要解释你在做什么。"
+                 "只输出你说出口的那句话。" % nm)
+        if m.get("persona"):
+            sys_p = "你的人设：" + str(m.get("persona"))[:300] + "\n" + sys_p
+        msgs = [{"role": "system", "content": sys_p},
+                {"role": "user", "content": "群里刚说的几句：\n%s\n\n他刚说：%s\n\n你回他："
+                                            % (bg or "（无）", str(text)[:200])}]
+        try:
+            # _ask(member_model, messages, temperature) → 返回 (文本, 实际用的火种)
+            _r = _ask(who or None, msgs)
+            txt = str((_r[0] if isinstance(_r, (tuple, list)) and _r else _r) or "")
+        except Exception as e:      # noqa: BLE001 — 单个成员失败不影响别人
+            LOG.debug("群组·回应用户失败（%s）：%s", nm, str(e)[:80])
+            continue
+        txt = _clean_group_text(txt)
+        if not txt or len(txt) < 2 or len(txt) > 200:
+            continue
+        msg = {"id": uuid.uuid4().hex[:8], "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+               "who": nm, "text": txt, "by": who or "默认角色", "round": 0, "actions": []}
+        with _LOCK:
+            d = _load()
+            for gg in d.get("groups") or []:
+                if gg.get("id") != gid:
+                    continue
+                gg.setdefault("messages", []).append(msg)
+                gg["messages"] = gg["messages"][-MAX_MSGS_STORE:]
+                _save(d)
+                break
+        out.append(msg)
+    return out
+
+
+def _carrier_github_search(gid, keyword):
+    """**载体自己**去 GitHub 搜，把真结果贴进群 —— 不经模型的手。
+
+    【为什么必须这样】实测：让 4B 自己调 `github_find_plugin`，它会演 ——
+    调了工具、看都不看结果，照样编出仓库名/★320/评分 4.8/链接，用户点开全是 404。
+    拦住它说话之后，它就干脆一声不吭（"给他们傻子一样"）。
+    结论：**"找插件"这件事不该交给 4B 做**。代码去搜、原样贴出来，模型只负责接着说人话。
+    """
+    try:
+        import requests
+        r = requests.get("https://api.github.com/search/repositories",
+                         params={"q": keyword, "sort": "stars", "order": "desc", "per_page": 5},
+                         headers={"Accept": "application/vnd.github+json",
+                                  "User-Agent": "xiaojiao"}, timeout=20)
+        if r.status_code != 200:
+            body = "（载体去 GitHub 搜了，但接口返回 HTTP %s，没拿到结果）" % r.status_code
+        else:
+            items = (r.json() or {}).get("items") or []
+            if not items:
+                body = "（载体去 GitHub 搜「%s」，**没有结果**。）" % keyword
+            else:
+                lines = ["（以下是**载体自己去 GitHub 搜到的真实结果**，不是模型编的）",
+                         "关键词：%s" % keyword, ""]
+                for i, it in enumerate(items, 1):
+                    lines.append("%d. %s  ★%s\n   %s\n   %s" % (
+                        i, it.get("full_name"), it.get("stargazers_count"),
+                        (it.get("description") or "").strip()[:90], it.get("html_url")))
+                lines.append("")
+                lines.append("注意：这些是**别的项目**，不是给小焦用的插件。"
+                             "要用必须满足单文件 .py + 契约 + 只 import 纯功能库；"
+                             "不满足就不能装。")
+                body = "\n".join(lines)
+    except Exception as e:      # noqa: BLE001 — 搜不到要如实说
+        body = "（载体去 GitHub 搜的时候失败了：%s）" % str(e)[:80]
+    msg = {"id": uuid.uuid4().hex[:8], "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+           "who": "载体", "text": body, "by": "carrier", "round": 0, "actions": []}
+    with _LOCK:
+        d = _load()
+        for gg in d.get("groups") or []:
+            if gg.get("id") != gid:
+                continue
+            gg.setdefault("messages", []).append(msg)
+            gg["messages"] = gg["messages"][-MAX_MSGS_STORE:]
+            _save(d)
+            _event("carrier_github_search", gid=gid, keyword=keyword)
+            break
+    return msg
+
+
+def set_script(gid, text):
+    """把用户粘贴的**一整段设定**灌进群：主题 / 语言风格 / 互动规则 / 角色人设。
+
+    【为什么做成"粘贴一整段"】用户的原话是"这种都要设计我填写" —— 他要能把
+    剧本原样贴进来（后宫、年代、角色、风格、规则），而不是一条条手填。
+    支持的写法（中英文冒号都行，可不按顺序）：
+        主题：大周雍正年间，紫禁城后宫。
+        语言风格：半文半白，古风宫廷腔调，多用"本宫/臣妾/妹妹"。
+        互动规则：可以分享赏赐、糕点，暗中挑拨；遇到翻牌子要交锋。
+        角色：
+          甄嬛：聪慧隐忍，擅借刀杀人。
+          华妃：嚣张跋扈，深爱皇上但善妒。
+    解析出来的角色会**补进成员表**（已有同名就更新人设，没有就新建）。
+    """
+    t = str(text or "").strip()
+    if not t:
+        return {"ok": False, "error": "设定是空的"}
+    import re as _re5
+
+    def _grab(label):
+        m = _re5.search(r"(?m)^\s*%s\s*[：:]\s*(.+)$" % label, t)
+        return m.group(1).strip() if m else ""
+
+    topic = _grab("主题") or _grab("群主题")
+    style = _grab("语言风格")
+    rules = _grab("互动规则") or _grab("规则")
+    # 角色：以「角色/人物/角色设定」开头的那一段里，每行 "名字：人设"
+    roles = {}
+    m = _re5.search(r"(?ms)^\s*(?:角色设定|角色|人物设定|人物)\s*[：:]\s*(.+)$", t)
+    block = m.group(1) if m else t
+    for line in block.splitlines():
+        mm = _re5.match(r"^\s*[-·•\s]*([\u4e00-\u9fffA-Za-z0-9]{1,8})\s*[：:]\s*(.+)$", line)
+        if not mm:
+            continue
+        nm, ps = mm.group(1).strip(), mm.group(2).strip()
+        if nm in ("主题", "语言风格", "互动规则", "规则", "角色", "角色设定"):
+            continue
+        if len(ps) < 4:
+            continue
+        roles[nm] = ps[:300]
+    with _LOCK:
+        d = _load()
+        hit = None
+        for gg in d.get("groups") or []:
+            if gg.get("id") != gid:
+                continue
+            if topic:
+                gg["topic"] = topic[:300]
+            if style:
+                gg["style"] = style[:300]
+            if rules:
+                gg["rules"] = rules[:400]
+            mem = gg.setdefault("members", [])
+            for nm, ps in roles.items():
+                ex = next((x for x in mem if x.get("name") == nm), None)
+                if ex:
+                    ex["persona"] = ps
+                else:
+                    mem.append({"name": nm, "persona": ps, "model": "", "color": ""})
+            # 【剧本里没有的成员，清掉】用户原话："小焦什么鬼，小焦不要默认在里面啊"。
+            #   建群时会自动塞默认成员（小焦/阿码/老曲…），一贴后宫剧本就变成
+            #   "太监混进后宫"。既然剧本明确列了角色，就只留剧本里的人。
+            if roles:
+                gg["mode"] = "roleplay"      # 剧本群：编就是内容，防编造闸全部放行
+                keep = set(roles)
+                removed = [x.get("name") for x in mem if x.get("name") not in keep]
+                gg["members"] = [x for x in mem if x.get("name") in keep]
+                if removed:
+                    LOG.info("群组：按剧本清掉非角色成员 %s", removed)
+            gg["messages"] = gg.get("messages") or []
+            _save(d)
+            _event("script_set", gid=gid, roles=len(roles))
+            hit = {"ok": True, "topic": topic[:40], "style": style[:30],
+                   "rules": rules[:30], "roles": list(roles)}
+            break
+    if hit is None:
+        return {"ok": False, "error": "没有这个群"}
+    return hit
+
+
 def user_say(gid, text, who="你", respond=True):
     """用户插一句；默认**立刻让群里有人回应**（真人群聊也是这样，你说话有人接）。"""
     text = str(text or "").strip()
@@ -1357,17 +1926,38 @@ def user_say(gid, text, who="你", respond=True):
             break
     if _hit is None:
         return {"ok": False, "error": "没有这个群"}
-    # 【你说话就有人接】后台起一轮回应，不挡你这条消息显示
+    # 【你说话就有人接】**走单任务通道**（见 _reply_to_user 的说明），
+    # 不再交给群聊那条复杂流水 —— 那条会无视你。
     if respond:
         try:
             import threading as _th
-            # 回应走快速通道：两个人、不动工具 —— 用户问一句不该等一分钟
-            _th.Thread(target=run_round, kwargs={"gid": gid, "rounds": 1, "speakers": 2,
-                                                 "allow_act": False, "focus": text},
+            _th.Thread(target=_reply_to_user, args=(gid, text, 2),
                        daemon=True, name="xj-group-reply").start()
-            _event("reply_trigger", gid=gid, why="用户说话了 → 起一轮回应")
+            _event("reply_trigger", gid=gid, why="用户说话了 → 单任务回应")
         except Exception as e:      # noqa: silent-ok — 起不来也不影响消息落盘
             LOG.debug("群组·触发回应失败：%s", e)
+    # 【用户指令落盘】用户给过指令就记进 group["directive"]（只留最新一条），
+    # 之后每一轮成员的 system 最前面都会带上它 —— 这是"硬性要求"的载体侧实现。
+    if _is_order(text):
+        with _LOCK:
+            d = _load()
+            for gg in d.get("groups") or []:
+                if gg.get("id") != gid:
+                    continue
+                gg["directive"] = {"text": text[:200], "ts": msg["ts"]}
+                _save(d)
+                _event("directive_set", gid=gid, text=text[:60])
+                break
+    # 【活由载体干】用户说"去 github 找" → 载体自己去搜、把真实结果贴出来，
+    #   不指望 4B 去调工具（实测它只会演）。模型之后只接着说人话。
+    if _is_order(text) and any(w in text.lower() for w in ("github", "下载", "现成", "插件")):
+        try:
+            import threading as _th2
+            _kw = "dsh plugin" if "dsh" in text.lower() else "mcp server tools"
+            _th2.Thread(target=_carrier_github_search, args=(gid, _kw),
+                        daemon=True, name="xj-carrier-gh").start()
+        except Exception as e:      # noqa: silent-ok
+            LOG.debug("群组·载体搜索启动失败：%s", e)
     return _hit
 
 

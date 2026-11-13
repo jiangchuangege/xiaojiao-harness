@@ -57,7 +57,11 @@ def _cand_dirs():
     for r in _roots():
         out += [r, os.path.join(r, "model"), os.path.join(r, "models"), os.path.join(r, "llama")]
     out += ["C:/llama", "C:/llama.cpp", "C:/tools/llama", "D:/llama",
-            _home("llama"), _home("llama.cpp"), _home("Downloads"), _home("下载"), _home()]
+            # 【真机实测补的】很多人把模型放大写中文目录（`C:\\模型`、`C:\\模型文件`），
+            # 这既不违规也不罕见 —— 但原来不在候选里，于是"模型明明在机器上却识别不到"。
+            "C:/模型", "C:/模型文件", "D:/模型", "D:/模型文件",
+            _home("llama"), _home("llama.cpp"), _home("Downloads"), _home("下载"),
+            _home("模型"), _home()]
     seen, uniq = set(), []
     for d in out:
         k = os.path.normcase(os.path.abspath(d))
@@ -110,6 +114,38 @@ def _deep_exe(name, keywords):
         return ""
 
 
+def _shallow_exe(cand_dirs):
+    """在候选目录的**下一层**里找 llama-server.exe（含 llama.cpp 两种常见产物结构）。
+
+    为什么需要这一层：`_cand_dirs()` 里都是**上层目录**（Downloads、项目根……），
+    而实际的 exe 往往在它们的子目录里：
+      · 官方预编译包解压后：`Downloads/llama-b4931-bin-win-cuda-x64/llama-server.exe`
+      · 自己编译后：`llama.cpp/build/bin/Release/llama-server.exe`
+    只查 `目录/llama-server.exe` 的话，上面两种都**看不见** ——
+    用户会觉得"我明明下载了/编译好了，它就是不认"。
+    """
+    rels = (("llama-server.exe",), ("llama-server",),
+            ("bin", "llama-server.exe"), ("bin", "llama-server"),
+            ("Release", "llama-server.exe"),
+            ("build", "bin", "llama-server.exe"), ("build", "bin", "llama-server"),
+            ("build", "bin", "Release", "llama-server.exe"),
+            ("build", "bin", "Release", "llama-server"))
+    for d in cand_dirs:
+        if not os.path.isdir(d):
+            continue
+        try:
+            subs = [os.path.join(d, x) for x in sorted(os.listdir(d))
+                    if os.path.isdir(os.path.join(d, x))]
+        except Exception:      # noqa: silent-ok — 某个目录读不了不影响别的
+            continue
+        for sub in subs[:60]:          # 只看前 60 个子目录，避免 Downloads 特别大时拖慢启动
+            for rel in rels:
+                c = os.path.join(sub, *rel)
+                if os.path.isfile(c):
+                    return c, "在 %s 里找到" % _norm(os.path.dirname(os.path.abspath(c)))
+    return "", ""
+
+
 def find_llama_server(deep=False):
     """llama-server 可执行文件。返回 `(路径, 说明)`；找不到返回 `("", 怎么指定)`。"""
     p, how = _by_env("llama_server")
@@ -125,11 +161,42 @@ def find_llama_server(deep=False):
             c = os.path.join(d, fn)
             if os.path.exists(c):
                 return _norm(c), "在 %s 里找到" % _norm(os.path.abspath(d))
+    # 再往下一层找（预编译包 / 自编译产物都在这层）
+    p, how = _shallow_exe(_cand_dirs())
+    if p:
+        return _norm(p), how
     if deep:
         p = _deep_exe("llama-server.exe", ("llama", "大脑")) or _deep_exe("llama-server", ("llama",))
         if p:
             return p, "深搜（整盘）找到"
     return "", env_hint("llama_server")
+
+
+def _gguf_magic_ok(path):
+    """文件头是不是真的 `GGUF`（**只看 4 个字节**，几毫秒，不读整个 5GB）。
+
+    为什么非要验一下：下面放宽了扩展名（允许 `.gguf_`），而"下划线结尾"很常见于
+    **没下完**的临时文件或改过名的半成品。不验头就把它当模型交出去，
+    启动会在加载阶段崩，而且报错位置离真正原因很远（用户看到的是"大脑起不来"）。
+    验一下头，坏文件会被跳过并继续找下一个 —— 这是"宁可多找一个目录，也不交坏文件"。
+    """
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"GGUF"
+    except Exception:      # noqa: silent-ok — 读不了就当不合格，继续找别的
+        return False
+
+
+def _looks_gguf(fn):
+    """文件名像不像模型。**标准是 `.gguf`**；另外容忍 `.gguf_` 这种改了名的真文件
+    （真机实测：用户的模型叫 `xiaojiao.gguf_`，头是合法 GGUF v3、399 个张量）。
+    `.part` / `.tmp` / `.download` 这类**明确表示没下完**的后缀一律不认。"""
+    low = fn.lower()
+    if low.endswith(".gguf"):
+        return True
+    if low.endswith(".gguf_"):        # 有人用下划线把文件"藏"起来（避免被工具乱扫）
+        return True
+    return False
 
 
 def find_gguf(deep=False):
@@ -138,20 +205,34 @@ def find_gguf(deep=False):
     if p or how:
         return p, how
     best = ""
+    loose = ""                             # 名字不规范但头合法的（`.gguf_`），当次选
     for d in _cand_dirs():
         if not os.path.isdir(d):
             continue
         try:
             for fn in sorted(os.listdir(d)):
-                if not fn.lower().endswith(".gguf"):
+                if not _looks_gguf(fn):
+                    continue
+                full = os.path.join(d, fn)
+                if not os.path.isfile(full):
+                    continue
+                std = fn.lower().endswith(".gguf")
+                if not std:
+                    # 非标准名：必须验头，合格才纳入"次选"（标准命名的仍然优先）
+                    if not _gguf_magic_ok(full):
+                        continue
+                    loose = loose or full
                     continue
                 if "xiaojiao" in fn.lower():
-                    return _norm(os.path.join(d, fn)), "在 %s 里找到（官方同名优先）" % _norm(os.path.abspath(d))
-                best = best or os.path.join(d, fn)
+                    return _norm(full), "在 %s 里找到（官方同名优先）" % _norm(os.path.abspath(d))
+                best = best or full
         except Exception:      # noqa: silent-ok — 某个目录读不了不影响别的
             continue
     if best:
         return _norm(best), "在项目/常见目录里找到"
+    if loose:
+        return _norm(loose), "在 %s 里找到（文件名不是标准 .gguf，已校验 GGUF 头）" % _norm(
+            os.path.dirname(os.path.abspath(loose)))
     if deep:
         try:
             import install_all as _IA

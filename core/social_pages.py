@@ -245,13 +245,27 @@ function stickBottom(box){
 //   在底部就跟到最新；在往回翻就原地不动。这一条是"滚动条老跳回顶部"的正解。
 // 【不要闪】先比签名：消息没变就一个字都不重绘（轮询每几秒一次，重绘就会闪）。
 //   变了才重绘，并按"是否贴底"决定钉到底还是原地不动。
-// 单条消息的签名：发送方 + 长度 + 前 16 字。**故意不含 id / 时间** ——
-// 这样"本地先显示的这条"和"服务器回来的同一条"签名一致，增量追加不会重复。
+// 单条消息的签名。**优先用服务端给的 id**（唯一、稳定）。
+// 【为什么改】原来故意不含 id、只靠"发送方+长度+前16字"来对齐"本地先显示的那条"和
+// "服务器回来的同一条"。但用户连发 13 次同一句「在干嘛呢」时，这些消息**签名完全一样**，
+// 增量追加就分不清哪条是新的 → 同一条被画了两遍（用户截图：每条回复重复出现）。
+// 现在有 id 就用 id；没有 id（老数据/乐观插入）再退回旧算法。
 function oneSig(m){
   m=m||{};
+  if(m.id)return 'id|'+String(m.id);
   const who=String(m.from||m.who||'');
   const t=String(m.text||'');
   return who+'|'+t.length+'|'+t.slice(0,16);
+}
+// 按 id 去重（保留最后一次出现）。没有 id 的按原顺序保留。
+function dedupeMsgs(items){
+  const seen=Object.create(null),out=[];
+  for(let i=(items||[]).length-1;i>=0;i--){
+    const m=items[i]||{};const k=m.id?('id|'+m.id):null;
+    if(k){if(seen[k])continue;seen[k]=1;}
+    out.push(m);
+  }
+  return out.reverse();
 }
 function msgSig(items){
   return (items||[]).map(oneSig).join('\u0001');
@@ -266,6 +280,9 @@ function setHTML(box, html, sig){
 }
 function patchMessages(box, items, html, htmlOne, sigsIn){
   if(!box)return;
+  // 先按 id 去重：连发同一句话时，老算法会把同一条画两遍（用户实测）
+  items=dedupeMsgs(items||[]);
+  if(sigsIn&&sigsIn.length!==items.length)sigsIn=null;
   const sigs=sigsIn||(items||[]).map(oneSig);
   const prevSigs=(box.dataset.sigs||'');
   const prev=prevSigs?prevSigs.split('\u0001'):[];
@@ -551,6 +568,12 @@ def _groups_inner():
   <div style="margin-top:9px"><input id="setName" placeholder="群名"/></div>
   <div style="margin-top:8px"><input id="setTopic" placeholder="主题"/></div>
   <div style="margin-top:8px"><input id="setNotice" placeholder="群公告"/></div>
+  <!-- 【剧本设定】用户要能粘贴整段设定（主题/语言风格/互动规则/角色人设），不用一条条填 -->
+  <div class="muted" style="margin-top:12px">剧本设定（粘贴整段，自动拆成 主题/风格/规则/角色）</div>
+  <textarea id="setScript" rows="8" style="margin-top:6px;width:100%"
+    placeholder="主题：大周雍正年间，紫禁城后宫。&#10;语言风格：半文半白，古风宫廷腔调，多用“本宫/臣妾/妹妹”。&#10;互动规则：可分享赏赐、糕点，暗中挑拨；遇翻牌子要交锋。&#10;角色：&#10;甄嬛：聪慧隐忍，擅借刀杀人。&#10;华妃：嚣张跋扈，深爱皇上但善妒。&#10;皇后：母仪天下，实则城府极深。&#10;安陵容：心思敏感，自卑且擅长制香。&#10;沈眉庄：端庄清高，重情重义。"></textarea>
+  <div class="row" style="margin-top:6px"><button class="sm" onclick="applyScript()">📜 套用设定</button>
+    <span class="muted" id="setScriptMsg"></span></div>
   <div class="muted" style="margin-top:12px">群节奏（决定它们多爱动手）</div>
   <div class="row" id="paceRow" style="margin-top:6px"></div>
   <div class="muted" style="margin-top:12px">本群共识（每轮自动蒸馏）</div>
@@ -931,12 +954,34 @@ function frToast(m,ok){const el=document.getElementById('fr_msg');
 // 【不再用 JS 算高度】以前这里量高度、给面板和消息区写死 maxHeight：
 //   iframe 里算偏一次，输入框就被顶到屏幕外面（这已经是第三次了）。
 //   现在高度全交给 CSS 的 flex 链，JS 只负责把消息滚到底。
-function fitChat(){
+// 【只在"本来就在底部"时才滚到底】用户报："向上滑看上面的信息，它一直自动滑到最底下"。
+//   根因：每次轮询重绘都调 fitChat()，而它无条件 scrollTop=scrollHeight。
+//   force=true 只给"刚打开会话/刚发完言"用 —— 那时本来就该在底部。
+function nearBottomOf(box){
+  if(!box)return true;
+  return (box.scrollHeight-box.scrollTop-box.clientHeight)<80;
+}
+// 【套用剧本设定】把用户粘贴的那一大段交给后端拆解（主题/风格/规则/角色人设）。
+async function applyScript(){
+  const el=document.getElementById('setScript');
+  const msg=document.getElementById('setScriptMsg');
+  const t=(el&&el.value||'').trim();
+  if(!t){if(msg)msg.textContent='先粘贴设定';return;}
+  if(msg)msg.textContent='套用中…';
+  try{
+    const d=await (await fetch('/api/aigroups/'+CUR+'/script',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})})).json();
+    if(d.ok){
+      if(msg)msg.textContent='已套用：角色 '+((d.roles||[]).join('、')||'（无）')+'——刷新页面可见';
+    }else{ if(msg)msg.textContent='失败：'+(d.error||'未知'); }
+  }catch(e){ if(msg)msg.textContent='失败：'+e; }
+}
+function fitChat(force){
   try{
     const box=document.getElementById('fr_msgs');
-    if(box)box.scrollTop=box.scrollHeight;
+    if(box&&(force||nearBottomOf(box)))box.scrollTop=box.scrollHeight;
     const gb=document.getElementById('msgs');
-    if(gb)gb.scrollTop=gb.scrollHeight;
+    if(gb&&(force||nearBottomOf(gb)))gb.scrollTop=gb.scrollHeight;
   }catch(e){}
 }
 window.addEventListener('resize',function(){fitChat()});
@@ -1130,8 +1175,13 @@ document.getElementById('fr_avatar_file').onchange=function(){
     frToast(d.ok?'头像已换':(d.error||'失败'),!!d.ok);
     if(d.ok){await frLoadList();frOpen(nm)}};
   rd.readAsDataURL(f);this.value='';};
-frLoadList();fitChat();setTimeout(fitChat,300);setTimeout(fitChat,1200);
-setInterval(fitChat,2000);
+// 【打开会话时强制到底；之后每 2 秒的轮询**只在底部时才跟随**】
+//   原来这里是 `setInterval(fitChat,2000)` 且 fitChat 无条件滚到底 ——
+//   用户向上翻看历史时，每 2 秒被拽回最下面（"我都没看看上面的"）。
+frLoadList();fitChat(true);
+setTimeout(function(){fitChat(true)},300);
+setTimeout(function(){fitChat(true)},1200);
+setInterval(function(){fitChat()},2000);
 setInterval(function(){
   frLoadList();
   if(FRCUR){  // 当前好友：静默同步消息（没变化就完全不重绘）
