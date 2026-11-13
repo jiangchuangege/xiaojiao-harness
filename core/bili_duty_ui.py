@@ -560,6 +560,28 @@ def start_transcribe_worker(interval=30):
 
 
 def run_round(allow_comment=None, budget=None, manual=True):
+    """跑一轮刷B站。
+
+    【默认走 duty.md】**用户连着要了两次"直接接上他那个插件"**：
+    原插件的流程就写在 `duty.md` 里，由 agent 照它调工具。我之前重写了一遍流程，
+    结果踩了一串坑（LOG、判重、报告、私信全是重写带来的）。现在默认改成
+    **照 duty.md 跑**（`run_duty_agent`）；只有显式把 driver 设成 `native`
+    才走我写的那个小调度。
+    """
+    try:
+        _drv = str(cfg().get("driver") or "agent")
+    except Exception:      # noqa: silent-ok — 读配置失败就按 duty.md 跑
+        _drv = "agent"
+    if _drv == "agent":
+        _r = run_duty_agent(budget_s=420, max_rounds=8)
+        if not _r.get("ok"):
+            return {"ok": False, "error": _r.get("error") or "跑 duty.md 失败"}
+        _used = _r.get("tools") or []
+        return {"ok": True, "picked": 0, "commented": 0, "learned": 0,
+                "items": [], "filtered": 0,
+                "note": ("按 duty.md 跑完（调了 %d 次工具：%s）\n\n%s"
+                         % (len(_used), "、".join(_used[:6]) or "无",
+                            str(_r.get("text") or "")[:1500]))}
     """跑一轮：搜 → 挑 → 拉评论 →（按配置）发评论 → 记账。
 
     **发不发评论由 `autoComment` 决定**（`allow_comment=None` 时读配置）；
@@ -992,6 +1014,49 @@ def _write_report(v, verdict, why="", mine="", commented=False):
     except Exception as e:      # noqa: BLE001 — 写不了报告不影响这一轮
         LOG.info("[刷B站] 写报告失败：%s", str(e)[:80])
         return ""
+
+
+def run_duty_agent(budget_s=420, max_rounds=8):
+    """**照搬原插件的跑法**：把 `bili_duty/duty.md` 当提示词，交给带工具的大脑执行。
+
+    【为什么改成这样】用户连着问了两次："你直接接上他那个插件不行了吗，非要自己写吗"。
+    他说得对。原插件本身就是「29 个工具 + duty.md 里那套流程」，
+    在 DSH 里是**agent 照着 duty.md 自己调工具**；我之前却用一堆 if/else
+    把流程重写了一遍（于是踩了 LOG、判重、报告、私信四个坑，全是重写带来的）。
+    这里改回原样：流程由 duty.md 决定，载体只负责"到点触发 + 把工具摆好 + 记账"。
+    """
+    X = _tools()
+    try:
+        duty = open(os.path.join(_DIR, "duty.md"), encoding="utf-8").read()
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "error": "读不到 duty.md：%s" % str(e)[:80]}
+    # 工具：只给小焦这边的 bili_* 那一批（就是原插件那 29 个）
+    try:
+        _all = X._build_tools() or []
+        names = [str(((t or {}).get("function") or {}).get("name") or "") for t in _all]
+        names = [n for n in names if n.startswith("bili_")]
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "error": "建工具表失败：%s" % str(e)[:80]}
+    if not names:
+        return {"ok": False, "error": "没有 bili_* 工具可用（插件没加载上）"}
+    sys_p = ("你在按 `duty.md` 的流程刷 B站。**严格照它执行**，不要自创流程。\n"
+             "每做一步都真调工具；做不成就如实说做不成，不要假装做过。\n"
+             "最后用三五句话汇报：看了什么、评了什么、学到什么、哪一步没成。")
+    try:
+        ans, trace = X.llm_chat_tools(
+            [{"role": "system", "content": sys_p},
+             {"role": "user", "content": duty[:6000]}],
+            max_rounds=max_rounds, budget_s=budget_s, temperature=0.6,
+            tools_subset=names)
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "error": "跑 duty.md 失败：%s: %s" % (type(e).__name__, str(e)[:100])}
+    used = []
+    for t in (trace or []):
+        n = str((t or {}).get("tool") or (t or {}).get("name") or "")
+        if n:
+            used.append(n)
+    return {"ok": True, "text": str(ans or "")[:4000], "tools": used[:20],
+            "note": "按 duty.md 跑完（用了 %d 次工具）" % len(used)}
 
 
 def _in_window(now, c):
