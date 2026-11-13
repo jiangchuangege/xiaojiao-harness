@@ -928,6 +928,15 @@ def _clean_group_text(txt):
                      "说的太像了", "换一个角度，说点", "别重复。")
     if any(k in s for k in _prompt_marks):
         return ""
+    # 【人话闸】结构性硬伤（旁白/提示词回显/markdown/说话人前缀）→ 不发
+    #   与 B站 评论用同一套（core/human_gate.py）。群聊句子通常较长，
+    #   所以这里只看**硬伤**，不用总分（免得误杀正常长发言）。
+    try:
+        from core import human_gate as _hg
+        if _hg.hard_flaws(s):
+            return ""
+    except Exception:      # noqa: silent-ok — 闸坏了按原来放行
+        pass
     return s
 
 

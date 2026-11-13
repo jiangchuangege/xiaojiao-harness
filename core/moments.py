@@ -190,6 +190,15 @@ def compose(context="", topic="", with_image=False, author="小焦"):
         except Exception as e:      # noqa: silent-ok — 图画不出来就发纯文字（如实记）
             LOG.debug("朋友圈配图失败（发纯文字）：%s", e)
             img = ""
+    # 【人话闸】结构性硬伤（旁白/提示词回显/markdown/说话人前缀）→ 这条不发
+    #   与好友、群聊、B站评论共用 core/human_gate.py 的同一套规则。
+    try:
+        from core import human_gate as _hg
+        if _hg.hard_flaws(txt):
+            LOG.info("朋友圈：这条有硬伤（%s），不发", ",".join(_hg.hard_flaws(txt))[:60])
+            return "", who, ""
+    except Exception:      # noqa: silent-ok — 闸坏了按原来发
+        pass
     return txt, who, img
 
 

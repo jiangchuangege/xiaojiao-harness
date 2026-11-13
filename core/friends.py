@@ -307,6 +307,15 @@ def _clean_reply(txt, last_user=""):
     # 整句只是语气词（"嗯""好""哦"）→ 也不算回话（用户实测："嗯。"这种回了等于没回）
     if len(s) <= 2 and s in ("嗯", "哦", "好", "啊", "哈", "对", "是", "行"):
         return ""
+    # 【人话闸】结构性硬伤（旁白/提示词回显/markdown/说话人前缀）→ 不算回话
+    #   与 B站 评论用同一套规则（core/human_gate.py），不再各写一份。
+    try:
+        from core import human_gate as _hg
+        _flaws = _hg.hard_flaws(s)
+        if _flaws:
+            return ""
+    except Exception:      # noqa: silent-ok — 闸坏了就按原来放行
+        pass
     return s[:200]
 
 
