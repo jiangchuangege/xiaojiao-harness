@@ -21690,6 +21690,12 @@ try{ if(localStorage.getItem('xj_social')==='1'){
           <div class="brow"><div><div class="bl">每天最多搞几条</div>
             <div class="bh">填 0 = 不自动刷（仍然能手动跑）</div></div>
             <input type="number" id="b_perDay" min="0" max="200" onchange="biliMark()"/></div>
+          <div class="brow"><div><div class="bl">运行模式</div>
+            <div class="bh">实时：它每分钟自己逛（回 @ / 回评论 / 回私信）；手动：只有你点按钮才动</div></div>
+            <div style="display:flex;gap:8px;flex:0 0 auto">
+              <button class="btn-sec" id="b_mode_rt" onclick="biliMode(true)">⚡ 实时</button>
+              <button class="btn-sec" id="b_mode_mn" onclick="biliMode(false)">🖐 手动</button>
+            </div></div>
           <div class="brow"><div><div class="bl">B站 登录</div>
             <div class="bh">扫码登录（凭证过期/被风控 412 时先来这儿重登）。约 180 秒有效，点完立刻扫。</div></div>
             <button class="btn-sec" onclick="biliLogin()" style="flex:0 0 auto">📷 生成二维码</button></div>
@@ -22714,6 +22720,21 @@ const BILI_LIST=['keywords','excludeWords'];
 function biliMsg(t,ok){const m=document.getElementById('biliMsg');if(!m)return;
   m.textContent=t||'';m.style.color=ok===false?'#f87171':(ok===true?'#4ade80':'#9aa4b2');}
 function biliMark(){biliMsg('有未保存的修改',null);}
+// 运行模式：实时（每分钟自己逛）/ 手动（只有点按钮才动）
+async function biliMode(realtime){
+  try{
+    const d=await (await fetch('/api/bili_duty',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({alwaysWatch: !!realtime})})).json();
+    biliPaintMode(!!realtime);
+    alert(realtime?'已切到「实时」：每分钟自己逛、自己回。':'已切到「手动」：只有你点按钮才动。');
+  }catch(e){ alert('切换失败：'+e); }
+}
+function biliPaintMode(realtime){
+  const a=document.getElementById('b_mode_rt'), b=document.getElementById('b_mode_mn');
+  if(a) a.style.outline = realtime ? '2px solid #7c5cff' : 'none';
+  if(b) b.style.outline = realtime ? 'none' : '2px solid #7c5cff';
+}
 // 【扫码登录】点「生成二维码」→ 后端出图（base64 data URL）→ 显示 → 每 3 秒查一次结果
 async function biliLogin(){
   const box=document.getElementById('biliLoginBox'),img=document.getElementById('biliLoginImg'),

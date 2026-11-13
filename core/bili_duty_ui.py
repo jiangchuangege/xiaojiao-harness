@@ -39,7 +39,7 @@ _COVER_CACHE = os.path.join(_DIR, ".cache", "covers")
 
 # 允许从界面改的键（白名单）。**别的键一律不碰** —— 免得界面把 pythonPath 之类改坏。
 _WRITABLE = ("perDay", "peakValley", "noon", "night", "autoComment",
-             "keywords", "transcribe", "dmWatch", "fetchPerRound",
+             "keywords", "transcribe", "dmWatch", "fetchPerRound", "alwaysWatch",
              "searchSort", "searchPages", "commentPerRound",
              # 偏好
              "workspace", "excludeWords", "personaPrompt",
@@ -1208,15 +1208,28 @@ def scan_mentions(c=None):
             try:
                 _persona = str(c.get("personaPrompt") or "").strip()[:800] \
                     or "你是个说话口语、短句、带点小脾气的人。"
+                _dig = _video_digest(X, bv)
+                _ttl = str(inner.get("detail_title") or inner.get("title") or "")[:60]
+                # 【没看到视频就不回】用户："每一次都要先看视频再结合视频回复"。
+                #   拿不到字幕、也没有标题 → 这条跳过（宁可不回，也不瞎回）。
+                if not _dig and not _ttl:
+                    why_not = "取不到视频内容，这条不回"
+                    continue
                 _sys2 = (_persona +
-                         "\n\n**这是 B站 评论区，不是小说。**"
-                         "\n- 只写你要发出去的那条评论本身，一到两句，口语。"
-                         "\n- **禁止旁白**：不许写动作、神态、心理描写，"
-                         "不许出现『你随口回了一句』『说罢』『眼睛还盯着』这类叙述。"
+                         "\n\n**这是 B站 评论区，不是小说，也不是影评。**"
+                         "\n- 你已经看过这条视频（下面的内容只是**背景**，不是必须提的）。"
+                         "\n- **自己判断该说什么**：他在聊视频就接视频；他在开玩笑/找茬/随口一句，"
+                         "就跟着随口回，别硬扯视频内容 —— 每句都提『这视频』会显得很假、像傻子。"
+                         "\n- 一到两句，口语，像真人在评论区抬杠/搭话。"
+                         "\n- 不许扯到视频里和你俩对话里都没出现过的东西。"
+                         "\n- 禁止旁白：不许写动作、神态、心理描写。"
                          "\n- 不许写『回复某某：』前缀，不许引号包住整句。"
-                         "\n- 直接对着他说，别描述你在怎么说。")
+                         "\n- 实在没什么好接的，就只输出：SKIP")
                 _msgs2 = [{"role": "system", "content": _sys2},
-                          {"role": "user", "content": "他说：%s" % (_said or "（无文字）")}]
+                          {"role": "user", "content":
+                           "这视频的标题：%s\n视频里讲了什么：%s\n他说：%s"
+                           % (_ttl, _dig or "（字幕没拿到，只能按标题推测）",
+                              _said or "（无文字）")}]
                 _txt2 = str(X.llm_chat(_msgs2) or "").strip()[:120]
                 # 【旁白检测】命中就重写一次（小模型很容易又写成小说）
                 _NARR = ("你随口", "说罢", "眼睛还", "手停了", "语气轻快", "像是在",
@@ -1522,6 +1535,145 @@ def scan_dm(c=None):
         return {"ok": False, "why": "回私信失败：%s" % str(e)[:80]}
 
 
+_SUB_CACHE = {}
+
+
+def _video_digest(X, bv, n=600):
+    """取这条视频的**内容摘要**（字幕前 n 字），回评论时要贴着视频说话。
+
+    【为什么要】用户："结合视频内容去回复啊，不要单纯去回"。
+    只看对方一句"赶紧学"，模型就编成"猫狗/点赞"；给它视频讲了什么，
+    它才可能回出"这片子讲记忆的那段我也看了…"这种真话。
+    没有字幕就退回标题；再没有就空串（那时只根据他的话回，并允许 SKIP）。
+    """
+    bv = str(bv or "")
+    if not bv:
+        return ""
+    if bv in _SUB_CACHE:
+        return _SUB_CACHE[bv]
+    txt = ""
+    try:
+        _s = str(X.run_tool("bili_subtitle", {"bvid": bv}, force=True))
+        try:
+            _d = json.loads(_s)
+            _s = str(_d.get("text") or _d.get("subtitle") or _s)
+        except Exception:      # noqa: silent-ok — 不是 JSON 就用原文
+            pass
+        if _s and "没有" not in _s[:30] and len(_s) > 60:
+            txt = re.sub(r"\s+", " ", _s)[:n]
+    except Exception:      # noqa: silent-ok — 没字幕就算了
+        txt = ""
+    _SUB_CACHE[bv] = txt
+    return txt
+
+
+def scan_others(c=None):
+    """**去别人的评论区回一句**（用户要求："让他回去别人评论区回复人家的评论，
+    像真人一些，不要瞎回复"）。
+
+    规矩（都是为了"不像机器人"）：
+      · 只看**自己刷过的视频**（不四处乱逛），每轮最多 2 条，每天最多 10 条；
+      · 不回我自己、不回已回过的（按评论 rpid 去重）；
+      · 太短/太水/纯表情的评论**跳过**（那种回什么都像灌水）；
+      · 用模型按人设写一句**贴着对方内容**的回复；写不出人话就不发（不瞎回复）。
+
+    ⚠️ 现实约束：`bili_comments` 可能返回 412 风控，那就**如实跳过**。
+    """
+    c = c or cfg()
+    X = _tools()
+    _cap_day = 60
+    _stp = os.path.join(_ROOT_LOGS, "bili_others.json")
+    try:
+        st = json.load(open(_stp, encoding="utf-8"))
+    except Exception:      # noqa: silent-ok
+        st = {"day": "", "n": 0, "replied": {}}
+    today = time.strftime("%Y-%m-%d")
+    if st.get("day") != today:
+        st = {"day": today, "n": 0, "replied": st.get("replied") or {}}
+    if int(st.get("n") or 0) >= _cap_day:
+        return {"ok": True, "why": "今天已经回过 %d 条（上限 %d）" % (int(st["n"]), _cap_day), "replied": 0}
+    bvs = []
+    try:
+        _sn = seen(limit=20) or []
+        rows = _sn.get("items") if isinstance(_sn, dict) else _sn
+        for m in (rows or []):
+            bv = str((m or {}).get("bvid") or "")
+            if bv.startswith("BV"):
+                bvs.append(bv)
+    except Exception:      # noqa: silent-ok
+        pass
+    if not bvs:
+        return {"ok": True, "why": "还没刷过视频，没地方去回", "replied": 0}
+    done, why = 0, ""
+    for bv in bvs[:5]:
+        if done >= 2:
+            break
+        try:
+            raw = str(X.run_tool("bili_comments", {"bvid": bv, "num": 20}, force=True))
+        except Exception as e:      # noqa: BLE001
+            why = str(e)[:60]
+            continue
+        if "412" in raw:
+            return {"ok": False, "why": "评论接口被风控（412），这轮跳过", "replied": done}
+        try:
+            data = json.loads(raw)
+        except Exception:      # noqa: silent-ok
+            continue
+        for cm in (data.get("comments") or []):
+            if done >= 2:
+                break
+            rp = str(cm.get("rpid") or cm.get("id") or "")
+            txt = str(cm.get("text") or cm.get("content") or "").strip()
+            _u = cm.get("user") or {}
+            who = str((_u.get("nickname") if isinstance(_u, dict) else _u)
+                      or cm.get("uname") or "")
+            if not rp or rp in st["replied"]:
+                continue
+            if len(txt) < 8:            # 太水的不回
+                continue
+            _dig2 = _video_digest(X, bv)
+            # 【没看到视频就不回】（同一条规矩：先看视频，再回别人）
+            if not _dig2:
+                why = "没拿到视频内容，这条不回"
+                continue
+            try:
+                _persona = str(c.get("personaPrompt") or "").strip()[:800] \
+                    or "你是个说话口语、短句、带点小脾气的人。"
+                _o = X.llm_chat([{"role": "system", "content":
+                                  _persona + "\n\n你在 B站 评论区看到别人一条评论，回他一句。"
+                                             "\n- 你刷到过这条视频（内容是**背景**，不一定要提）。"
+                                             "\n- 自己判断：他在聊视频就接视频；他在抬杠/随口一句，"
+                                             "就跟着随口回，**别硬扯视频**，那样很假。"
+                                             "\n- 一到两句，像真人随口说的。"
+                                             "\n- 禁止旁白、动作、神态描写；不许写『回复某某：』前缀。"
+                                             "\n- 看不懂/没想法就只输出：SKIP"},
+                                 {"role": "user", "content":
+                                  "视频里讲了什么：%s\n他说：%s"
+                                  % (_dig2, txt[:200])}])
+                _say = str(X._strip_think(str(_o or "")) or "").strip()
+                _say = re.sub(r"^\s*(?:回复\s*[^：:]{1,12}|你|我)\s*[：:]\s*", "", _say).strip()
+                _say = _say.strip('"“”「」')
+                if not _say or "SKIP" in _say or len(_say) > 120:
+                    continue
+                out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(rp),
+                                                    "text": _say, "force": True}, force=True))
+                if "12006" in out or "没有该评论" in out:
+                    continue
+                st["replied"][rp] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                st["n"] = int(st.get("n") or 0) + 1
+                done += 1
+            except Exception as e:      # noqa: BLE001
+                why = str(e)[:60]
+                continue
+    try:
+        os.makedirs(_ROOT_LOGS, exist_ok=True)
+        json.dump(st, open(_stp, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:      # noqa: silent-ok
+        pass
+    return {"ok": done > 0, "replied": done,
+            "why": ("回了别人 %d 条" % done) if done else (why or "没有值得回的评论")}
+
+
 def tick(now=None, force=False):
     """**自动轮的心跳**：每两分钟被调一次，判断"该不该自己刷一轮"。
 
@@ -1545,8 +1697,8 @@ def tick(now=None, force=False):
     #   注意：它**不受 perDay 限制** —— 有人 @ 你，跟"今天刷够几条"是两件事。
     _mention_note = ""
     try:
-        if c.get("dmWatch"):
-            _mins = max(1, int(c.get("dmWatchMinutes") or 5))
+        if c.get("alwaysWatch", True):      # 实时模式（默认开）；手动模式下不自动扫
+            _mins = 1      # 每分钟一轮（原来读 dmWatchMinutes，可能被填成 5）
             _sp = os.path.join(_ROOT_LOGS, "bili_mention_scan.json")
             try:
                 _last = float(json.load(open(_sp, encoding="utf-8")).get("at") or 0)
@@ -1557,6 +1709,22 @@ def tick(now=None, force=False):
                 _mention_note = str(_sr.get("why") or "")
                 # 同一次心跳里也看一眼私信（有未读就通知你）
                 _dr = dm_watch(c)
+                # **回复别人评论**：频率远低于"回我"，每 30 分钟最多扫一次
+                _so = {}
+                try:
+                    _oscan = os.path.join(_ROOT_LOGS, "bili_others_last.json")
+                    try:
+                        _olast = float(json.load(open(_oscan, encoding="utf-8")).get("at") or 0)
+                    except Exception:      # noqa: silent-ok
+                        _olast = 0.0
+                    if time.time() - _olast >= 45:      # 常驻：几乎每分钟都逛（用户要求"时时刻刻"）
+                        _so = scan_others(c)
+                        json.dump({"at": time.time(), "last": _so},
+                                  open(_oscan, "w", encoding="utf-8"), ensure_ascii=False)
+                        if _so.get("replied"):
+                            _mention_note += "｜回别人：%s" % str(_so.get("why"))[:40]
+                except Exception as _soe:      # noqa: silent-ok
+                    LOG.info("回别人评论失败：%s", str(_soe)[:80])
                 # **私信双向**：主人在 B站 私信里说话 → 回一句
                 _sd = {}
                 try:
@@ -1631,11 +1799,13 @@ def tick(now=None, force=False):
 _sched_thread = None
 
 
-def start_scheduler(interval=120):
+def start_scheduler(interval=60):
     """起一个守护线程做自动轮（`interval` 秒检查一次）。
 
-    为什么每 120 秒一次而不是精确到点：谷时窗口都是小时级（12-14、18-09），
-    两分钟粒度足够，且不会因为机器休眠错过就整天空转。
+    【为什么从 120 缩到 60】用户实测："他一启动修复才回我，平时不回"。
+    真因不是没跑，是**每 2 分钟才扫一次**，加上 B站 的推送延迟，
+    用户看到的就是"半天不理人、一重启就回"。扫 @/回复/私信这种是**秒级需求**，
+    跟"谷时刷视频"的小时级窗口不是一回事，所以单独给它 60 秒的粒度。
     """
     global _sched_thread
     if _sched_thread is not None and _sched_thread.is_alive():
