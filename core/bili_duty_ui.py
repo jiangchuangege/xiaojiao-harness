@@ -1252,7 +1252,7 @@ def scan_mentions(c=None):
                 _txt2 = _txt2.strip('"“”「」')
             except Exception:      # noqa: silent-ok
                 pass
-            _txt2 = _txt2 or "看到了，我在呢。"
+            _txt2 = _clean_comment_text(_txt2) or "看到了，我在呢。"
             for _rp in [x for x in _rpid_try if x]:
                 out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(_rp),
                                                     "text": _txt2, "force": True},
@@ -1535,6 +1535,62 @@ def scan_dm(c=None):
         return {"ok": False, "why": "回私信失败：%s" % str(e)[:80]}
 
 
+def _clean_comment_text(t):
+    """把模型生成的"评论"洗成**能直接发出去的一句话**。
+
+    【实测的病】它会把推理过程当正文发：
+        **B站评论区**。
+        （你刚点进来，没点"通知"）
+        这视频，是说 AI 的。
+        （他抬杠）
+        你都懒得点通知，就冲着标题来的？
+    里面有 markdown 星号、有括号里的"自我说明"、被切成好几行 —— 发出去像神经病。
+    清洗规则：去 markdown 标记 → 丢掉纯括号行 → 去掉行内括号 → 合并成一行 → 最多两句。
+    """
+    s = str(t or "")
+    # 去 markdown 粗体/标题/列表符
+    s = re.sub(r"\*{1,3}|#{1,6}\s*|^\s*[-·•]\s*", "", s)
+    lines = []
+    _META = ("评论区", "这视频", "他抬杠", "他在", "我该", "我要回", "这句子", "根据", "总之")
+    for ln in s.split("\n"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        # 纯括号行 = 自我说明/旁白，整行丢掉
+        if re.fullmatch(r"[（(][^（()）]*[)）][。.]?", ln):
+            continue
+        # 行内括号删掉（"（他抬杠）"这种）
+        ln = re.sub(r"[（(][^（()）]{0,30}[)）]", "", ln).strip()
+        if not ln:
+            continue
+        # 【元信息行丢掉】"B站评论区。" "这视频，是说 AI 的。" 这类是它在自我说明，
+        #   不是要对人说的话（实测它就是把这些当正文发出去的）。
+        if len(ln) <= 14 and any(k in ln for k in _META):
+            continue
+        lines.append(ln)
+    # 拼接：上一句已经有标点就不要再加逗号（否则出现"。"，"）
+    out = ""
+    for ln in lines:
+        if not out:
+            out = ln
+        elif out[-1] in "。！？!?，,":
+            out += ln
+        else:
+            out += "，" + ln
+    s = out
+    s = re.sub(r"^[，。；;、\s]+", "", s)
+    s = re.sub(r"[，]{2,}", "，", s)
+    # 【旁白句丢掉】"你打字的手停了一下。说罢，你回了一句：哼。"
+    #   有引号就取引号里的内容；没有就整句不要。
+    if any(k in s for k in ("说罢", "你随口", "手停", "眼睛还", "顿了顿", "回了一句")):
+        m = re.search(r"[\"“「]([^\"”」]{2,60})[\"”」]", s)
+        s = m.group(1) if m else ""
+    # 最多两句（按句号/问号/感叹号切）
+    parts = re.findall(r"[^。！？!?]+[。！？!?]?", s)
+    s = "".join(parts[:2]).strip()
+    return s.strip('"“”「」')[:150]
+
+
 _SUB_CACHE = {}
 
 
@@ -1652,7 +1708,7 @@ def scan_others(c=None):
                                   % (_dig2, txt[:200])}])
                 _say = str(X._strip_think(str(_o or "")) or "").strip()
                 _say = re.sub(r"^\s*(?:回复\s*[^：:]{1,12}|你|我)\s*[：:]\s*", "", _say).strip()
-                _say = _say.strip('"“”「」')
+                _say = _clean_comment_text(_say)
                 if not _say or "SKIP" in _say or len(_say) > 120:
                     continue
                 out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(rp),
