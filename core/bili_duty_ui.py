@@ -706,6 +706,18 @@ def run_round(allow_comment=None, budget=None, manual=True):
     else:
         note = "只读（没发评论）：设置里「自动发评论」是关的"
     note += "；学了 %d 条" % learned_n
+    # 【把这一轮看的写进 reports/】不写的话画廊永远显示「未判定」
+    try:
+        for _it in (comments or [])[:8]:
+            _v = next((x for x in picked if x.get("bvid") == _it.get("bvid")), {})
+            _write_report({"bvid": _it.get("bvid"), "title": _it.get("title"),
+                           "author": _v.get("author") or _v.get("up"),
+                           "play": _v.get("play")},
+                          verdict=("可以看" if _it.get("learned") else "未判定"),
+                          why=(_it.get("learn_why") or "—"),
+                          mine="", commented=bool(_it.get("n")))
+    except Exception as _we:      # noqa: silent-ok
+        LOG.info("[刷B站] 批量写报告失败：%s", str(_we)[:80])
     # 【看完要给你报告】用户原话："他看完视频也不私信向我报告"。
     #   实测：小焦这边**从来没有**发私信的代码（原版 DSH 插件的值班循环没搬过来），
     #   而且 dmUid 是 0 —— 没人可发。这里补上：配了 dmUid 就发一条汇总私信。
@@ -898,6 +910,45 @@ def _dm_report(items, c):
         return "私信报告已发（uid %s）" % uid if ok else ("私信没发成：%s" % r[:60])
     except Exception as e:      # noqa: BLE001
         return "私信发送出错：%s" % str(e)[:60]
+
+
+def _write_report(v, verdict, why="", mine="", commented=False):
+    """小焦这边也写一份报告 → 画廊才有档位，不再是清一色「未判定」。
+
+    【为什么必须有】画廊的档位只从 `reports/*.md` 读（`_parse_report`），
+    而那些报告一直是**原版 DSH 侧**写的；小焦每轮看完只往 `seen.md` 记账，
+    于是用户看到 60 条全是「未判定」（实测截图）。
+    这里按 `_parse_report` 认的格式落一份，字段一个不多一个不少。
+    """
+    bv = str(v.get("bvid") or "").strip()
+    if not bv.startswith("BV"):
+        return ""
+    try:
+        os.makedirs(_REPORTS, exist_ok=True)
+        day = time.strftime("%Y-%m-%d")
+        path = os.path.join(_REPORTS, "%s-%s.md" % (bv, day))
+        title = str(v.get("title") or "")[:100]
+        up = str(v.get("author") or v.get("up") or "")[:40]
+        play = str(v.get("play") or "")
+        body = ["# %s" % bv,
+                "",
+                "标题：%s｜UP：%s｜播放：%s" % (title, up, play or "未知"),
+                "",
+                "**档位**：%s" % (verdict or "未判定"),
+                "",
+                "为什么值得：%s" % (why or "—"),
+                "",
+                "我的一句话：%s" % (mine or "—"),
+                "",
+                ("已评论" if commented else "未评论"),
+                "",
+                "_（由小焦本轮刷B站自动记录）_"]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(body))
+        return path
+    except Exception as e:      # noqa: BLE001 — 写不了报告不影响这一轮
+        LOG.info("[刷B站] 写报告失败：%s", str(e)[:80])
+        return ""
 
 
 def _in_window(now, c):
