@@ -45,6 +45,12 @@
    │     spirit_memory.py（精神记忆：学到的一句话认知，带 basis/verified）    │
    │     heartbeat.py（心跳：它在活着）                                      │
    └──────────────────────────────▲───────────────────────────────────────┘
+                                  │ ⓪ 先感知：这次到底接收到了什么
+   ┌──────────────────────────────┴───────────────────────────────────────┐
+   │  ⓪ 感知层 · 一次判断，不是创作                                         │
+   │     perception.py（perceive / from_raw / looks_like_echo / decide_sleep）│
+   │     inner_joint.py（与内心接合） · psyche.py（心理态）                  │
+   └──────────────────────────────▲───────────────────────────────────────┘
                                   │ ① 想明白这件事
    ┌──────────────────────────────┴───────────────────────────────────────┐
    │  ① 脑 · 推理、记忆检索、工具调用                                       │
@@ -56,10 +62,11 @@
 
 ---
 
-## 二、五层各自的职责（一句话说清）
+## 二、六层各自的职责（一句话说清）
 
 | 层 | 它回答的问题 | 主要模块 | 断没断 |
 |---|---|---|---|
+| **⓪ 感知** | "我刚才到底接收到了什么？" | `perception.py`（`perceive`/`from_raw`/`looks_like_echo`/`decide_sleep`）、`inner_joint.py`、`psyche.py` | ✅ 通 |
 | **① 脑** | "这件事该怎么想？" | `memory_deep.py`、`retriever.py`、`memory_gate.py` | ✅ 通 |
 | **② 心** | "这对我意味着什么？我在乎吗？" | `inner.py`、`self_model.py`、`spirit_memory.py`、`heartbeat.py` | ✅ 通 |
 | **③ 元认知** | "我这样想/这样说，对不对？" | `self_audit.py`、`consensus.py`、`proof_panel.py`、`self_evolve.py`、`memory_upkeep.py` | ✅ 通 |
