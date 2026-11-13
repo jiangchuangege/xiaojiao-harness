@@ -1112,88 +1112,77 @@ def auto_state(now=None):
 
 
 def scan_mentions(c=None):
-    """扫最近看过的视频评论区，找**有人 @ 我**的评论并回复。
+    """扫「谁 @ 了我」并回复 —— 用 B站 自己的**@ 我的**接口，不扫全站评论。
 
-    【为什么要单独一个循环】用户原话："我在评论区 @ 他他不回我"。
-    小焦的调度只做"爬→评→记账→学"，**没有扫 @ 这一步**（原版 DSH 插件的这段没搬）。
-    这里补上：只看最近 8 条看过的视频、每次最多回 3 条、回过的记在
-    `logs/bili_replied.json` 里不重复回。
-
-    ⚠️ 现实约束（实测）：`bili_comments` 现在经常返回 **HTTP 412（风控）**，
-       所以这个函数可能拿不到评论。拿不到就**如实返回原因**，不假装回过。
+    【为什么重写】原来用 `bili_comments` 去扫每个视频的评论区，实测返回 **HTTP 412 风控**，
+    根本拿不到名单。而 B站 有专门的接口 `bili_received_at_and_likes`（"@我的"），
+    实测**能拿到**用户那条 `@爱思考的鲸鱼娘 发现了`（id=1201782474948618）。
+    所以改成：读 @ 列表 → 逐条回 → 回过的记下来不重复回。
     """
     c = c or cfg()
     name = str(c.get("mentionName") or "").strip()
     if not name:
         return {"ok": False, "why": "没配 mentionName（不知道该回谁）"}
+    X = _tools()
+    try:
+        raw = str(X.run_tool("bili_received_at_and_likes", {}, force=True))
+        data = json.loads(raw)
+    except Exception as e:      # noqa: BLE001
+        return {"ok": False, "why": "@ 我的接口没取到：%s" % str(e)[:80]}
+    items = ((data.get("at") or {}).get("items")) or []
     seen_path = os.path.join(_ROOT_LOGS, "bili_replied.json")
     try:
         replied = json.load(open(seen_path, encoding="utf-8"))
-    except Exception:      # noqa: silent-ok — 第一次跑就是空的
-        replied = {}
-    bvs = []
-    try:
-        _sn = seen(limit=20) or []
-        # seen() 可能返回 list，也可能返回 {"items": [...]}：两种都接住
-        if isinstance(_sn, dict):
-            _rows = _sn.get("items") or _sn.get("rows") or []
-        else:
-            _rows = list(_sn)
-        for m in _rows:
-            bv = str((m or {}).get("bvid") or "")
-            if bv.startswith("BV"):
-                bvs.append(bv)
     except Exception:      # noqa: silent-ok
-        bvs = []
-    if not bvs:
-        return {"ok": False, "why": "还没有看过的视频可扫"}
-    X = _tools()
-    done, tried = 0, 0
-    err = ""
-    for bv in bvs[:8]:
-        if done >= 3:
-            break
-        tried += 1
+        replied = {}
+    done, err = 0, ""
+    for it in items[:10]:
+        inner = it.get("item") or {}
+        # 【rpid 用 source_id，不是 id】实测拿 `id` 去回会报 B站 12006「没有该评论」——
+        #   `id` 是这条 @ 通知的 id，真正的评论 id 在 `source_id`
+        #   （`native_uri` 里也能看到 `comment_root_id=<source_id>`）。
+        rp = str(inner.get("source_id") or it.get("id") or "")
+        if not rp or rp in replied:
+            continue
+        # **subject_id 才是视频 aid**；`business_id` 恒为 "1"（业务类型），拿它换 bvid 必然失败
+        # （实测报"这条 @ 找不到对应视频（business_id=1）"）。
+        bid = str(inner.get("subject_id") or "")
+        bv = bid if bid.startswith("BV") else ""
+        if not bv:
+            # `bili_video_info` 只吃 bvid，喂 aid 无效（实测报"找不到对应视频"）。
+            # 用 B站 公开的 view 接口把 aid 换成 BV：/x/web-interface/view?aid=xxx
+            try:
+                import requests as _rq2
+                _r = _rq2.get("https://api.bilibili.com/x/web-interface/view",
+                              params={"aid": bid}, timeout=12,
+                              headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"})
+                _bv = (((_r.json() or {}).get("data") or {}).get("bvid")) or ""
+                if _bv.startswith("BV"):
+                    bv = _bv
+            except Exception:      # noqa: silent-ok — 换不到就跳过这条
+                pass
+        if not bv:
+            err = "这条 @ 找不到对应视频（business_id=%s）" % bid
+            continue
         try:
-            raw = str(X.run_tool("bili_comments", {"bvid": bv, "num": 30}, force=True))
+            out = str(X.run_tool("bili_reply", {"bvid": bv, "rpid": int(rp),
+                                                "text": "看到了，我在呢。", "force": True},
+                                 force=True))
         except Exception as e:      # noqa: BLE001
             err = str(e)[:80]
             continue
-        if "412" in raw or '"error"' in raw:
-            err = ("评论接口被风控（412）" if "412" in raw else raw[:80])
-            break
-        try:
-            data = json.loads(raw)
-        except Exception:      # noqa: silent-ok
-            continue
-        for cm in (data.get("comments") or []):
-            rp = str(cm.get("rpid") or cm.get("id") or "")
-            txt = str(cm.get("text") or cm.get("content") or "")
-            if not rp or rp in replied:
-                continue
-            if ("@" + name) not in txt and name not in txt:
-                continue
-            if done >= 3:
-                break
-            try:
-                out = str(X.run_tool("bili_reply", {
-                    "bvid": bv, "rpid": int(rp) if rp.isdigit() else rp,
-                    "text": "收到，我在呢。", "force": True}, force=True))
-            except Exception as e:      # noqa: BLE001
-                err = str(e)[:80]
-                continue
-            if "ok" in out.lower() or "已发" in out or "成功" in out:
-                replied[rp] = time.strftime("%Y-%m-%dT%H:%M:%S")
-                done += 1
-            else:
-                err = out[:80]
+        if "ok" in out.lower() or "已发" in out or "成功" in out:
+            replied[rp] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            done += 1
+        else:
+            err = out[:100]
     try:
         os.makedirs(_ROOT_LOGS, exist_ok=True)
         json.dump(replied, open(seen_path, "w", encoding="utf-8"), ensure_ascii=False)
     except Exception:      # noqa: silent-ok
         pass
-    return {"ok": done > 0, "replied": done, "scanned": tried,
-            "why": ("回了 %d 条" % done) if done else (err or "没找到 @ 我的评论")}
+    return {"ok": done > 0, "replied": done, "total_at": len(items),
+            "why": ("回了 %d 条" % done) if done else (err or "没有新的 @")}
 
 
 def tick(now=None, force=False):
@@ -1214,9 +1203,31 @@ def tick(now=None, force=False):
     import datetime as _dt
     now = now or _dt.datetime.now()
     c = cfg()
+    # 【「@ 我的」定时扫（dmWatch）】用户原话："我给他再评论区@他他不回我"。
+    #   这里按 `dmWatchMinutes`（默认 5 分钟）跑一次 scan_mentions。
+    #   注意：它**不受 perDay 限制** —— 有人 @ 你，跟"今天刷够几条"是两件事。
+    _mention_note = ""
+    try:
+        if c.get("dmWatch"):
+            _mins = max(1, int(c.get("dmWatchMinutes") or 5))
+            _sp = os.path.join(_ROOT_LOGS, "bili_mention_scan.json")
+            try:
+                _last = float(json.load(open(_sp, encoding="utf-8")).get("at") or 0)
+            except Exception:      # noqa: silent-ok — 第一次没有这个文件
+                _last = 0.0
+            if (time.time() - _last) >= _mins * 60:
+                _sr = scan_mentions(c)
+                _mention_note = str(_sr.get("why") or "")
+                os.makedirs(_ROOT_LOGS, exist_ok=True)
+                json.dump({"at": time.time(), "last": _sr},
+                          open(_sp, "w", encoding="utf-8"), ensure_ascii=False)
+                LOG.info("扫「@我的」：%s", _sr)
+    except Exception as _me:      # noqa: silent-ok — 扫 @ 失败不影响刷视频
+        LOG.info("扫「@我的」失败：%s", str(_me)[:80])
     n = int(c.get("perDay") or 0)
     if n <= 0 and not force:
-        return {"ran": False, "why": "perDay=0（不自动刷）"}
+        return {"ran": False, "why": "perDay=0（不自动刷）",
+                "mentions": _mention_note}
     st = state()
     today = now.strftime("%Y-%m-%d")
     used = int(st.get("count") or 0) if st.get("day") == today else 0
