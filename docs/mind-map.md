@@ -117,7 +117,6 @@ B站 有人 @ 了它
 | **表达分寸（自动评分）** | ✅ **有** | `core/answer_gate.py`（`extract_claims`/`is_creative`，对回答做闸）、`core/dual_check.py`（回答双检，可换审阅火种）、`core/capability_parity.py`。B站 评论另有 `_human_score()`（本轮新增）。 |
 | **记忆证据链展示** | ✅ **有** | `core/proof_panel.py`：`collect()` 采集证据、`_parity_summary()` 汇总、`_card()` 渲染成卡片。`self_audit` 也挂到了工具入口（`xiaojiao_app.py:13973`）。 |
 
-**结论：这四条不是短板，是我没查。** 已按代码依据改正。
 
 真正还薄的地方（也附依据，不猜）：
 - `spirit_memory` 的 `basis/verified` 字段是**本轮**才加的，历史 119 条记录里没有这两个字段（老数据无标记）。
