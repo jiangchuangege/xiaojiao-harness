@@ -41,7 +41,7 @@ def main():
     ent = P.get("bili_duty") or {}
     ck("A", "是 py 类型且默认开启", ent.get("type") == "py" and bool(ent.get("on")), ent.get("type"))
     desc = ent.get("desc") or []
-    ck("A", "登记了 14 个工具", len(desc) == 14, len(desc))
+    ck("A", "登记了 29 个工具", len(desc) == 29, len(desc))
     ck("A", "每个工具都有 name+description+parameters",
        all(d.get("name") and d.get("description") and isinstance(d.get("parameters"), dict)
            for d in desc))
@@ -52,7 +52,7 @@ def main():
     print("\n[B] 小焦自己的调度能路由到它")
     X._build_tools()
     routed = sorted(k for k in X._TOOL2PLUGIN if k.startswith("bili_"))
-    ck("B", "路由表里有全部 14 个", len(routed) == 14, routed[:4])
+    ck("B", "路由表里有全部 29 个", len(routed) == 29, routed[:4])
     ck("B", "路由指向 bili_duty", all(X._TOOL2PLUGIN[k] == "bili_duty" for k in routed))
 
     # ---------- C 真跑 ----------
