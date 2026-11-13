@@ -617,6 +617,16 @@ def run_round(allow_comment=None, budget=None, manual=True):
         _dropped_ex = 0
 
     seen_bv = {r.get("bvid") for r in seen(200)}
+    # 【额外一份自己维护的判重表】实测用户反馈："他一直就循环两个视频底下去发"。
+    #   根因：`seen()` 解析的是 seen.md 里「看过的视频」那张**表格**，而本轮追加的
+    #   是普通文本行，落在表格外面 → 解析器永远看不到 → 判重集合不增长 → 同两条反复刷。
+    #   这里再加一个**自己写的 json**（只增不减），与 seen.md 的集合取并集，彻底挡住重复。
+    try:
+        _bvj = os.path.join(_ROOT_LOGS, "bili_seen_bv.json")
+        _mine = set(json.load(open(_bvj, encoding="utf-8")) or [])
+        seen_bv = set(x for x in seen_bv if x) | _mine
+    except Exception:      # noqa: silent-ok — 第一次没有这个文件
+        _bvj, _mine = os.path.join(_ROOT_LOGS, "bili_seen_bv.json"), set()
     picked = [p for p in picked if _bvid_of(p) and _bvid_of(p) not in seen_bv][:n_fetch]
 
     # 【判重表会把老视频全挡掉 → 再按"最新"捞一次】
@@ -709,6 +719,17 @@ def run_round(allow_comment=None, budget=None, manual=True):
             f.write("\n" + "\n".join(lines) + "\n")
     except Exception as e:      # noqa: BLE001 — 记不上账要如实说，不能假装刷过
         return {"ok": False, "error": "记录写到 seen.md 失败：%s" % str(e)[:120]}
+    # 【把这一轮看过的写进自己的判重表】—— seen.md 的表格解析不可靠（见上），
+    #   这份 json 才是真正"记住了看过什么"的地方，挡住"同两条反复刷"。
+    try:
+        _mine2 = set(_mine or set())
+        for _p in picked:
+            _bv2 = _bvid_of(_p)
+            if _bv2:
+                _mine2.add(_bv2)
+        json.dump(sorted(_mine2), open(_bvj, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception as _se:      # noqa: silent-ok
+        LOG.info("[刷B站] 判重表写入失败：%s", str(_se)[:80])
 
     # 更新 state.json
     if st.get("day") != today:

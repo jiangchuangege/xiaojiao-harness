@@ -2070,6 +2070,32 @@ def build_vuln_markdown(rows: List[Dict[str, Any]], sev_label: str, days: int,
     return "\n".join(head + table)
 
 
+_PROXY_CACHE: Dict[str, Optional[str]] = {"probe": "unset"}
+
+
+def detect_local_proxy() -> Optional[str]:
+    """探测本机常见代理端口（Clash/v2ray 之类），返回 "http://127.0.0.1:port" 或 None。
+
+    【为什么需要】实测：`services.nvd.nist.gov` 直连 **TLS 握手 12 秒超时**，
+    而用户浏览器打开同一个 URL **正常** —— 因为浏览器走系统代理，这里的
+    `requests.get` 是直连。于是"能上"和"上不去"同时成立。探测一次就缓存。
+    """
+    if _PROXY_CACHE.get("probe") != "unset":
+        return _PROXY_CACHE.get("probe")
+    import socket
+    for port in (7890, 7897, 10809, 1080, 8889, 7891):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.4):
+                val = "http://127.0.0.1:%d" % port
+                _PROXY_CACHE["probe"] = val
+                logger.info("检测到本机代理：%s（NVD 等站点将走它）", val)
+                return val
+        except Exception:
+            continue
+    _PROXY_CACHE["probe"] = None
+    return None
+
+
 class ScraplingBridge:
     """小焦插件：Scrapling MCP 桥接。
 
@@ -2421,6 +2447,25 @@ class ScraplingBridge:
                                               "Accept": "application/json, text/plain, */*",
                                               "Accept-Language": "en-US,en;q=0.9"}, timeout=to)
                 except Exception as e:
+                    # 【直连失败 → 试一次本机代理】实测 NVD 直连 TLS 握手超时，
+                    #   但浏览器（走系统代理）能打开同一地址。没这条就永远"NVD 连不上"。
+                    _px = detect_local_proxy()
+                    if _px and _attempt == 0:
+                        try:
+                            logger.info("直连失败（%s）→ 改走本机代理 %s 重试",
+                                        sanitize(e)[:60], _px)
+                            r = _rq.get(url, headers={"User-Agent": USER_AGENT,
+                                                      "Accept": "application/json, text/plain, */*",
+                                                      "Accept-Language": "en-US,en;q=0.9"},
+                                        timeout=to, proxies={"http": _px, "https": _px})
+                            if r is not None and r.status_code < 500:
+                                pass
+                            else:
+                                r = None
+                        except Exception as e2:
+                            logger.info("代理也没通：%s", sanitize(e2)[:60])
+                    if r is not None:
+                        break
                     if _attempt == 0:
                         time.sleep(1.0)
                         continue
