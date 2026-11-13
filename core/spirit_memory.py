@@ -205,7 +205,27 @@ def remember(kind, text, tags=None, source="", llm_judge=None, **kw):
                 "why": "像答案原文（问答对结构 / 超长 / 整段回答），只收提炼过的一句话认知",
                 "id": ""}
 
-    # 同题判定：拿新文本与同类已有记录比
+# 【写入前自校验：借灵枢那种"白箱管线"的最小版】
+    #   问题（实测）：`remember` 收的是"模型说的一句话"，**没有任何核对**，
+    #   于是模型编的东西也会被当成认知存下来，下一轮还被当权威召回。
+    #   这里加一道最小校验，只做三件能真判的事：
+    #     ① 有没有来源（source）—— 没有就标 basis=self；
+    #     ② 句子里有**具体数字/年份/版本号**这类可证伪事实，却又是 basis=self → **拒收**；
+    #     ③ 其余情况收下，但把 `basis` / `verified` 一起写进记录，**以后能追责**。
+    _src = str(source or "").strip()
+    _basis = "self"
+    if _src and not re.search(r"(模型|自述|推测|猜测|guess|self)", _src, re.I):
+        _basis = "external"          # 有真实来源（工具/用户/网页）
+    elif _src:
+        _basis = "self"
+    _has_fact = bool(re.search(r"\d{4}\s*年|\d+(?:\.\d+)?\s*(?:%|倍|条|个|次|元|天|小时)"
+                               r"|v?\d+\.\d+\.\d+|第[一二三四五六七八九十]+[条章步]", t))
+    if _basis == "self" and _has_fact:
+        return {"ok": False, "action": "rejected",
+                "why": "这条带具体数字/年份，但没有外部来源（basis=self）—— 编的东西不许当认知存",
+                "id": ""}
+
+        # 同题判定：拿新文本与同类已有记录比
     rows = _rows(k)
     best, best_row = None, None
     for r in rows:
@@ -222,7 +242,8 @@ def remember(kind, text, tags=None, source="", llm_judge=None, **kw):
                     "why": "已有一条同题记忆（%s），不重复存" % why}
 
     rec = {"id": "%s-%d" % (k[:4], int(time.time() * 1000)), "ts": time.time(),
-           "kind": k, "text": t, "tags": list(tags or []), "source": str(source or "")}
+           "kind": k, "text": t, "tags": list(tags or []), "source": _src,
+           "basis": _basis, "verified": (_basis == "external")}
     rec.update({kk: vv for kk, vv in kw.items() if kk not in _ANSWER_KEYS})
     v = _vec(t)
     if v:
