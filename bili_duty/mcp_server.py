@@ -673,6 +673,11 @@ async def bili_reply(bvid: str, text: str, rpid: int = 0, root: int = 0) -> str:
     if _deny: return _deny
     # ⭐「@ 昵称」压成「@昵称」：B站 只认紧挨着的写法，带空格等于没 @ 到人（而且不报错）
     text = _normalize_mention(text)
+    # 评论区同样不许出现旁白（"我低头看手机…"），这是聊天的地方
+    _b2 = (text or "").strip()
+    text = _chat_style(text, strong=True)
+    if (text or "").strip() != _b2:
+        print(f"[评论] 已把旁白压成聊天话：{len(_b2)} → {len(text)} 字", file=sys.stderr)
     # ⭐ 语感闸门：撞八股 / 撞自己以前的 / 撞这条视频的热评 ⇒ 不发，把改法告诉模型
     _style = await _style_reason(text, bvid, get_cred())
     if _style:
@@ -1161,6 +1166,62 @@ async def bili_favorite_content(media_id: int, page: int = 1, keyword: str = "")
     }, ensure_ascii=False)
 
 
+# ========== 把"小说笔法"压回"聊天口气"（2026-11-14）==========
+
+# 【为什么必须做 —— 用户实测截图】B站 私信里，账号回的是这么一段：
+#   「我低头看手机，把那边的私信拉到最上头，手指点点那条信息，眼睛瞪得圆圆的……
+#     我嘟囔了一句……我点了点屏幕，语气比刚才沉了一点……」
+# 那是旁白，不是聊天。收信的人只会觉得它在自言自语讲故事（用户原话：「为何他一直在
+# 自言自语的讲故事」）。根因是人设提示把模型带进"角色扮演/写小说"的语域 ——
+# 提示词压不住，就在**发出去之前**用确定性规则压一次：能压成一句人话就压，压不动就原样发
+# （宁可发出去，也绝不吞掉消息）。
+_NARRATION_SIGNS = (
+    "我低头", "我抬头", "我停了", "我愣了", "我眯", "我嘟囔", "我嘀咕", "我点了点",
+    "手指", "眼睛瞪", "眼睛眨", "嘴角", "屏幕那边", "屏幕那头", "叹了口气", "挠了挠",
+    "歪了歪头", "眨了眨眼", "顿了顿", "把手机", "拉到最上", "敲了两下", "抬起头",
+)
+
+
+def _chat_style(text: str, strong: bool = False) -> str:
+    """把"小说场景"压成一句能发出去的聊天话。判据全是确定性的：
+
+    ① 先抠引号里它**真正说出口**的话（“…”/「…」/『…』），有就直接用这几句；
+    ② 没有引号就把"动作描写句"整句删掉，只留陈述/疑问/感叹的句子；
+    ③ 删完什么都不剩 ⇒ 原样返回（不吞消息）。
+    `strong=True` 时门槛更低（评论场景，宁可多压一点也别把旁白发出去）。
+    """
+    t = (text or "").strip()
+    if not t:
+        return t
+    hits = sum(1 for s in _NARRATION_SIGNS if s in t)
+    if hits < (1 if strong else 2):
+        return t                                   # 不像旁白，一个字都别动
+    quoted = re.findall(r"[“\"「『]([^”\"」』]{2,200})[”\"」』]", t)
+    if quoted:
+        out = " ".join(q.strip() for q in quoted if q.strip()).strip()
+        if out:
+            return out[:300]
+    keep, dropped = [], 0
+    for s in re.split(r"(?<=[。！？!?~…\n])", t):
+        s2 = s.strip()
+        if not s2:
+            continue
+        # 含动作描写、而且不是问句/感叹句 ⇒ 整句按旁白删掉
+        if any(w in s2 for w in _NARRATION_SIGNS) and not re.search(r"[？?！!]", s2):
+            dropped += 1
+            continue
+        keep.append(s2)
+    out = "".join(keep).strip()
+    if out:
+        return out[:300]
+    # ③ 兜底：整句都在描写时，按逗号再切一刀，把"动作分句"摘掉
+    #    （实测样本：「我点了点屏幕，这个视频讲得挺清楚。」—— 前半是旁白、后半是真话）
+    _clauses = re.split(r"(?<=[，,])", t)
+    _keep2 = [c for c in _clauses if not any(w in c for w in _NARRATION_SIGNS)]
+    _out2 = "".join(_keep2).strip()
+    return _out2[:300] if _out2 else t
+
+
 # ========== Tool 21: 发私信 ==========
 
 @tool()
@@ -1181,6 +1242,11 @@ async def bili_send_message(receiver_uid: int, text: str) -> str:
 
     if not text or not text.strip():
         return json.dumps({"success": False, "error": "text 不能为空"}, ensure_ascii=False)
+    # 旁白/小说笔法 → 压成一句聊天话（见 _chat_style 的说明）
+    _before = text.strip()
+    text = _chat_style(text)
+    if text.strip() != _before:
+        print(f"[私信] 已把旁白压成聊天话：{len(_before)} → {len(text)} 字", file=sys.stderr)
 
     try:
         result = await session.send_msg(
