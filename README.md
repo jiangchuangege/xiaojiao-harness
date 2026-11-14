@@ -182,6 +182,7 @@ flowchart TB
 | **难度路由：什么时候该换更聪明的模型** | [`docs/model-routing.md`](docs/model-routing.md) |
 | **越用越强：答案闸门 / 双模型审校 / 能力自增长** | [`docs/self-growth.md`](docs/self-growth.md) |
 | 工具清单（123 个工具怎么精准调） | [`docs/tool-catalog.md`](docs/tool-catalog.md) |
+| **刷B站：你不在时替你把 B站 过一遍（29 个工具 + 值班流程 + 红线）** | [`docs/bili-duty.md`](docs/bili-duty.md) |
 | 设计哲学与工程依据（22 节） | [`docs/design-philosophy.md`](docs/design-philosophy.md) |
 | 架构图册（22 张 Mermaid） | [`docs/architecture-diagrams.md`](docs/architecture-diagrams.md) |
 | 每个模块的独立文档 | [`docs/modules/`](docs/modules/) |

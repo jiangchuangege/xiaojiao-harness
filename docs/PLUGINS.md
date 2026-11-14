@@ -243,8 +243,10 @@ python -c "import xiaojiao_app as x; print(list(x.PLUGINS.keys()))"
 | `plugins/ip.json` | 2 | JSON API 插件写法：声明式接入第三方 HTTP 接口 |
 | `plugins/causal_memory.py` | 6 | **常驻子进程 + MCP（JSON-RPC over stdio）**：把外部 MCP 服务当工具用；找不到二进制时一个工具都不注册 |
 | `plugins/causal_memory_ext.py` | 10 | **同一个引擎的第二批工具**：复用第一批的常驻连接，把主程序一行不改地扩出 10 个能力；也是"新插件不该做什么"的反面教材注解（见 6.3） |
+| `plugins/bili_duty.py` | 29 | **子进程 + 自带 venv 隔离**：B站 客户端的依赖不污染主程序；写操作（发评论/私信）默认拒绝、必须显式 `force`；插件崩了只影响这一条工具 |
 
 `asset_intel` 的数据源接入说明见 [资产测绘插件](asset-intel.md)。
+`bili_duty` 的完整说明（值班流程、29 个工具分组、红线、配置项、常见故障）见 [刷B站（bili_duty）](bili-duty.md)。
 
 ### 6.1 `causal_memory`：接一个外部 MCP 服务当工具（2026-10-15）
 
