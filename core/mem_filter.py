@@ -40,12 +40,43 @@ from __future__ import annotations
 import re
 
 __all__ = ["BAD_PATTERNS", "TOOL_RENDER_PATTERNS", "MIN_KEEP",
-           "is_bad_reply", "strip_tool_render", "clean_answer", "clip", "render"]
+           "is_bad_reply", "strip_tool_render", "clean_answer", "clip", "render",
+           "INTERNAL_SUFFIX_RE", "strip_internal_suffix", "has_internal_suffix"]
+
+# ── 载体自己加进"用户那句话"里的指令尾巴（不是用户说的）────────────────
+# 【为什么必须单独认它 —— 2026-11-14 实测抓到的真病根】
+#   网页端开着「想看到它在想什么」时，`/api/chat/stream` 会把
+#   `【回答格式，务必遵守】先用 <思考> 和 </思考> 包住你的推理过程…` 拼在用户那句话后面再交给
+#   `agent_run()`。可 `agent_run()` 内部把收到的这整串当成"用户说的话"写进了记忆库：
+#       `用户：你好 【回答格式，务必遵守】先用 <思考> … 小焦：<它当时的回答>`
+#   后果链条（用户实测：说「你好」，它答一段数学题/一段格式说明）：
+#     ① 这条污染的 key 就是「你好」，向量相似度 1.00；
+#     ② 下次再说「你好」，检索把这条顶到第 1 位并整段注入；
+#     ③ 模型看到"上一轮自己答的是这段格式说明"，于是**照着再答一遍** —— 越问越离谱。
+#   一句话：**载体自己的指令，绝不能冒充用户说过的话**。写入侧先剥掉，源头上不再产生这种行。
+INTERNAL_SUFFIX_RE = re.compile(
+    r"\s*【回答格式，务必遵守】[\s\S]*$"
+    r"|\s*【系统指令】[\s\S]*$"
+)
+
+
+def has_internal_suffix(text):
+    """这句话里有没有"载体自己加的指令尾巴"。"""
+    return bool(INTERNAL_SUFFIX_RE.search(text or ""))
+
+
+def strip_internal_suffix(text):
+    """剥掉载体拼在用户话后面的指令尾巴（留下用户真正说的那句）。"""
+    t = text or ""
+    t = INTERNAL_SUFFIX_RE.sub("", t)
+    return t.strip()
 
 # ── 规则 2：坏回复（整轮不存）───────────────────────────────────────
 BAD_PATTERNS = [
     (r"</?think>", "未闭合/残留 think 标签"),
     (r"【系统指令】", "系统提示词泄漏进回答"),
+    (r"【回答格式，务必遵守】", "载体自己拼的格式指令泄漏进回答（不是它说的话）"),
+    (r"务必遵守】[\s\S]{0,40}?先用\s*<思考>", "格式指令整段被当成回答"),
     (r"角色：\s*小焦[\s\S]{0,80}?工具：\s*list_files", "系统提示词片段泄漏"),
     (r"^\s*⏳\s*__pending__\s*$", "占位符 ⏳__pending__"),
     (r"^\s*（已回答）\s*$", "占位符「（已回答）」"),

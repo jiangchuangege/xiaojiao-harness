@@ -132,6 +132,49 @@ try:
 finally:
     MV.add_memory = _real
 
+print("\n【D】载体自己拼的指令尾巴 ≠ 用户说过的话（2026-11-14 真病根）")
+# 病根现场：网页端开着「想看到它在想什么」，`/api/chat/stream` 把这段拼在用户话后面，
+# 而 `agent_run()` 又把整串当成"用户说的话"写进记忆库 → key 就是「你好」、相似度 1.00
+# → 下次说「你好」把这条顶到第 1 位注入 → 模型照着再答一遍格式说明。
+INSTR = ("\n\n【回答格式，务必遵守】先用 <思考> 和 </思考> 包住你的推理过程"
+         "（可以分点、可以自我怀疑、可以推翻自己），然后在 </思考> 之后写最终回答。不要复述题目。")
+ck("指令尾巴认得出来", MF.has_internal_suffix("你好" + INSTR), "没认出来")
+ck("剥完只剩用户原话", MF.strip_internal_suffix("你好" + INSTR) == "你好",
+   MF.strip_internal_suffix("你好" + INSTR))
+ck("没带尾巴的话不动它", MF.strip_internal_suffix("你好呀") == "你好呀")
+ck("多行问题也能剥（只掉尾巴，问题留全）",
+   MF.strip_internal_suffix("第一行\n第二行" + INSTR) == "第一行\n第二行",
+   repr(MF.strip_internal_suffix("第一行\n第二行" + INSTR)))
+
+# 反向：这类尾巴**当回答**出现时，整轮不进记忆（否则下次又被它顶上来）
+_got, _why = MF.clean_answer("【回答格式，务必遵守】先用 <思考> 和 </思考> 包住你的推理过程…")
+ck("指令被当成回答 → 整轮不存", _got == "", "%r ｜ %s" % (_got[:30], _why))
+
+# 接线：真实 `_remember_turn()` 写进去的那条，key 必须是干净的用户原话
+# （上面 【C】 的探针在 finally 里换回真函数了，这里要再装一次，否则会写进真记忆库）
+_written.clear()
+MV.add_memory = _Probe.add_memory
+try:
+    app._remember_turn("你好" + INSTR, "你好呀，今天想聊点什么？")
+finally:
+    MV.add_memory = _real
+ck("带指令尾巴的一轮照样能写（没被误伤）", len(_written) == 1, str(_written))
+ck("写进去的那条**不含**载体指令",
+   bool(_written) and "【回答格式" not in _written[0], str(_written)[:160])
+ck("写进去的那条用户原话是干净的「你好」",
+   bool(_written) and "用户：你好" in _written[0], str(_written)[:160])
+
+print("\n【E】读出侧兜底：就算库里有这种行，也绝不注入（core/retriever._drop_self_echo）")
+from core import retriever as RT      # noqa: E402
+
+POISON_HIT = {"key": "你好",
+              "text": "用户：你好" + INSTR.replace("\n\n", " ") + "\n小焦：【回答格式，务必遵守】先用 包住你的推理过程…"}
+CLEAN_HIT = {"key": "你好", "text": "用户：你好\n小焦：你好呀，今天想聊点什么？"}
+kept, dropped = RT._drop_self_echo("你好", [POISON_HIT, CLEAN_HIT])
+ck("带载体指令的那条被剔掉", dropped >= 1, "dropped=%d" % dropped)
+ck("干净的那条留下（没有误伤）",
+   any("今天想聊点什么" in str(h.get("text")) for h in kept), str(kept)[:120])
+
 print("\n" + "=" * 78)
 print("  通过 %d / 共 %d" % (_C["pass"], _C["total"]))
 if _C["failed"]:

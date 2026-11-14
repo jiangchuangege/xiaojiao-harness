@@ -1756,6 +1756,119 @@ def _strip_think(text):
     return re.sub(r"\n{3,}", "\n\n", s).strip()
 
 
+_ID_CMD = (
+    # 以后/今后 叫我 X ／ 就叫我 X ／ 称呼我为 X
+    ("call_as", re.compile(r"(?:以后|今后|从现在起|接下来|往后|都|就)?\s*(?:叫我|称呼我(?:为|成|作)?|喊我)\s*"
+                           r"[「\"']?([^\s，。！？,.!?、\"」\"']{1,8})[」\"']?")),
+    # 我叫 X（但"你叫什么"不算）
+    ("user_name", re.compile(r"(?<!你)(?<!请问)我(?:的名字)?(?:就)?叫(?:做)?\s*[「\"']?([\u4e00-\u9fa5A-Za-z]{1,10})[」\"']?")),
+    # 我在 X（城市）
+    ("city", re.compile(r"我(?:现在)?(?:住在|在)\s*([\u4e00-\u9fa5]{2,8})(?:市|住|工作|生活|上班)?")),
+)
+
+# 这些词出现时说明不是"自我介绍/改称呼"，而是别的问题 —— 别乱记
+_ID_NEG = ("你是谁", "我在想", "我在问", "我在看", "我在说", "我在等", "我在忙", "我在找",
+           "我在写", "我在做", "我叫你", "你叫我", "叫什么名字")
+
+
+def _identity_command(text):
+    """用户这句话是不是在**设定身份**（"以后叫我老板"/"我叫王强"/"我在杭州"）？
+
+    返回 `(字段, 值, 回复)`；不是身份指令就返回 None。
+    【为什么由载体直接认（而不是等模型调 identity_set）】实测这颗 4B 该调工具时不调，
+    而是吐一句「【元认知】我需要确认用户是否已清楚地表达他们的需求。」——
+    身份设定这种事**没有歧义**、也没有"要查资料"的部分，载体一句话就能记。
+    模型愿不愿意调工具，不该决定"我叫什么"记不记得住。
+    """
+    t = str(text or "").strip()
+    if not t or len(t) > 40:
+        return None
+    if any(w in t for w in _ID_NEG):
+        return None
+    for field, pat in _ID_CMD:
+        m = pat.search(t)
+        if not m:
+            continue
+        val = (m.group(1) or "").strip(" 　的了吗呢吧啊呀，。")
+        # 去掉尾部的客气尾巴：「叫我老李就行」→ 老李
+        val = re.sub(r"(就行|就好了|就好|好了|就可以|可以|一下|吧|啊|啦|哦|呀|嘛)$", "", val).strip()
+        if not val or len(val) > 10:
+            continue
+        if field == "city" and val.endswith(("里", "上", "家")):
+            continue
+        label = {"call_as": "以后就这么称呼你", "user_name": "记下你的名字",
+                 "city": "记下你的城市"}[field]
+        return field, val, "%s：「%s」。下一句起就按这个来。" % (label, val)
+    return None
+
+
+def _identity_set_field(field, value):
+    """写进 `logs/identity.json`（走插件同一份实现，避免两套逻辑）。"""
+    try:
+        mod = sys.modules.get("identity")
+        if mod is None:
+            return False
+        mod._save({**mod._load(), field: str(value)[:60]})     # noqa: SLF001 — 同一份存储
+        return True
+    except Exception as _e:      # noqa: silent-ok
+        LOG.debug("写身份设定失败（忽略）：%s", _e)
+        return False
+
+
+def _identity_hint():
+    """身份设定（`plugins/identity.py`）→ 一句事实，接进 system。
+
+    【为什么由载体注入，而不是让模型自己记】"对方叫什么、该怎么称呼"是**载体手里的设定**
+    （`logs/identity.json`，用户可手改，模型可用 identity_set 改）。每轮现读现注入，
+    模型就不会再去训练语料里翻"老张/小焦"这种称呼糊到用户头上。
+    插件不在/读失败 → 返回空串，一个字都不加（绝不编）。
+    """
+    try:
+        mod = sys.modules.get("identity")
+        if mod is None or not hasattr(mod, "hint"):
+            import importlib.util as _ilu
+            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins", "identity.py")
+            if not os.path.exists(_p):
+                return ""
+            _spec = _ilu.spec_from_file_location("identity", _p)
+            mod = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(mod)
+        return str(mod.hint() or "").strip()
+    except Exception as _e:      # noqa: silent-ok — 身份设定缺席不许影响回答
+        LOG.debug("读身份设定失败（忽略）：%s", _e)
+        return ""
+
+
+def _is_smalltalk(text):
+    """这句话是不是"纯寒暄"（不需要检索、不需要工具、不需要记忆注入）。
+
+    【判据（确定性，可单测）】剥掉载体指令尾巴与标点后：
+      · 长度 ≤ 12 个字；
+      · 命中寒暄/道谢/告别/应答词（你好/在吗/嗨/哈喽/早上好/晚安/谢谢/再见/在不在…）；
+      · **不含**任何"要干活"的信号：数字、URL、路径分隔符、问号之外的问题词
+        （查/找/写/下载/打开/翻译/天气…）—— 有这些就照常走完整流程。
+    【为什么不再看模型的意图分类】意图分类本身就要花一次模型调用；寒暄这种一句话的事，
+      用确定性判据先分掉，比多问一次 4B 更准也更快。
+    """
+    try:
+        from core import mem_filter as _MFs
+        t = _MFs.strip_internal_suffix(str(text or ""))
+    except Exception:      # noqa: silent-ok — 剥不掉就按原文判
+        t = str(text or "")
+    t = re.sub(r"[\s，。！!？?、~～.…；;：:]+", "", t).lower()
+    if not t or len(t) > 12:
+        return False
+    # 有这些 → 一定是要干活，不是寒暄
+    if re.search(r"[0-9a-z]|/|\\|https?" , t):
+        return False
+    if any(w in t for w in ("查", "找", "写", "下载", "打开", "翻译", "天气", "搜索", "帮我",
+                            "怎么", "为什么", "多少", "什么", "哪", "如何", "介绍", "讲")):
+        return False
+    words = ("你好", "您好", "哈喽", "嗨", "在吗", "在不在", "在么", "早上好", "早安", "中午好",
+             "下午好", "晚上好", "晚安", "谢谢", "多谢", "谢啦", "再见", "拜拜", "睡了吗", "吃了吗")
+    return any(w in t for w in words)
+
+
 def _looks_like_critique(text):
     """这段输出是"挑错/审阅"的**过程**，而不是给用户的答案吗？
 
@@ -1769,7 +1882,12 @@ def _looks_like_critique(text):
         return False
     head = t[:40]
     pats = ("先说最容易错", "最容易错的地方", "第一步：找出", "先挑出", "我审一遍",
-            "让我审一遍", "审阅如下", "问题在于", "评分：", "自评：")
+            "让我审一遍", "审阅如下", "问题在于", "评分：", "自评：",
+            # 【2026-11-14 补】深度模式第 2 遍常把"想问题的过程"当答案交出来：
+            #   实测「今天几号？」收到的是「1. 确认用户的问题是询问当前日期。」——
+            #   那是它的解题草稿，不是回答。这类开场白一律不算答案。
+            "确认用户的问题", "理解用户的问题", "分析用户的问题", "识别用户的问题",
+            "先确认用户", "判断用户的意图", "用户的意图是")
     if any(head.startswith(p) or p in head for p in pats):
         return True
     # 通篇没有一句"给对方的话"（全是自指/复盘），也算审阅
@@ -4127,6 +4245,14 @@ def _profile_judge(user_input, answer):
     """闭环第三、四步：问模型"要不要记"；它说要 → 载体写进用户画像库。返回记录 id。"""
     try:
         from core import user_profile as _UP
+        # 【别把载体自己的指令当成"用户说的话"喂给它】`agent_run()` 里的 user_input 可能带着
+        #   `【回答格式，务必遵守】…` 那段尾巴（网页端加的）。带着它去问"这段要不要记住"，
+        #   记下来的就是一句压根没人说过的指令。
+        try:
+            from core import mem_filter as _MFp
+            user_input = _MFp.strip_internal_suffix(str(user_input))
+        except Exception:       # noqa: silent-ok — 剥不掉就按原样，判据不变
+            pass
         _ask = _PROFILE_ASK % (str(user_input)[:300], str(answer)[:400])
         _out = llm_chat([{"role": "user", "content": _ask}], temperature=0.0)
         # ---- 它自己跟自己不一致时：**让它自己再说一次**（载体不改它的决定）----
@@ -4208,7 +4334,19 @@ def _remember_turn(user_input, answer, tool_trace=None):
         _a = re.sub(r"```.*?```", " ", _a, flags=re.S)          # 代码块不往记忆里塞
         _a = re.sub(r"^[#>\-\*\s|]+", "", _a, flags=re.M)       # 去掉标题/列表/表格记号
         _a = re.sub(r"\s+", " ", _a).strip()
-        _q = (user_input or "").strip().replace("\n", " ")
+        # 【用户那句话要还原成他真正说的】网页端开着"想看到它在想什么"时，`/api/chat/stream`
+        #   会把 `【回答格式，务必遵守】…` 拼在用户那句话后面交给 `agent_run()`，
+        #   而 `agent_run()` 里这个 `user_input` 就是那串拼过的文本。原样存 = 把**载体自己的
+        #   指令**当成"用户说过的话"写进记忆库，而它的 key 正是「你好」、相似度 1.00 ——
+        #   下次再说「你好」必被顶到第 1 位，模型照着自己上次那段"格式说明"再答一遍。
+        #   （用户实测：说「你好」，它答一段数学题 / 一段格式说明。）
+        _q_raw = (user_input or "").strip()
+        if _MF is not None:
+            try:
+                _q_raw = _MF.strip_internal_suffix(_q_raw)
+            except Exception:       # noqa: silent-ok — 剥不掉就按原样，不能挡住写入
+                pass
+        _q = _q_raw.replace("\n", " ")
         # `_a` 走到这里**保证非空**（上面空壳一律提前 return）——
         # 所以这里不再留 `or "（已回答）"` 那个兜底：那本身就是一个占位符，
         # 留在代码里等于给"占位符进记忆"留了一条后路。
@@ -9924,6 +10062,113 @@ def _strip_leading_inner(text):
     return t, " ｜ ".join(out_inner)
 
 
+def _looks_incomplete(text):
+    """这段输出是不是**半截**（话没说完）？
+
+    【实测（2026-11-14）】问「2 的 10 次方是多少」，深度模式第 2 遍只吐了
+    「2的10次方可以这样计算：」就断了（模型提前 EOS），而择优器看它"更像正经解题"，
+    把第 1 遍那条完整答案淘汰了 —— 用户收到一句没说完的话。
+    【判据（确定性）】以冒号/逗号/顿号/左括号收尾，或括号、代码围栏不成对 → 判为半截。
+      · 这种候选**不许进候选池**，也不许被择优器选中。
+    """
+    t = str(text or "").strip()
+    if not t:
+        return True
+    if t[-1] in "：:，,、；;（(【[《<-—":
+        return True
+    for a, b in (("（", "）"), ("(", ")"), ("【", "】"), ("[", "]"),
+                 ("《", "》"), ("「", "」")):
+        if t.count(a) != t.count(b):
+            return True
+    if t.count("```") % 2 == 1:
+        return True
+    return False
+
+
+_HOW_TO_SAY = ("别太", "带点", "语气", "口吻", "回一句", "回一声", "简短", "调侃",
+               "正式", "亲切", "撒娇", "傲娇", "风格", "一本正经", "俏皮", "温柔点")
+
+
+def _strip_self_instruction(text):
+    """砍掉回答开头那句"它给自己下的指令"（"嗯，回一声，别太正式，带点调侃。"）。
+
+    【实测（2026-11-14 用户截图）】一句「你好」，聊天框里是她自己念叨的规矩再加正文：
+        「嗯，回一声，别太正式，带点调侃。 我知道你忙完这一阵子肯定累…」
+    用户的原话是「回答和思考内容都掺到一块了我咋看不懂呢」。这一句不是回答，是它打算怎么答。
+    【判据（确定性，宁可少砍不可错砍）】只看**第一句**，且要求：
+      · 第一句不长（≤30 字）；
+      · **同时命中 ≥2 个"怎么说"的词**（别太/带点/语气/回一声/调侃/正式…）——
+        一个词的偶合（如"别太累了，早点休息。"）不算，不然会把正常关心砍掉；
+      · 后面还有正文（砍完不能变空）。
+    """
+    t = str(text or "").strip()
+    if not t:
+        return t
+    parts = re.split(r"(?<=[。！？!?\n])", t, maxsplit=1)
+    if len(parts) < 2:
+        return t
+    head, rest = parts[0].strip(), parts[1].strip()
+    if not rest or not head or len(head) > 30:
+        return t
+    if sum(1 for w in _HOW_TO_SAY if w in head) >= 2:
+        return rest
+    return t
+
+
+def _looks_like_plan_draft(text):
+    """这段输出是**解题草稿**而不是回答吗？
+
+    【实测（2026-11-14 用户截图）】问「现在几点了」，聊天框里出现的是一条草稿：
+        1. 检查设备系统时间：当前时间是 [具体时间]。
+        2. 确认时区：位于 [时区名称]。
+        …4. 查阅日历：目前准确时间 对应的日期是 2023年10月12日。
+    占位符原样保留、日期还是编的（2023 年）—— 这是它"打算怎么答"的步骤，不是答案。
+    【判据（确定性）】出现「[具体…]」这类**未填充占位符**，或整段是「1. 检查/确认/计算/查阅」
+    这种操作清单 → 不算答案。
+    """
+    t = str(text or "").strip()
+    if not t:
+        return False
+    if re.search(r"[\[【]\s*(具体|待填|某某|TODO|xxx)", t, re.I):
+        return True
+    # 【别误伤正常的分条回答】"1. 先烧水 2. 再放茶叶"这种是真答案。
+    #   所以要求：要么是≥3 条"检查/确认/计算/查阅"式的流程，**且**正文里在讲系统时间/时区/日期；
+    #   要么是 1 条以上流程 + 明确写着"设备系统时间/当前时间是/对应的日期是"（草稿的招牌句）。
+    head = t[:200]
+    steps = re.findall(r"^\s*\d+[.、]\s*(检查|确认|计算|查阅|获取|读取|调用|先|然后|接着)",
+                       t, re.M)
+    clock_words = bool(re.search(r"(设备系统时间|系统时间|时区|当前时间是|对应的日期是|时间戳)", head))
+    if len(steps) >= 3 and clock_words:
+        return True
+    if len(steps) >= 1 and re.search(r"(设备系统时间|当前时间是|对应的日期是|时区偏移)", head):
+        return True
+    return False
+
+
+def _strip_fake_tool_calls(text):
+    """砍掉模型"假装调用工具"的正文痕迹（它会把调用当台词写进回答里）。
+
+    【实测（2026-11-14）】精简提示那一轮它答得很对（"哼，你好啊。有什么事这么快找我？"），
+    紧接着又自己补了一行：（调用工具）web_search("harnees") —— 这一轮根本没给工具，
+    它是在**演**。用户看到的是一条寒暄后面挂着一行假调用，比不答还糟。
+    【判据（确定性）】认「（调用工具）／(工具调用)／tool call」这类标记：
+      · 标记后面只剩"函数名(参数)"这种形状 → 从标记处整段截断；
+      · 否则只删标记本身，别动上下文。
+    """
+    t = str(text or "")
+    if not t:
+        return t
+    m = re.search(r"[（(]\s*(调用工具|调用函数|工具调用|tool\s*call)\s*[）)]", t, re.I)
+    if not m:
+        return t
+    tail = t[m.end():].strip()
+    if not tail:
+        return t[:m.start()].rstrip()
+    if re.fullmatch(r"[\w.\[\]]+\s*\([\s\S]{0,200}?\)\s*[;。]?", tail):
+        return t[:m.start()].rstrip()
+    return (t[:m.start()] + t[m.end():]).rstrip()
+
+
 def _strip_dup_lines(text):
     """**逐条去重**：紧挨着的两行几乎一样（字面重合 ≥ 0.9）就留一条。
 
@@ -14074,6 +14319,75 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
     这类"同一件事两套行为"的 bug 最难查，用户会感到"换个入口它就不一样了"。
     """
     # ===== 原有的 agent_run 逻辑 =====
+    # ---- 【2026-11-14】小聊快速通道：寒暄就该用最轻的那条路 ----
+    # 【实测症状（用户：说「你好」它瞎回）】本地 4B 面对几千字的 system（身份/工具目录/思维流/
+    #   画像召回/元认知…）会"接错线"：问「你好」，它答上一个话题的残句（"那我试试其他路径…"）。
+    #   【为什么不是改提示词】病根不是措辞，是**信息量**：一句寒暄塞进十几个器官的注入，
+    #   模型的注意力被拉去续写那些素材。载体能做的事很简单：**这类话不需要检索、不需要工具、
+    #   不需要记忆注入**，走 `lean`（短提示、不背工具）就是它该走的路 —— 又快又不会接错线。
+    #   判据是确定性的（`_is_smalltalk`），不是"看像不像寒暄"的模糊判断。
+    # ---- 【2026-11-14】把载体自己拼的「回答格式」指令**从用户那句话里拆出来** ----
+    # 【为什么必须拆】这条尾巴原来直接拼在用户消息里 → ①模型把它当台词复读（实测："【回答格式，
+    #   务必遵守】先用  包住你的推理过程…"整段成了回答）；②它被当成"用户说过的话"写进记忆库，
+    #   于是同一条问题下次必被这条污染行顶到第 1 位（用户看到的就是"说你好它答数学题"）。
+    # 现在：用户消息保持**原话**，指令改挂到 system 末尾（模型照样看得见，用户那句话不再被污染）。
+    _reason_hint = ""
+    try:
+        from core import mem_filter as _MFh
+        if _MFh.has_internal_suffix(user_input):
+            _clean_in = _MFh.strip_internal_suffix(user_input)
+            _reason_hint = str(user_input)[len(_clean_in):].strip()
+            user_input = _clean_in
+            LOG.debug("已把「回答格式」指令从用户消息里拆出（%d 字），改挂到 system", len(_reason_hint))
+    except Exception as _e_h:      # noqa: silent-ok — 拆不出来就按原样，不能挡住回答
+        LOG.debug("拆指令尾巴失败（忽略）：%s", _e_h)
+
+    _smalltalk_turn = False
+    if not lean and _is_smalltalk(user_input):
+        lean = True
+        _smalltalk_turn = True
+        LOG.info("小聊快速通道：这句话不需要检索/工具/记忆注入 → 走精简提示（省时且不会接错线）｜%s",
+                 str(user_input)[:30])
+    # ---- 【2026-11-14】纯问时间的句子：**载体直接读表**，别让火种背日期 ----
+    # 【实测症状】问「今天几号」，模型答过「2024年4月15日」「2023年4月12日（来源模块『日志管理』）」
+    #   —— 日期和来源全是编的。而系统时钟就在载体手里（time.localtime()）。
+    # 【为什么放在模型调用之前】原来的读表兜底挂在"模型答完之后、且 answer is None"那一支，
+    #   模型只要随便编一个日期，兜底就永远不会触发 —— 等于把"背日期"这件事交给了最会背错的角色。
+    #   判据是 `_clock_answer()` 里那套（≤30 字 + 只认纯问时间），带别的内容照旧交给模型。
+    # ---- 身份指令：载体直接记（"以后叫我老板"/"我叫王强"/"我在杭州"）----
+    if not lean and not _smalltalk_turn:
+        try:
+            _idc = _identity_command(user_input)
+        except Exception as _e_idc:      # noqa: silent-ok
+            _idc = None
+            LOG.debug("身份指令识别失败（忽略）：%s", _e_idc)
+        if _idc:
+            _f, _v, _say = _idc
+            if _identity_set_field(_f, _v):
+                LOG.info("身份指令：%s = 「%s」（载体直接记，没问模型）", _f, _v)
+                try:
+                    _remember_turn(user_input, _say, None)
+                except Exception:      # noqa: silent-ok
+                    pass
+                return (_say + "（想确认就问我「你叫我什么」）", True, [], False,
+                        [_trace_entry("identity_set", {"field": _f, "value": _v}, _say)])
+            LOG.warning("身份指令认出来了但没写进 identity.json（插件没加载？）")
+
+    if not lean and not _smalltalk_turn:
+        try:
+            _ck_early = _clock_answer(user_input)
+        except Exception as _e_ck0:      # noqa: silent-ok
+            _ck_early = ""
+            LOG.debug("读表判定失败（忽略）：%s", _e_ck0)
+        if _ck_early:
+            LOG.info("载体读表：纯问时间 → 直接读系统时钟（不问模型）｜%s", str(user_input)[:20])
+            try:
+                _remember_turn(user_input, _ck_early, None)
+            except Exception:      # noqa: silent-ok — 记不进去也要把答案给出去
+                pass
+            return (_ck_early, True, [], False,
+                    [_trace_entry("carrier_clock", {"q": str(user_input)[:40]}, _ck_early)])
+
     _round_begin()                            # Bug 2：开一份干净的本轮工具去重表（详见 _round_begin）
     # 【2026-10-17 本轮一开始就把"用户这句话"记给工具门】
     # 为什么要提前：这一轮里有几处联网发生在**工具规划之前**（RAG 联网源、提醒词前检索），
@@ -15401,6 +15715,16 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
         if lean:
             # 语音精简模式: 短提示, 不背工具/技能, 生成快
             messages = [{"role": "system", "content": (SYSTEM_PROMPT[:240] + "\n[语音对话] 请简短、口语化、直接回答，一两句话；不要调用工具、不要长篇大论、不要列表。")}]
+            # 【2026-11-14】寒暄轮用**更干净的一句**：上面那 240 字里混着「[检索铁律]」
+            #   这种被截断的规则，对一句"你好"是纯干扰（实测它会把被截断的规则往下续写）。
+            #   寒暄要的只有：人设一句话 + "别解释你在做什么、别编问题、别写括号内心话"。
+            if _smalltalk_turn:
+                _persona = (SYSTEM_PROMPT.split("。")[0] + "。") if SYSTEM_PROMPT else "你是小焦。"
+                messages = [{"role": "system", "content": (
+                    _persona + "\n" + _identity_hint() + "\n[寒暄] 对方只是打个招呼/道谢/说晚安。用一两句口语回他，"
+                    "保持你自己的语气；不要解释你在做什么，不要自己编一个问题来答，"
+                    "不要写括号里的内心话，不要调用工具。"
+                    "**不要瞎猜对方的名字或称呼**（不知道就别叫名字，也不要说「老张」「小焦」这种）。")}]
         else:
             # ---- 自我认知：**放在最前面**（不是尾注）----
             # 【为什么必须在最前面 —— 两次实测踩出来的】
@@ -15469,6 +15793,13 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
                 _mind_material = ""
             sys_text = (_wake_text + _eyc_text + system_for_intent(intent, user_input=user_input)
                         + _self_material + _raw_text + _inner_material + _mind_material)
+            # 身份设定（对方怎么称呼 / 它自己叫什么）：来自插件，每轮现读
+            _ih = _identity_hint()
+            if _ih:
+                sys_text += "\n\n" + _ih
+            # 网页端要"看到它怎么想"时的那句格式要求：挂在 system 末尾（不进用户消息）
+            if "_reason_hint" in locals() and _reason_hint:
+                sys_text += "\n\n" + _reason_hint
             # ================== 技能库：把「上次这类事怎么做的」摆给它看 ==================
             # 【为什么值得接在 system 里】实测过的错误几乎都是"选工具 + 拼参数"这一步重复犯错
             #   （问天气去搜网页、爬书去截图、写代码挑错模型）。把它自己踩出来的正确序列
@@ -15841,6 +16172,11 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
         _skills = _recall_skills(user_input)      # 小脑从过去"实际使用"里学到的工具经验
         if _skills:
             context += "（小脑学到的工具用法，可参考）\n" + _skills + "\n\n"
+        # 【2026-11-14】寒暄轮**把注入全清掉**：一句「你好」不该带着"你上次说看半小时书"
+        #   这种记忆出场（用户实测："我说你好他回这个太离谱了"）。
+        #   记忆检索是给"要答的事"用的，寒暄要的是即时反应。
+        if _smalltalk_turn:
+            context = ""
         _u = user_input
         if _asks_diagram(user_input):
             _u = (user_input + "\n\n（这是画图任务：请严格按 Archify 工作流——archify_read_skill → "
@@ -15860,6 +16196,14 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
         # **记忆管理员**：更早的轮次压成摘要，最近几轮留原文 ——
         #   窗口就那么大，载体能决定的是"放什么"（见 `_history_digest` 的说明）。
         _hist, _digest = _history_digest(_hist)
+        # 【2026-11-14】寒暄轮**不塞对话历史**。
+        # 【实测（用户：只说「你好」，它却接上一个旧话题）】以前的历史一挂上去，4B 就会
+        #   顺着上一轮的残句往下写（"你这个 harnees 是不是又写错了？""我心头一暖…"），
+        #   一句问候被它接成了续写 —— 用户看到的就是"我什么都没问，你怎么自己演起来了"。
+        #   寒暄不需要上下文（要的就是"哦，你来了"这种即时反应），所以这一轮只带：
+        #   人设一句 + 用户这一句。
+        if _smalltalk_turn:
+            _hist, _digest = [], ""
         if _digest:
             LOG.info("记忆管理员：更早的轮次压成摘要（%d 轮原文 → %d 行摘要），最近 %d 轮留原文",
                      len(history) - len(_hist), _digest.count("\n"), len(_hist))
@@ -15874,8 +16218,10 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
         #   "模型根本接不上它…续写的语义是接着这半句往下写，它必须紧挨着生成位置"）。
         #   写在 system 后面 = 埋进摘要与历史之前 = 等于没接。
         # 【判据与"本轮到底起没起心"】都在 `_heart_back_for_messages` 的说明里。
+        # 【2026-11-14】寒暄轮不接回「心」和「印象」：它们带着上一轮的话题，
+        #   一句「你好」会被接成续写（实测："你这个 harnees 是不是又写错了？"）。
         try:
-            _hb = _heart_back_for_messages()
+            _hb = None if _smalltalk_turn else _heart_back_for_messages()
             if _hb:
                 messages.append(_hb)
                 LOG.info("心接回：心里那句已作为 assistant 一条接回去 ｜ %s", _hb["content"][:70])
@@ -15890,7 +16236,7 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
         # 【位置】在「我心里在想」那条**之后**、user 之前（紧挨生成位置，和心接回同一个道理）。
         try:
             from core import feeling_memory as _FM
-            _fam = _FM.impression_of(user_input_ctx)
+            _fam = {"familiar": False} if _smalltalk_turn else _FM.impression_of(user_input_ctx)
             if _fam.get("familiar") and _fam.get("note"):
                 messages.append({"role": "assistant",
                                  "content": "（这事儿我心里有印象：%s）" % str(_fam["note"])[:80]})
@@ -15903,7 +16249,7 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
         #   这一版换成"心接回"那一招：只把用户原话**摆在紧挨生成位置的一条 assistant 消息**里，
         #   让模型**用自己的语气**说出来（不替它组织，也不替它否认）。
         try:
-            _fm2 = _FACT_BACK.get("msg")
+            _fm2 = None if _smalltalk_turn else _FACT_BACK.get("msg")
             if _fm2:
                 messages.append(dict(_fm2))
                 _FACT_BACK["msg"] = None
@@ -15965,6 +16311,49 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
             except Exception as e:
                 LOG.warning("模型调用失败（%s），转入载体的代码层兜底", e.__class__.__name__)
                 answer = None
+
+        # ---- 【2026-11-14】模型吐的全是思维标签残渣 → 去掉格式要求，换干净 prompt 再问一次 ----
+        # 【实测症状（用户：说「你好」它瞎回 / 收不到回答）】本地 4B 在长 system 提示下会退化成
+        #   **只刷标签**：模型调用 #80 一秒就返回，整条正文是 `</think> </think> </think> …`。
+        #   `_strip_think()` 剥完 = 空串 → 健康层判 timeout → 用户收到"大脑没有应答"。
+        #   **模型空转是模型的锅，载体必须自己把这一轮救回来**（载体优先），
+        #   所以这里再问一次，但**把"先写 <思考>…</思考>"这类格式要求全部拿掉** ——
+        #   退化正是那串标签提示勾出来的，去掉它模型就能说人话。
+        try:
+            _raw_ans = str(answer or "")
+            _bare_ans = _strip_think(_raw_ans)
+            _bare_len = len("".join(ch for ch in _bare_ans if ch.strip()))
+            _tag_spam = bool(re.search(r"</?\s*(?:think|thinking|reasoning|思考|推理)\s*>", _raw_ans, re.I))
+            # 【2026-11-14】整条回答以「【元认知】/【思考】…」开头 = 把"我想怎么答"当成了回答
+            #   （实测：「以后叫我老板」→「【元认知】我需要确认用户是否已清楚地表达他们的需求。」）
+            if re.match(r"^\s*【\s*(元认知|思考|推理|内心|计划|自评)\s*】", _raw_ans):
+                _tag_spam = True
+            if _bare_len < 4 and (not _raw_ans.strip() or _tag_spam):
+                _retry_msgs = []
+                for _m in messages:
+                    _c = str(_m.get("content") or "")
+                    if _m.get("role") == "user" and "【回答格式" in _c:
+                        _c = re.sub(r"\s*【回答格式，务必遵守】[\s\S]*$", "", _c)
+                    _retry_msgs.append({**_m, "content": _c})
+                LOG.warning("模型只吐了思维标签残渣（%r）→ 去掉格式要求，换干净 prompt 再问一次",
+                            _raw_ans[:60])
+                try:
+                    _retry_ans = _strip_think(str(llm_chat(_retry_msgs) or ""))
+                    if len("".join(ch for ch in _retry_ans if ch.strip())) >= 2:
+                        answer = _retry_ans
+                        LOG.info("重问成功：这一轮救回来了（%d 字）", len(_retry_ans))
+                        # 【记一笔：这颗模型吃不下 <思考> 标签】既然它一被要求写标签就退化，
+                        #   后面就别再要了 —— 每轮都先吐一屏标签、再重问一次，又慢又难看。
+                        #   只影响"要不要拼格式指令"，不影响它正常回答。
+                        global _THINK_TAG_UNSUPPORTED
+                        if not _THINK_TAG_UNSUPPORTED:
+                            _THINK_TAG_UNSUPPORTED = True
+                            LOG.warning("已判定：当前模型不支持 <思考> 标签 → 后续不再要求它写标签"
+                                        "（想恢复：重启即可）")
+                except Exception as _re:      # noqa: silent-ok — 重问也失败就按原路走兜底
+                    LOG.debug("重问失败（忽略）：%s", _re)
+        except Exception as _rs:      # noqa: silent-ok — 这段不许影响主流程
+            LOG.debug("标签残渣重问检查失败（忽略）：%s", _rs)
 
     # 【漏洞表直出】用户实测：它调了 collect_vulnerabilities 拿到 5 行真数据，
     #   却把表格**复述成一段解释**（"最容易错的地方是时间范围…"），表格被埋在下面对话轨迹里。
@@ -16328,7 +16717,8 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
             r"剧本|台词|大纲|角色)", str(user_input or "")))
         try:
             if _meta_route == "answer_with_caveat" and answer and "元认知" not in answer \
-                    and not _carrier_direct and not _self_intro and not _tiny and not _creative:
+                    and not _carrier_direct and not _self_intro and not _tiny and not _creative \
+                    and not lean:
                 answer = answer.rstrip() + ("\n\n（元认知 · 自评 B：这题我没有把握，"
                                             "上面是尽力给的答案，建议你自己再核一遍）")
                 LOG.info("元认知标注：已给回答加上\u201c没把握\u201d说明")
@@ -16349,13 +16739,33 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
             _ov_turn = bool(_OVERRIDE_RE.search(str(user_input or "")))
             if (_meta_route == "use_tool" and not tool_trace and answer
                     and "元认知" not in answer and not _ov_turn and not _creative
-                    and not _self_intro and not _carrier_direct):
+                    and not _self_intro and not _carrier_direct and not lean):
                 answer = answer.rstrip() + (
                     "\n\n（元认知 · 自评 C：这题我没有把握，而且本轮**没能查到可核实的来源**，"
                     "上面只是尽力作答，请当作参考、不要当成结论）")
                 LOG.info("元认知标注：C 档且本轮未查证 → 已标注为参考而非结论")
         except Exception as e:      # noqa: silent-ok — 加不上标注不影响回答本体
             LOG.debug("忽略异常(%s:%d): %s", __file__, 7520, e)
+        # ---- 【2026-11-14】精简通道的"残渣回答"再救一次 ----
+        # 【实测（用户：说「你好」它瞎回）】精简提示下 4B 偶尔只吐一个「检索」「思考」这类半截词，
+        #   后面的自评标注再挂上去，用户就收到「检索 ｜ 元认知 · 自评 C…」这种完全看不懂的东西。
+        #   与其把它交出去，不如用**最小 prompt 再问一次**（只给身份一句 + 用户原话），
+        #   模型这时候几乎不会跑偏 —— 这是"载体把这一轮干完"，不是替他编话。
+        try:
+            _bare_final = re.sub(r"[（(]元认知[\s\S]*?[）)]", "", str(answer or "")).strip()
+            if lean and len(re.sub(r"[\s\W_]", "", _bare_final)) < 2:
+                LOG.warning("精简通道的回答只有残渣（%r）→ 用最小 prompt 再问一次",
+                            str(answer or "")[:40])
+                _mini = [{"role": "system",
+                          "content": (SYSTEM_PROMPT[:200] +
+                                      "\n直接用一两句口语回应对方，不要说明你在做什么。")},
+                         {"role": "user", "content": str(user_input or "")[:300]}]
+                _r_mini = _strip_think(str(llm_chat(_mini) or "")).strip()
+                if len(re.sub(r"[\s\W_]", "", _r_mini)) >= 2:
+                    answer = _r_mini
+                    LOG.info("残渣回答已用最小 prompt 救回（%d 字）", len(_r_mini))
+        except Exception as _e_mini:      # noqa: silent-ok — 救不回来就按原样给
+            LOG.debug("残渣回答救援失败（忽略）：%s", _e_mini)
         # ---- 用户事实的**兜底**：先让它自己说；它要是又说"我没有记录"，载体就拿原话顶上 ----
         # 【为什么两步都要（实测数据）】
         #   · 只做"接回"（把原话摆在紧挨生成的位置让它自己说）：**3/5** —— 说中那三次的语气完全是它自己的
@@ -16491,10 +16901,55 @@ def agent_run(user_input, lean=False, on_chunk=None, on_progress=None, on_delta=
         try:
             _stripped, _inner = _strip_leading_inner(answer)
             if _inner:
-                answer = _stripped
-                LOG.info("剥掉开头那段内心话（它该只在心里，不该给用户看）：%s", _inner[:40])
+                # 【别把整条回答剥成空的】实测（2026-11-14）：本地小模型有时**整条回答就是一段
+                #   括号内心话**（"（把用户的问题理了一遍，注意到他好像在问'你好'……）"），
+                #   原文没有括号外的正文。整段剥掉 = 回答变成空串 = 用户收到"大脑没有应答"。
+                #   宁可把括号拆掉、把里面那句话当正文给她，也不能让用户什么都收不到。
+                _rest_bare = "".join(ch for ch in _stripped if ch.strip())
+                if len(_rest_bare) < 8 and _inner.strip():
+                    answer = _inner.strip()
+                    LOG.info("整条回答只是括号内心话 → 不删，拆掉括号当正文给她：%s", _inner[:40])
+                else:
+                    answer = _stripped
+                    LOG.info("剥掉开头那段内心话（它该只在心里，不该给用户看）：%s", _inner[:40])
         except Exception as e:      # noqa: silent-ok — 剥不掉就用原文，绝不影响回答
             LOG.debug("剥开头内心话失败（忽略）：%s", e)
+        # ---- 假装调用工具的痕迹砍掉（实测：寒暄后面挂着「（调用工具）web_search(...)」）----
+        try:
+            _noCall = _strip_fake_tool_calls(answer)
+            if _noCall != answer:
+                LOG.info("砍掉模型自演的假工具调用痕迹（这一轮并没有给它工具）")
+                answer = _noCall
+        except Exception as e:      # noqa: silent-ok — 砍不掉就原样给
+            LOG.debug("砍假工具调用失败（忽略）：%s", e)
+        # ---- 回答开头那句"给自己下的指令"砍掉（"嗯，回一声，别太正式，带点调侃。"）----
+        try:
+            _noInstr = _strip_self_instruction(answer)
+            if _noInstr != answer:
+                LOG.info("砍掉回答开头那句自我指令（不是回答，是怎么答）：%s",
+                         str(answer)[:40])
+                answer = _noInstr
+        except Exception as e:      # noqa: silent-ok — 砍不掉就原样给
+            LOG.debug("砍自我指令失败（忽略）：%s", e)
+        # ---- 草稿体（未填充占位符 / 操作清单）不许当答案交付 ----
+        try:
+            if answer and _looks_like_plan_draft(answer):
+                _ck_d = _clock_answer(user_input) if not _smalltalk_turn else ""
+                if _ck_d:
+                    LOG.info("它交的是解题草稿 → 用载体读表的事实顶掉（%s）", str(answer)[:40])
+                    answer = _ck_d
+                else:
+                    LOG.warning("它交的是解题草稿（%s）→ 用最小 prompt 再要一次回答",
+                                str(answer)[:40])
+                    _mini2 = [{"role": "system",
+                               "content": "直接回答用户这句话。不要列步骤、不要留占位符、不要解释你怎么做。"},
+                              {"role": "user", "content": str(user_input or "")[:300]}]
+                    _r2 = _strip_think(str(llm_chat(_mini2) or "")).strip()
+                    if _r2 and not _looks_like_plan_draft(_r2):
+                        answer = _r2
+                        LOG.info("草稿体已换成正式回答（%d 字）", len(_r2))
+        except Exception as _e_pd:      # noqa: silent-ok — 换不掉就按原样
+            LOG.debug("草稿体处理失败（忽略）：%s", _e_pd)
         # ---- 元认知 · **答后交叉检查**（2026-09-18 接上；原来只在自测里跑得到）----
         # 【为什么接在这里】`core/metacognition/crosscheck.py` 早就写好、自测也全绿，
         #   但**主流程一次都没调过它** —— 也就是说"答后交叉检查"这一项一直是**离线能力**。
@@ -18818,6 +19273,12 @@ def api_chat_think():
                     "running": _inflight_generating(sid)})
 
 
+# 【2026-11-14】这颗模型吃不吃得下 `<思考>` 标签：一旦实测退化（只吐标签），
+# `agent_run` 会把它置 True，之后这里就不再往用户那句后面拼格式指令 ——
+# 每轮都先吐一屏 `</think>`、再靠重问救回来，又慢又难看。
+_THINK_TAG_UNSUPPORTED = False
+
+
 @app.route("/api/chat/stream", methods=["POST"])
 def api_chat_stream():
     """流式对话（SSE）—— 第 3 步：输出无限。
@@ -18843,7 +19304,7 @@ def api_chat_stream():
     # 【要它把自己的思考写出来】用户要求看到"模型自己思考的内容"。本地火种没有
     # reasoning_content 字段（实测 delta 只有 role/content），但它**会**把推理写进正文
     # （"## 推理过程…"）。所以这里要求它用 <思考>…</思考> 单独包一段，载体拆出来单独显示。
-    _want_reason = bool(data.get("think"))
+    _want_reason = bool(data.get("think")) and not _THINK_TAG_UNSUPPORTED
     _run_input = user_input
     if _want_reason:
         _run_input = (user_input + "\n\n【回答格式，务必遵守】先用 <思考> 和 </思考> 包住你的"
@@ -19013,6 +19474,31 @@ def api_chat_stream():
                     # （README 能力对照表里那条「同题跑 N 次 + 投票择一」一直标着未落地，现在落地。）
                     _qn = int(data.get("quality") or 0)
                     _ENS = None
+                    # 【2026-11-14】寒暄轮不许进"多遍择优"。
+                    # 【实测症状（用户截图：只说「你好」，它答一道 45°/135° 的选择题）】
+                    #   深度模式的第 2..N 遍是**只带一句话的裸 prompt**（"你在回答用户的问题，直接给答案"
+                    #   + 一个角度提示），**没有任何上下文**。喂它「你好」时，模型只能自己编一个"问题"
+                    #   来答 —— 编出来的就是那道选择题；而择优器看它"更像正经答案"（更长、更像解题），
+                    #   就把第 1 遍那句正常的寒暄淘汰了。
+                    #   判据用确定性的 `_is_smalltalk`：一句寒暄本来就没有"多角度看"的必要。
+                    # 【2026-11-14】第 2..N 遍**默认不跑**（`capabilities.deep_passes`，默认 1）。
+                    # 【为什么】那几遍是裸 prompt（无上下文），实测反复干三件事：自己编一道题来答
+                    #   （"换个角度看这道题：45 和 135"、"先算 48÷6=8，再乘 3 得 24"）、交半截话、
+                    #   编日期（2023/2024）。而交付答案已经固定用第 1 遍（带载体事实那一遍），
+                    #   所以这几遍现在**只剩坏处**：白等几十秒、还把编出来的东西写进思考流水给用户看。
+                    #   想恢复多遍投票：操控文件 capabilities.deep_passes 改成 2/3/4。
+                    _max_pass = 1
+                    try:
+                        _max_pass = int((CONTROL.get("capabilities") or {}).get("deep_passes", 1) or 1)
+                    except Exception:      # noqa: silent-ok — 读不出来就按 1 遍
+                        _max_pass = 1
+                    if _qn > max(1, _max_pass):
+                        _note("深度模式：多遍采样已关（deep_passes=%d）→ 只跑完整流水那一遍"
+                              % max(1, _max_pass))
+                        _qn = max(1, _max_pass)
+                    if _qn >= 2 and _is_smalltalk(user_input):
+                        _note("深度模式：这句是寒暄，跳过「多遍择优」（否则它会自己编一道题来答）")
+                        _qn = 0
                     if _qn >= 2:
                         try:
                             from core import ensemble as _ENS
@@ -19042,13 +19528,20 @@ def api_chat_stream():
                             try:
                                 _msg2 = [
                                     {"role": "system", "content":
-                                     "你在回答用户的问题。直接给答案，不要客套、不要复述题目。"},
+                                     "你在回答用户的问题。直接给答案，不要客套、不要复述题目。"
+                                     "如果用户那句话不是提问（只是打招呼、道谢、寒暄），"
+                                     "就用一两句口语回应他 —— **不要自己编一个问题来答**。"},
                                     {"role": "user", "content":
                                      user_input + "\n\n（这次换个答法：" + _hn + "）"}]
                                 _t2 = str(llm_chat(_msg2, temperature=0.8) or "").strip()
                                 if _t2 and _looks_like_critique(_t2):
                                     # 这一遍只交了"挑错"，不是答案 → 不进候选池
                                     _note("第 %d 遍是审阅而非答案（不参与择优）" % (_i + 1))
+                                    continue
+                                if _t2 and _looks_incomplete(_t2):
+                                    # 半截话（模型提前收尾）→ 不进候选池，别让它顶掉完整答案
+                                    _note("第 %d 遍只写了半句（不参与择优）：%s"
+                                          % (_i + 1, _t2[-16:]))
                                     continue
                                 if _t2:
                                     _cands.append(_t2)
@@ -19057,10 +19550,19 @@ def api_chat_stream():
                                 _note("第 %d 遍失败：%s" % (_i + 1, str(_ee)[:80]))
                         if _cands:
                             _best, _meta = _ENS.pick(_cands, user_input)
-                            # 双保险：择优器万一还是挑到"审阅体"，就退回第 1 遍（完整流水那条）。
-                            # 宁可要一个普通答案，也不要把自我检讨当答案交给用户。
-                            if _looks_like_critique(_best) and _cands[0]:
-                                _note("择优挑到了审阅体 → 退回第 1 遍的答案")
+                            # 【2026-11-14 改判：以第 1 遍为准，其余只当"交叉校验"】
+                            # 【为什么】第 1 遍是**唯一带载体事实**的那一遍（日期/时间/工具/检索都在它里面）；
+                            #   第 2..N 遍是裸 prompt，实测会编（问「今天几号」它答"2023年4月12日，
+                            #   来源模块「日志管理」"—— 日期和来源全是它编的）、会半截、会把解题草稿当答案。
+                            #   把这些候选**替换**掉第 1 遍，等于用"没事实的一遍"覆盖"有事实的一遍"。
+                            #   所以：择优结果只**记日志**，要交付的答案永远是第 1 遍（除非它空的）。
+                            if _cands and _cands[0]:
+                                _note("择优参考：" + str(_meta.get("why") or "")[:60] + "（仍用第 1 遍作答）")
+                                _best = _cands[0]
+                            # 双保险：择优器万一还是挑到"审阅体"或"半截话"，就退回第 1 遍（完整流水那条）。
+                            # 宁可要一个普通答案，也不要把自我检讨/半句话当答案交给用户。
+                            if (_looks_like_critique(_best) or _looks_incomplete(_best)) and _cands[0]:
+                                _note("择优挑到了审阅体/半截话 → 退回第 1 遍的答案")
                                 _best = _cands[0]
                             _note("择优：" + str(_meta.get("why") or "")[:160])
                             _tail = list(_last[1:]) if _last else [True, {}, False, []]
