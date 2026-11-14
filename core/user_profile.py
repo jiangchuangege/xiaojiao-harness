@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 
@@ -147,6 +148,50 @@ def _rewrite(rows):
     os.replace(tmp, _PATH)
 
 
+# ================== 写入前的"内容闸门"（2026-11-14）==================
+# 【为什么必须有 —— 用户原话「我的AI最近我发现越来越难用」】体检发现画像库里存着：
+#   「用户叫小焦」（小焦是**它自己**的名字）、「用户称呼自己为'你'」、「用户称呼为'你'」、
+#   「用户称呼其为'小焦'」、「…已执行 98 步 ▾ 这是载体真实做的事…」（工具轨迹）。
+# 这些每轮都被注入 system，于是它真的开始管用户叫"小焦"，还反复纠结"你是谁、我是谁"。
+# 判据是确定性的（格式 + 代词/它自己的名字）；**不判断"这件事该不该记"** —— 那仍是模型的决定。
+_PROFILE_JUNK_MARKS = ("已执行 ", "这是载体真实做的事", "▾", "🌐 **", "⏳", "【回答格式",
+                       "【系统指令】", "📋 **页面结构速览**")
+_PRONOUN_NAMES = ("你", "我", "他", "她", "它", "自己", "对方", "用户", "本小姐", "主人")
+_NAME_RE = re.compile(r"^用户(?:的名字是|叫|名叫|称呼为|称呼其为|称呼自己为|称呼我为|称呼)"
+                      r"[「\"'‘]?([^」\"'’，。]{1,8})")
+
+
+def _ai_self_name():
+    """它自己叫什么（`logs/identity.json` 的 self_name；读不到就按默认）。"""
+    try:
+        import json as _j
+        _p = os.path.join(_ROOT, "logs", "identity.json")
+        with open(_p, encoding="utf-8") as f:
+            n = str((_j.load(f) or {}).get("self_name") or "").strip()
+        if n:
+            return n
+    except Exception:      # noqa: silent-ok — 没有设定文件就用默认名
+        pass
+    return "小焦"
+
+
+def content_ok(content):
+    """这条内容能不能当"关于用户的事实"存下来。返回 (ok, 原因)。"""
+    c = str(content or "").strip()
+    if not c:
+        return False, "空"
+    if any(m in c for m in _PROFILE_JUNK_MARKS):
+        return False, "工具轨迹/载体指令残留，不是用户说的事"
+    if len(c) > 120:
+        return False, "太长（>120 字，多半是整段抓取或长文）"
+    m = _NAME_RE.match(c)
+    if m:
+        val = m.group(1)
+        if any(j in val for j in _PRONOUN_NAMES) or val == _ai_self_name():
+            return False, "把代词/它自己的名字当成了用户的名字（%s）" % val
+    return True, ""
+
+
 def add(kind, content, why="", evidence="", source="模型自己判断"):
     """**只做存储**：模型说要记什么就记什么；载体不判断内容对不对、该不该记。
 
@@ -163,6 +208,16 @@ def add(kind, content, why="", evidence="", source="模型自己判断"):
     k = clean_kind(kind)
     c = str(content or "").strip()
     if not c or not k:
+        return ""
+    _ok, _why = content_ok(c)
+    if not _ok:
+        # 记一笔"为什么没存" —— 否则事后分不清"它没说要记"和"载体拦了"
+        try:
+            import logging as _lg
+            _lg.getLogger("xiaojiao.user_profile").info(
+                "画像：**没写进去**（%s）｜%s", _why, c[:40])
+        except Exception:      # noqa: silent-ok
+            pass
         return ""
     if len(c) > MAX_LEN:
         c = c[:MAX_LEN]
